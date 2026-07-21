@@ -13,12 +13,21 @@ L2_AUTH_PORT="${L2_AUTH_PORT:-8551}"
 L2_NODE_RPC_PORT="${L2_NODE_RPC_PORT:-9545}"
 L1_BLOCK_TIME="${L1_BLOCK_TIME:-12}"
 # Seconds to wait for op-geth IPC after start. 0 = keep waiting while the PID is alive
-# (archive crash recovery on constrained Render disks often exceeds 60s).
+# (datadir open / crash recovery on constrained disks can exceed 60s).
 GETH_READY_TIMEOUT_SECS="${GETH_READY_TIMEOUT_SECS:-0}"
+# geth default --cache is 1024MB and will OOM Render Starter (512MB). Keep low on small plans.
+GETH_CACHE_MB="${GETH_CACHE_MB:-256}"
 
 case "$GETH_READY_TIMEOUT_SECS" in
   ''|*[!0-9]*)
     echo "ERROR: GETH_READY_TIMEOUT_SECS must be a non-negative integer (got: $GETH_READY_TIMEOUT_SECS)" >&2
+    exit 1
+    ;;
+esac
+
+case "$GETH_CACHE_MB" in
+  ''|*[!0-9]*)
+    echo "ERROR: GETH_CACHE_MB must be a non-negative integer (got: $GETH_CACHE_MB)" >&2
     exit 1
     ;;
 esac
@@ -48,7 +57,7 @@ if [ ! -d "$DATA_DIR/geth" ]; then
   geth init --datadir="$DATA_DIR" --state.scheme=hash "$GENESIS"
 fi
 
-echo "Starting op-geth (verifier EL) on :$L2_HTTP_PORT"
+echo "Starting op-geth (verifier EL) on :$L2_HTTP_PORT (cache=${GETH_CACHE_MB}MB, gcmode=full)"
 geth \
   --datadir="$DATA_DIR" \
   --http --http.addr=0.0.0.0 --http.port="$L2_HTTP_PORT" \
@@ -56,7 +65,8 @@ geth \
   --http.vhosts=* --http.corsdomain=* \
   --authrpc.addr=127.0.0.1 --authrpc.port="$L2_AUTH_PORT" --authrpc.vhosts=* \
   --authrpc.jwtsecret="$JWT_FILE" \
-  --syncmode=full --gcmode=archive \
+  --syncmode=full --gcmode=full \
+  --cache="$GETH_CACHE_MB" \
   --rollup.disabletxpoolgossip=true \
   --nodiscover --maxpeers=0 \
   --verbosity=3 &
@@ -75,7 +85,7 @@ cleanup() {
 trap cleanup INT TERM
 
 # Wait for engine API: require IPC + a successful attach, not merely a live PID.
-# Do not kill a still-alive geth after a short fixed window — persistent archive
+# Do not kill a still-alive geth after a short fixed window — persistent
 # datadirs can take minutes to open IPC during startup/crash recovery.
 if [ "$GETH_READY_TIMEOUT_SECS" -eq 0 ]; then
   echo "Waiting for op-geth engine API (no timeout while pid $GETH_PID is alive)..."

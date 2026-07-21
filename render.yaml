@@ -9,7 +9,7 @@ services:
   - type: pserv
     name: fortel2-replica
     runtime: docker
-    plan: starter
+    plan: standard
     dockerfilePath: ./Dockerfile
     dockerContext: .
     region: oregon
@@ -24,3 +24,5 @@ services:
         sync: false
       - key: L1_BLOCK_TIME
         value: "12"
+      - key: GETH_CACHE_MB
+        value: "256"

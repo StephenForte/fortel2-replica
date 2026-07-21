@@ -6,7 +6,7 @@ This is the package you give friends / deploy on Render. It is **not** the seque
 
 | Component | Role |
 |---|---|
-| op-geth | L2 execution (archive) |
+| op-geth | L2 execution (full sync, not archive) |
 | op-node | Verifier — derives L2 from L1 batches |
 
 Pinned images: `op-node:v1.19.2`, `op-geth:v1.101702.2` (OP Labs).
@@ -33,11 +33,15 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 
 ## Render
 
+**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node in one container. Set `GETH_CACHE_MB=256` (default in entrypoint); do not leave geth’s 1024MB default.
+
 1. **New → Private Service** (preferred) or **Web Service**.
 2. Connect this repo. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
-3. Attach a **persistent disk** at `/data` (≥ 20 GB).
-4. Env secrets: `L1_RPC_URL` (Sepolia), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`.
+3. Attach a **persistent disk** at `/data` (≥ 20–50 GB).
+4. Env secrets: `L1_RPC_URL` (Sepolia), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`, optional `GETH_CACHE_MB=256`.
 5. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed for those.
+
+If you previously ran with `--gcmode=archive` and hit OOMs, wipe `/data` (or recreate the disk) after upgrading so full-sync starts clean.
 
 Or apply `render.yaml` as a Blueprint.
 

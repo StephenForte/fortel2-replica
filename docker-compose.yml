@@ -30,7 +30,8 @@ services:
           --ws.api=eth,net,web3,debug,txpool --ws.origins=* \
           --authrpc.addr=0.0.0.0 --authrpc.port=8551 --authrpc.vhosts=* \
           --authrpc.jwtsecret=/config/jwt.txt \
-          --syncmode=full --gcmode=archive \
+          --syncmode=full --gcmode=full \
+          --cache=${GETH_CACHE_MB:-256} \
           --rollup.disabletxpoolgossip=true \
           --nodiscover --maxpeers=0
     ports:
