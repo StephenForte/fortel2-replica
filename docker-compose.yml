@@ -1,0 +1,70 @@
+# Local / VPS smoke: stock verifier for ForteL2 chain 852.
+#   cp .env.example .env   # set L1_RPC_URL
+#   docker compose up -d
+# EL http://127.0.0.1:9545  op-node http://127.0.0.1:9547
+
+services:
+  op-geth:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101702.2
+    volumes:
+      - geth-data:/data
+      - ./config/genesis.json:/config/genesis.json:ro
+      - ./jwt.txt:/config/jwt.txt
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        if [ ! -f /config/jwt.txt ]; then
+          echo "ERROR: missing jwt.txt — run: openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt" >&2
+          exit 1
+        fi
+        if [ ! -d /data/geth ]; then
+          geth init --datadir=/data --state.scheme=hash /config/genesis.json
+        fi
+        exec geth \
+          --datadir=/data \
+          --http --http.addr=0.0.0.0 --http.port=8545 \
+          --http.api=eth,net,web3,debug,txpool \
+          --http.vhosts=* --http.corsdomain=* \
+          --ws --ws.addr=0.0.0.0 --ws.port=8546 \
+          --ws.api=eth,net,web3,debug,txpool --ws.origins=* \
+          --authrpc.addr=0.0.0.0 --authrpc.port=8551 --authrpc.vhosts=* \
+          --authrpc.jwtsecret=/config/jwt.txt \
+          --syncmode=full --gcmode=archive \
+          --rollup.disabletxpoolgossip=true \
+          --nodiscover --maxpeers=0
+    ports:
+      - "9545:8545"
+
+  op-node:
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2
+    depends_on:
+      - op-geth
+    volumes:
+      - ./config/rollup.json:/config/rollup.json:ro
+      - ./jwt.txt:/config/jwt.txt:ro
+    environment:
+      L1_RPC_URL: ${L1_RPC_URL:?set L1_RPC_URL in .env}
+      L1_BLOCK_TIME: ${L1_BLOCK_TIME:-12}
+    command:
+      - op-node
+      - --l1=${L1_RPC_URL}
+      - --l1.rpckind=standard
+      - --l1.trustrpc=true
+      - --l1.beacon.ignore=true
+      - --l1.beacon.slot-duration-override=${L1_BLOCK_TIME:-12}
+      - --l2=http://op-geth:8551
+      - --l2.jwt-secret=/config/jwt.txt
+      - --l2.enginekind=geth
+      - --rollup.config=/config/rollup.json
+      - --sequencer.enabled=false
+      - --verifier.l1-confs=1
+      - --p2p.disable=true
+      - --rpc.addr=0.0.0.0
+      - --rpc.port=9545
+      - --log.level=info
+    ports:
+      - "9547:9545"
+
+volumes:
+  geth-data:

@@ -1,0 +1,5 @@
+.env
+jwt.txt
+data/
+*.log
+.DS_Store

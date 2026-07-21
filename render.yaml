@@ -1,0 +1,26 @@
+# Render Blueprint — ForteL2 L2 verifier (stock op-geth + op-node).
+# Private by default (JSON-RPC not on the public internet).
+# Dashboard: New → Blueprint → this repo. Set L1_RPC_URL secret.
+#
+# Or: New → Private Service → Runtime Docker → root Dockerfile.
+# Attach a persistent disk at /data (≥20 GB).
+
+services:
+  - type: pserv
+    name: fortel2-replica
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: oregon
+    disk:
+      name: fortel2-replica-data
+      mountPath: /data
+      sizeGB: 20
+    envVars:
+      - key: L1_RPC_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: L1_BLOCK_TIME
+        value: "12"
