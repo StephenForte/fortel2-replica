@@ -13,6 +13,8 @@ Pinned images: `op-node:v1.19.2`, `op-geth:v1.101702.2` (OP Labs).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
+Handing this to a friend? See [`RUNNING.md`](./RUNNING.md) for a full walkthrough of running your own node.
+
 ## Quick start (laptop / VPS)
 
 ```bash
