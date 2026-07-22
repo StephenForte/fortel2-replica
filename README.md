@@ -42,10 +42,13 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 1. **New → Private Service** (preferred) or **Web Service**.
 2. Connect this repo. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
 3. Attach a **persistent disk** at `/data` (≥ 20–50 GB).
-4. Env secrets: `L1_RPC_URL` (Sepolia), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`, optional `GETH_CACHE_MB=256`.
-5. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed for those.
+4. Env secrets: `L1_RPC_URL` (Sepolia — **Render-only** QuickNode endpoint; do not reuse the Mac mini URL), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`, optional `GETH_CACHE_MB=256`.
+5. Optional credit-budget knobs (defaults already set in `entrypoint.sh` / Blueprint): `L1_HTTP_POLL_INTERVAL=12s`, `L1_RPC_RATE_LIMIT=20`.
+6. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed for those.
 
 **Private Service tip:** you cannot flip Private → Web on an existing service. Compare sync via **Shell** (`geth attach --exec "eth.blockNumber" /data/geth.ipc`) or add a temporary reverse-proxy Web service on Render’s private network. Do not leave an open public `eth_sendRawTransaction` surface up.
+
+**QuickNode:** Prefer a dedicated endpoint token for this replica. Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — keep the service Private and rotate the URL if leaked.
 
 If you change genesis/rollup (ForteL2 Phase 2b redeploy), **wipe `/data`** (or recreate the disk) after deploying the new image so the replica does not keep the old L1 history.
 

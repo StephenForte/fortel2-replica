@@ -122,11 +122,18 @@ if [ "$ready" -ne 1 ]; then
 fi
 echo "op-geth engine API ready after ${i}s"
 
-echo "Starting op-node (L1 derivation / verifier)"
+# Credit-budget defaults for metered Sepolia RPC (QuickNode Build plan).
+# Override via Render env / .env. Matches ForteL2 Sepolia sequencer knobs.
+L1_HTTP_POLL="${L1_HTTP_POLL_INTERVAL:-12s}"
+L1_RPC_RATE_LIMIT="${L1_RPC_RATE_LIMIT:-20}"
+
+echo "Starting op-node (L1 derivation / verifier; poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT})"
 op-node \
   --l1="$L1_RPC_URL" \
   --l1.rpckind=standard \
   --l1.trustrpc=true \
+  --l1.http-poll-interval="$L1_HTTP_POLL" \
+  --l1.rpc-rate-limit="$L1_RPC_RATE_LIMIT" \
   --l1.beacon.ignore=true \
   --l1.beacon.slot-duration-override="$L1_BLOCK_TIME" \
   --l2="http://127.0.0.1:${L2_AUTH_PORT}" \

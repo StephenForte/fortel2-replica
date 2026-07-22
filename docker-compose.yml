@@ -47,11 +47,15 @@ services:
     environment:
       L1_RPC_URL: ${L1_RPC_URL:?set L1_RPC_URL in .env}
       L1_BLOCK_TIME: ${L1_BLOCK_TIME:-12}
+      L1_HTTP_POLL_INTERVAL: ${L1_HTTP_POLL_INTERVAL:-12s}
+      L1_RPC_RATE_LIMIT: ${L1_RPC_RATE_LIMIT:-20}
     command:
       - op-node
       - --l1=${L1_RPC_URL}
       - --l1.rpckind=standard
       - --l1.trustrpc=true
+      - --l1.http-poll-interval=${L1_HTTP_POLL_INTERVAL:-12s}
+      - --l1.rpc-rate-limit=${L1_RPC_RATE_LIMIT:-20}
       - --l1.beacon.ignore=true
       - --l1.beacon.slot-duration-override=${L1_BLOCK_TIME:-12}
       - --l2=http://op-geth:8551
