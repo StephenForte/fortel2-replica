@@ -166,14 +166,17 @@ while kill -0 "$GETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
   sleep "$PROCESS_POLL_INTERVAL_SECS"
 done
 
-if ! kill -0 "$GETH_PID" 2>/dev/null; then
-  echo "ERROR: op-geth exited while op-node was running" >&2
+# Check op-node first: if it has stopped (whether alone or concurrently with
+# geth), its exit status is the one we want to propagate. Only when op-node
+# is still alive do we know geth must be the one that exited, since the loop
+# above only breaks once at least one child has died.
+if ! kill -0 "$NODE_PID" 2>/dev/null; then
+  NODE_EXIT=0
+  wait "$NODE_PID" || NODE_EXIT=$?
   wait "$GETH_PID" 2>/dev/null || true
-  exit 1
+  exit "$NODE_EXIT"
 fi
 
-if wait "$NODE_PID"; then
-  exit 0
-else
-  exit $?
-fi
+echo "ERROR: op-geth exited while op-node was running" >&2
+wait "$GETH_PID" 2>/dev/null || true
+exit 1
