@@ -1,8 +1,8 @@
 # ForteL2 replica
 
-Independent **verifier node** for the [ForteL2](https://github.com/StephenForte/ForteL2) learning L2 (chain ID **852**), deriving from **Ethereum Sepolia**.
+A standalone **node** for the [ForteL2](https://github.com/StephenForte/ForteL2) learning L2 (chain ID **852**) that derives L2 state from **Ethereum Sepolia**.
 
-This is the package you give friends / deploy on Render. It is **not** the sequencer, batcher, proposer, or dApp — and it never needs operator private keys.
+This is now **its own project** — split out of the ForteL2 monorepo into a self-contained repository you can clone, run, and deploy on its own. It runs a **verifier** (op-geth + op-node) and is the package you give friends / deploy on Render. It is **not** the sequencer, batcher, proposer, or dApp — and it never needs operator private keys.
 
 | Component | Role |
 |---|---|
@@ -58,9 +58,9 @@ Derives from Sepolia L1 only — **no connection to the Mac mini sequencer** is 
 - No sequencer keys, harvest wallet, or `.env.sepolia`
 - Do not commit real QuickNode URLs with tokens (use Render secrets / local `.env`)
 
-## Operator (ForteL2 monorepo)
+## Keeping config in sync with ForteL2
 
-Chain config is published here from [ForteL2](https://github.com/StephenForte/ForteL2) after a Sepolia redeploy:
+Although this is a standalone repository, its `config/genesis.json` and `config/rollup.json` still describe the ForteL2 chain and must track it. Operators publish updated chain config into this repo from [ForteL2](https://github.com/StephenForte/ForteL2) after a Sepolia redeploy:
 
 ```bash
 # in ForteL2
