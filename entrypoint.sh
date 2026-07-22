@@ -17,6 +17,8 @@ L1_BLOCK_TIME="${L1_BLOCK_TIME:-12}"
 GETH_READY_TIMEOUT_SECS="${GETH_READY_TIMEOUT_SECS:-0}"
 # geth default --cache is 1024MB and will OOM Render Starter (512MB). Keep low on small plans.
 GETH_CACHE_MB="${GETH_CACHE_MB:-256}"
+# How often to check that both long-running processes are alive.
+PROCESS_POLL_INTERVAL_SECS="${PROCESS_POLL_INTERVAL_SECS:-1}"
 
 case "$GETH_READY_TIMEOUT_SECS" in
   ''|*[!0-9]*)
@@ -28,6 +30,13 @@ esac
 case "$GETH_CACHE_MB" in
   ''|*[!0-9]*)
     echo "ERROR: GETH_CACHE_MB must be a non-negative integer (got: $GETH_CACHE_MB)" >&2
+    exit 1
+    ;;
+esac
+
+case "$PROCESS_POLL_INTERVAL_SECS" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: PROCESS_POLL_INTERVAL_SECS must be a positive integer (got: $PROCESS_POLL_INTERVAL_SECS)" >&2
     exit 1
     ;;
 esac
@@ -82,7 +91,9 @@ cleanup() {
   fi
   wait "$GETH_PID" 2>/dev/null || true
 }
-trap cleanup INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Wait for engine API: require IPC + a successful attach, not merely a live PID.
 # Do not kill a still-alive geth after a short fixed window — persistent
@@ -148,5 +159,21 @@ op-node \
   --log.level=info &
 NODE_PID=$!
 
-wait "$NODE_PID"
-cleanup
+# Waiting for op-node alone can leave a superficially healthy container running
+# forever after geth crashes. Supervise both children and propagate op-node's
+# status when it is the first process to stop.
+while kill -0 "$GETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
+  sleep "$PROCESS_POLL_INTERVAL_SECS"
+done
+
+if ! kill -0 "$GETH_PID" 2>/dev/null; then
+  echo "ERROR: op-geth exited while op-node was running" >&2
+  wait "$GETH_PID" 2>/dev/null || true
+  exit 1
+fi
+
+if wait "$NODE_PID"; then
+  exit 0
+else
+  exit $?
+fi
