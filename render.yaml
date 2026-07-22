@@ -26,3 +26,8 @@ services:
         value: "12"
       - key: GETH_CACHE_MB
         value: "256"
+      # Soft self-throttle on metered Sepolia RPC (QuickNode credits)
+      - key: L1_HTTP_POLL_INTERVAL
+        value: "12s"
+      - key: L1_RPC_RATE_LIMIT
+        value: "20"
