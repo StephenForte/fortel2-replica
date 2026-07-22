@@ -11,6 +11,8 @@ This is the package you give friends / deploy on Render. It is **not** the seque
 
 Pinned images: `op-node:v1.19.2`, `op-geth:v1.101702.2` (OP Labs).
 
+**Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
+
 ## Quick start (laptop / VPS)
 
 ```bash
@@ -41,11 +43,11 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 4. Env secrets: `L1_RPC_URL` (Sepolia), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`, optional `GETH_CACHE_MB=256`.
 5. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed for those.
 
-If you previously ran with `--gcmode=archive` and hit OOMs, wipe `/data` (or recreate the disk) after upgrading so full-sync starts clean.
+**Private Service tip:** you cannot flip Private → Web on an existing service. Compare sync via **Shell** (`geth attach --exec "eth.blockNumber" /data/geth.ipc`) or add a temporary reverse-proxy Web service on Render’s private network. Do not leave an open public `eth_sendRawTransaction` surface up.
+
+If you change genesis/rollup (ForteL2 Phase 2b redeploy), **wipe `/data`** (or recreate the disk) after deploying the new image so the replica does not keep the old L1 history.
 
 Or apply `render.yaml` as a Blueprint.
-
-**Web Service note:** the entrypoint listens on Render’s `PORT` for EL HTTP when set. Prefer **Private Service** so JSON-RPC is not public (`eth_sendRawTransaction` is an open footgun).
 
 ## Sync model
 
@@ -63,7 +65,8 @@ Chain config is published here from [ForteL2](https://github.com/StephenForte/Fo
 ```bash
 # in ForteL2
 FORTEL2_ENV=.env.sepolia ./scripts/pack-replica-artifacts.sh
-# then copy replica/config/{genesis,rollup}.json into this repo and bump a release
+# then copy replica/config/{genesis,rollup}.json into this repo and push
+# wipe Mac data-sepolia AND Render /data before restarting both
 ```
 
 ## License
