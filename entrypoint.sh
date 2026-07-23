@@ -167,13 +167,15 @@ while kill -0 "$GETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
 done
 
 # Check op-node first: if it has stopped (whether alone or concurrently with
-# geth), its exit status is the one we want to propagate. Only when op-node
-# is still alive do we know geth must be the one that exited, since the loop
-# above only breaks once at least one child has died.
+# geth), its exit status is the one we want to propagate. Exit immediately
+# after reaping op-node — do not wait on GETH_PID here, or a still-running
+# geth would block container exit and look healthy while the verifier is dead.
+# The EXIT trap's cleanup kills and reaps geth. Only when op-node is still
+# alive do we know geth must be the one that exited, since the loop above
+# only breaks once at least one child has died.
 if ! kill -0 "$NODE_PID" 2>/dev/null; then
   NODE_EXIT=0
   wait "$NODE_PID" || NODE_EXIT=$?
-  wait "$GETH_PID" 2>/dev/null || true
   exit "$NODE_EXIT"
 fi
 

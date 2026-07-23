@@ -126,8 +126,17 @@ sys.exit(int(os.environ.get("NODE_EXIT", "0")))
         self.assertFalse(data_dir.exists())  # temporary workspace was cleaned up
 
     def test_propagates_op_node_failure(self):
+        # Mock geth stays up until SIGTERM. The entrypoint must exit with
+        # op-node's status promptly (cleanup kills geth) — not block on
+        # wait(GETH_PID) until the unittest subprocess timeout fires.
         result, _, _ = self.run_entrypoint({"NODE_EXIT": "42"})
         self.assertEqual(42, result.returncode)
+
+    def test_exits_promptly_when_op_node_stops_while_geth_still_runs(self):
+        result, _, _ = self.run_entrypoint(
+            {"NODE_EXIT": "0", "PROCESS_POLL_INTERVAL_SECS": "1"},
+        )
+        self.assertEqual(0, result.returncode)
 
     def test_fails_when_geth_dies_after_becoming_ready(self):
         result, _, _ = self.run_entrypoint(
