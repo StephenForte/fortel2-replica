@@ -94,6 +94,7 @@ printf 'openssl %s\n' "$*" >>"$COMMAND_LOG"
 printf '%064d\n' 0
 ''',
             )
+            jwt_file = data_dir / "jwt.txt"
             env = {
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -104,10 +105,18 @@ printf '%064d\n' 0
                 "COMMAND_LOG": str(log),
                 "PROCESS_POLL_INTERVAL_SECS": "1",
                 "GETH_READY_TIMEOUT_SECS": "2",
+                # Always pin JWT into the temp tree so an inherited JWT_FILE
+                # from the invoking shell/CI cannot escape the fixture.
+                "JWT_FILE": str(jwt_file),
             }
+            # Drop inherited JWT_SECRET so each test opts in explicitly;
+            # otherwise the openssl "unset" branch is never exercised.
+            env.pop("JWT_SECRET", None)
             env.update(extra_env or {})
             if prepare is not None:
                 prepare(data_dir, env)
+            # Re-pin after extras/prepare so callers cannot redirect JWT_FILE.
+            env["JWT_FILE"] = str(jwt_file)
             started = time.monotonic()
             result = subprocess.run(
                 ["/bin/sh", str(ROOT / "entrypoint.sh")],
@@ -162,13 +171,18 @@ printf '%064d\n' 0
         self.assertFalse(data_dir.exists())  # temporary workspace was cleaned up
 
     def test_generates_jwt_with_openssl_when_secret_unset(self):
+        def prepare(_data_dir, env):
+            # Explicitly clear even if extras/inherited env seeded a secret;
+            # this test must exercise the openssl generation branch.
+            env.pop("JWT_SECRET", None)
+
         def after(result, log, data_dir):
             jwt = data_dir / "jwt.txt"
             self.assertTrue(jwt.is_file())
             self.assertEqual("0" * 64, jwt.read_text().strip())
             self.assertEqual(0o600, jwt.stat().st_mode & 0o777)
 
-        result, log, _, _ = self.run_entrypoint(after=after)
+        result, log, _, _ = self.run_entrypoint(prepare=prepare, after=after)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("openssl rand -hex 32", log)
 
