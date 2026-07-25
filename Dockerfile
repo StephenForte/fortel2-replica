@@ -42,9 +42,10 @@ VOLUME ["/data"]
 EXPOSE 8545 9545
 
 USER fortel2
-# start-period is a floor for short boots; healthcheck.sh stays "starting"
-# (exit 0) until entrypoint writes FORTEL2_EL_READY_FILE after IPC is up, so
-# crash recovery longer than 5m does not flap unhealthy / restart.
+# During --start-period, failed probes (no FORTEL2_EL_READY_FILE yet / no IPC)
+# keep health=starting and do not count toward --retries. healthcheck.sh must
+# exit 1 while starting — exit 0 would mark healthy immediately. Raise
+# start-period if constrained disks regularly need longer than 5m recovery.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
   CMD ["/healthcheck.sh"]
 ENTRYPOINT ["/entrypoint.sh"]
