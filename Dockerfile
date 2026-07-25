@@ -22,9 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=geth /usr/local/bin/geth /usr/local/bin/geth
 COPY --from=node /usr/local/bin/op-node /usr/local/bin/op-node
 COPY entrypoint.sh /entrypoint.sh
+COPY healthcheck.sh /healthcheck.sh
 COPY config/genesis.json /config/genesis.json
 COPY config/rollup.json /config/rollup.json
-RUN chmod +x /entrypoint.sh /usr/local/bin/geth /usr/local/bin/op-node
+RUN chmod +x /entrypoint.sh /healthcheck.sh /usr/local/bin/geth /usr/local/bin/op-node
 
 # Render Web Service sets PORT; default 8545 for local / private service.
 ENV DATA_DIR=/data \
@@ -41,6 +42,9 @@ VOLUME ["/data"]
 EXPOSE 8545 9545
 
 USER fortel2
+# start-period is a floor for short boots; healthcheck.sh stays "starting"
+# (exit 0) until entrypoint writes FORTEL2_EL_READY_FILE after IPC is up, so
+# crash recovery longer than 5m does not flap unhealthy / restart.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
-  CMD geth attach --exec "eth.blockNumber" "$DATA_DIR/geth.ipc" >/dev/null 2>&1 || exit 1
+  CMD ["/healthcheck.sh"]
 ENTRYPOINT ["/entrypoint.sh"]
