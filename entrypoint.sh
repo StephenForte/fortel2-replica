@@ -9,7 +9,7 @@ GENESIS="${GENESIS:-/config/genesis.json}"
 ROLLUP="${ROLLUP:-/config/rollup.json}"
 # Render Web Service injects PORT — prefer it for EL HTTP when set.
 L2_HTTP_PORT="${PORT:-${L2_HTTP_PORT:-8545}}"
-L2_AUTH_PORT="${L2_AUTH_PORT:-8551}"
+L2_ENGINE_PORT="${L2_ENGINE_PORT:-8551}"
 L2_NODE_RPC_PORT="${L2_NODE_RPC_PORT:-9545}"
 L1_BLOCK_TIME="${L1_BLOCK_TIME:-12}"
 # Seconds to wait for op-geth IPC after start. 0 = keep waiting while the PID is alive
@@ -72,7 +72,7 @@ geth \
   --http --http.addr=0.0.0.0 --http.port="$L2_HTTP_PORT" \
   --http.api=eth,net,web3,debug,txpool \
   --http.vhosts=* --http.corsdomain=* \
-  --authrpc.addr=127.0.0.1 --authrpc.port="$L2_AUTH_PORT" --authrpc.vhosts=* \
+  --authrpc.addr=127.0.0.1 --authrpc.port="$L2_ENGINE_PORT" --authrpc.vhosts=* \
   --authrpc.jwtsecret="$JWT_FILE" \
   --syncmode=full --gcmode=full \
   --cache="$GETH_CACHE_MB" \
@@ -147,7 +147,7 @@ op-node \
   --l1.rpc-rate-limit="$L1_RPC_RATE_LIMIT" \
   --l1.beacon.ignore=true \
   --l1.beacon.slot-duration-override="$L1_BLOCK_TIME" \
-  --l2="http://127.0.0.1:${L2_AUTH_PORT}" \
+  --l2="http://127.0.0.1:${L2_ENGINE_PORT}" \
   --l2.jwt-secret="$JWT_FILE" \
   --l2.enginekind=geth \
   --rollup.config="$ROLLUP" \

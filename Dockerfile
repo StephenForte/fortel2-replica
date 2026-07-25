@@ -30,7 +30,7 @@ RUN chmod +x /entrypoint.sh /usr/local/bin/geth /usr/local/bin/op-node
 ENV DATA_DIR=/data \
     HOME=/data \
     L2_HTTP_PORT=8545 \
-    L2_AUTH_PORT=8551 \
+    L2_ENGINE_PORT=8551 \
     L2_NODE_RPC_PORT=9545 \
     L1_BLOCK_TIME=12 \
     GENESIS=/config/genesis.json \
