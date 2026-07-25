@@ -19,8 +19,9 @@ GETH_READY_TIMEOUT_SECS="${GETH_READY_TIMEOUT_SECS:-0}"
 GETH_CACHE_MB="${GETH_CACHE_MB:-256}"
 # How often to check that both long-running processes are alive.
 PROCESS_POLL_INTERVAL_SECS="${PROCESS_POLL_INTERVAL_SECS:-1}"
-# Marker for Docker HEALTHCHECK: absent = still starting (tolerate long recovery).
-# Keep off the persistent volume so a prior run cannot leave a stale ready flag.
+# Marker for Docker HEALTHCHECK: absent → probe fails (health=starting during
+# --start-period). Keep off the persistent volume so a prior run cannot leave
+# a stale ready flag.
 FORTEL2_EL_READY_FILE="${FORTEL2_EL_READY_FILE:-/tmp/fortel2-el-ready}"
 rm -f "$FORTEL2_EL_READY_FILE"
 
@@ -135,7 +136,7 @@ if [ "$ready" -ne 1 ]; then
   wait "$GETH_PID" 2>/dev/null || true
   exit 1
 fi
-# Signal HEALTHCHECK that fixed --start-period grace is no longer needed.
+# Signal HEALTHCHECK that EL is ready; probes may now succeed (healthy).
 : >"$FORTEL2_EL_READY_FILE"
 echo "op-geth engine API ready after ${i}s"
 

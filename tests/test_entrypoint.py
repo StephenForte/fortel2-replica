@@ -350,7 +350,10 @@ class HealthcheckTests(unittest.TestCase):
             timeout=5,
         )
 
-    def test_succeeds_while_entrypoint_still_starting(self):
+    def test_fails_while_entrypoint_still_starting(self):
+        # Missing marker must fail (exit 1). Exit 0 would mark the container
+        # healthy immediately; during --start-period only failures keep
+        # health=starting.
         with tempfile.TemporaryDirectory() as temp:
             data_dir = Path(temp)
             ready = data_dir / "missing-ready"
@@ -360,7 +363,7 @@ class HealthcheckTests(unittest.TestCase):
                     "FORTEL2_EL_READY_FILE": str(ready),
                 },
             )
-            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertEqual(1, result.returncode)
 
     def test_requires_attach_after_ready_marker(self):
         with tempfile.TemporaryDirectory() as temp:
