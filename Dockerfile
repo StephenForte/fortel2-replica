@@ -41,4 +41,6 @@ VOLUME ["/data"]
 EXPOSE 8545 9545
 
 USER fortel2
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
+  CMD geth attach --exec "eth.blockNumber" "$DATA_DIR/geth.ipc" >/dev/null 2>&1 || exit 1
 ENTRYPOINT ["/entrypoint.sh"]
