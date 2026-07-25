@@ -30,7 +30,7 @@ RUN chmod +x /entrypoint.sh /usr/local/bin/geth /usr/local/bin/op-node
 ENV DATA_DIR=/data \
     HOME=/data \
     L2_HTTP_PORT=8545 \
-    L2_AUTH_PORT=8551 \
+    L2_ENGINE_PORT=8551 \
     L2_NODE_RPC_PORT=9545 \
     L1_BLOCK_TIME=12 \
     GENESIS=/config/genesis.json \
@@ -41,4 +41,6 @@ VOLUME ["/data"]
 EXPOSE 8545 9545
 
 USER fortel2
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5m --retries=3 \
+  CMD geth attach --exec "eth.blockNumber" "$DATA_DIR/geth.ipc" >/dev/null 2>&1 || exit 1
 ENTRYPOINT ["/entrypoint.sh"]

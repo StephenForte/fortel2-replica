@@ -248,7 +248,7 @@ printf '%064d\n' 0
                 "GETH_CACHE_MB": "128",
                 "PORT": "8545",
                 "L2_HTTP_PORT": "9999",  # PORT must win
-                "L2_AUTH_PORT": "8559",
+                "L2_ENGINE_PORT": "8559",
                 "L2_NODE_RPC_PORT": "9549",
             },
         )
