@@ -95,6 +95,7 @@ printf '%064d\n' 0
 ''',
             )
             jwt_file = data_dir / "jwt.txt"
+            ready_file = data_dir / "fortel2-el-ready"
             env = {
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -108,6 +109,8 @@ printf '%064d\n' 0
                 # Always pin JWT into the temp tree so an inherited JWT_FILE
                 # from the invoking shell/CI cannot escape the fixture.
                 "JWT_FILE": str(jwt_file),
+                # Pin readiness marker off /tmp so tests can assert on it.
+                "FORTEL2_EL_READY_FILE": str(ready_file),
             }
             # Drop inherited JWT_SECRET so each test opts in explicitly;
             # otherwise the openssl "unset" branch is never exercised.
@@ -160,7 +163,13 @@ printf '%064d\n' 0
         self.assertIn("missing", result.stderr)
 
     def test_initializes_and_starts_both_clients_with_expected_options(self):
-        result, log, data_dir, _ = self.run_entrypoint({"JWT_SECRET": "a" * 64})
+        def after(result, log, data_dir):
+            self.assertTrue((data_dir / "fortel2-el-ready").is_file())
+
+        result, log, data_dir, _ = self.run_entrypoint(
+            {"JWT_SECRET": "a" * 64},
+            after=after,
+        )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("geth init --datadir=", log)
         self.assertIn("--cache=256", log)
@@ -303,9 +312,87 @@ printf '%064d\n' 0
         self.assertIn("op-node ", log)
 
     def test_times_out_when_ipc_attach_never_succeeds(self):
-        result, _, _, _ = self.run_entrypoint({"GETH_ATTACH_EXIT": "1"})
+        def after(result, log, data_dir):
+            self.assertFalse((data_dir / "fortel2-el-ready").exists())
+
+        result, _, _, _ = self.run_entrypoint(
+            {"GETH_ATTACH_EXIT": "1"},
+            after=after,
+        )
         self.assertEqual(1, result.returncode)
         self.assertIn("timed out waiting", result.stderr)
+
+    def test_clears_stale_ready_marker_before_wait(self):
+        def prepare(data_dir, _env):
+            marker = data_dir / "fortel2-el-ready"
+            marker.write_text("stale")
+
+        def after(result, log, data_dir):
+            # Timeout path must not leave (or recreate) a ready marker.
+            self.assertFalse((data_dir / "fortel2-el-ready").exists())
+
+        result, _, _, _ = self.run_entrypoint(
+            {"GETH_ATTACH_EXIT": "1"},
+            prepare=prepare,
+            after=after,
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("timed out waiting", result.stderr)
+
+
+class HealthcheckTests(unittest.TestCase):
+    def run_healthcheck(self, env):
+        return subprocess.run(
+            ["/bin/sh", str(ROOT / "healthcheck.sh")],
+            env={**os.environ, **env},
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+
+    def test_succeeds_while_entrypoint_still_starting(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_dir = Path(temp)
+            ready = data_dir / "missing-ready"
+            result = self.run_healthcheck(
+                {
+                    "DATA_DIR": str(data_dir),
+                    "FORTEL2_EL_READY_FILE": str(ready),
+                },
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_requires_attach_after_ready_marker(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data_dir = root / "data"
+            bin_dir = root / "bin"
+            data_dir.mkdir()
+            bin_dir.mkdir()
+            ready = data_dir / "ready"
+            ready.write_text("")
+            # Fail attach → unhealthy once marked ready.
+            geth = bin_dir / "geth"
+            geth.write_text("#!/bin/sh\nexit 1\n")
+            geth.chmod(0o755)
+            result = self.run_healthcheck(
+                {
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "DATA_DIR": str(data_dir),
+                    "FORTEL2_EL_READY_FILE": str(ready),
+                },
+            )
+            self.assertEqual(1, result.returncode)
+
+            geth.write_text("#!/bin/sh\nexit 0\n")
+            result = self.run_healthcheck(
+                {
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "DATA_DIR": str(data_dir),
+                    "FORTEL2_EL_READY_FILE": str(ready),
+                },
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
 
 
 if __name__ == "__main__":

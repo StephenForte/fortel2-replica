@@ -48,6 +48,8 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 
 **Private Service tip:** you cannot flip Private → Web on an existing service. Compare sync via **Shell** (`geth attach --exec "eth.blockNumber" /data/geth.ipc`) or add a temporary reverse-proxy Web service on Render’s private network. Do not leave an open public `eth_sendRawTransaction` surface up.
 
+**Health check / long recovery:** the image `HEALTHCHECK` stays in a starting-success state until `entrypoint.sh` marks op-geth IPC ready (`/tmp/fortel2-el-ready`). Large or crash-recovering `/data` volumes can take longer than Docker’s 5m `start-period`; this avoids flapping unhealthy and restarting mid-recovery. After readiness, probes require a successful `geth attach`.
+
 **QuickNode:** Prefer a dedicated endpoint token for this replica. Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — keep the service Private and rotate the URL if leaked.
 
 If you change genesis/rollup (ForteL2 Phase 2b redeploy), **wipe `/data`** (or recreate the disk) after deploying the new image so the replica does not keep the old L1 history.
