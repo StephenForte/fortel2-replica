@@ -46,8 +46,27 @@ case "$PROCESS_POLL_INTERVAL_SECS" in
     ;;
 esac
 
+# Near QuickNode credit cap: set L1_USE_PUBLIC_RPC=1 on Render (keeps L1_RPC_URL
+# secret for later). Publicnode is free but rate-limited — fine for tip-follow /
+# idle sync; use QuickNode (flag=0) when you need reliable catch-up.
+L1_RPC_PUBLIC_URL="${L1_RPC_PUBLIC_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
+case "${L1_USE_PUBLIC_RPC:-0}" in
+  1|true|TRUE|yes|YES|on|ON)
+    L1_RPC_URL="$L1_RPC_PUBLIC_URL"
+    L1_RPC_MODE=public
+    ;;
+  0|false|FALSE|no|NO|off|OFF|"")
+    L1_RPC_MODE=metered
+    ;;
+  *)
+    echo "ERROR: L1_USE_PUBLIC_RPC must be 0 or 1 (got: ${L1_USE_PUBLIC_RPC})" >&2
+    exit 1
+    ;;
+esac
+
 if [ -z "${L1_RPC_URL:-}" ]; then
   echo "ERROR: L1_RPC_URL is required (Ethereum Sepolia HTTPS)" >&2
+  echo "  Or set L1_USE_PUBLIC_RPC=1 to use ${L1_RPC_PUBLIC_URL}" >&2
   exit 1
 fi
 
@@ -140,12 +159,20 @@ fi
 : >"$FORTEL2_EL_READY_FILE"
 echo "op-geth engine API ready after ${i}s"
 
-# Credit-budget defaults for metered Sepolia RPC (QuickNode Build plan).
-# Override via Render env / .env. Matches ForteL2 Sepolia sequencer knobs.
-L1_HTTP_POLL="${L1_HTTP_POLL_INTERVAL:-12s}"
-L1_RPC_RATE_LIMIT="${L1_RPC_RATE_LIMIT:-20}"
+# Credit-budget defaults (Render catch-up previously burned ~3M+ credits/half-day
+# at rate-limit=20). Override via Render env / .env.
+L1_HTTP_POLL="${L1_HTTP_POLL_INTERVAL:-24s}"
+L1_RPC_RATE_LIMIT="${L1_RPC_RATE_LIMIT:-5}"
 
-echo "Starting op-node (L1 derivation / verifier; poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT})"
+# Redact path tokens (QuickNode) from logs — host only.
+L1_RPC_LOG="$L1_RPC_URL"
+case "$L1_RPC_LOG" in
+  http://*|https://*)
+    L1_RPC_LOG="$(printf '%s\n' "$L1_RPC_LOG" | sed -E 's#(https?://[^/]+).*#\1/<redacted>#')"
+    ;;
+esac
+
+echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT})"
 op-node \
   --l1="$L1_RPC_URL" \
   --l1.rpckind=standard \

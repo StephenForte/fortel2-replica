@@ -145,6 +145,43 @@ printf '%064d\n' 0
         self.assertIn("L1_RPC_URL is required", result.stderr)
         self.assertEqual("", log)
 
+    def test_public_rpc_flag_overrides_metered_url(self):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "L1_RPC_URL": "https://metered.example/secret-token",
+                "L1_USE_PUBLIC_RPC": "1",
+            },
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "op-node --l1=https://ethereum-sepolia-rpc.publicnode.com",
+            log,
+        )
+        self.assertNotIn("secret-token", log)
+        self.assertNotIn("secret-token", result.stdout)
+        self.assertIn("mode=public", result.stdout)
+        self.assertIn("ethereum-sepolia-rpc.publicnode.com/<redacted>", result.stdout)
+
+    def test_public_rpc_flag_allows_empty_l1_rpc_url(self):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "L1_RPC_URL": "",
+                "L1_USE_PUBLIC_RPC": "1",
+            },
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "op-node --l1=https://ethereum-sepolia-rpc.publicnode.com",
+            log,
+        )
+
+    def test_rejects_invalid_l1_use_public_rpc(self):
+        result, _, _, _ = self.run_entrypoint({"L1_USE_PUBLIC_RPC": "maybe"})
+        self.assertEqual(1, result.returncode)
+        self.assertIn("L1_USE_PUBLIC_RPC must be 0 or 1", result.stderr)
+
     def test_rejects_invalid_numeric_settings(self):
         for name, value, message in (
             ("GETH_READY_TIMEOUT_SECS", "soon", "non-negative integer"),
@@ -174,9 +211,10 @@ printf '%064d\n' 0
         self.assertIn("geth init --datadir=", log)
         self.assertIn("--cache=256", log)
         self.assertIn("op-node --l1=https://example.invalid", log)
-        self.assertIn("--l1.http-poll-interval=12s", log)
-        self.assertIn("--l1.rpc-rate-limit=20", log)
+        self.assertIn("--l1.http-poll-interval=24s", log)
+        self.assertIn("--l1.rpc-rate-limit=5", log)
         self.assertIn("--sequencer.enabled=false", log)
+        self.assertIn("mode=metered", result.stdout)
         self.assertFalse(data_dir.exists())  # temporary workspace was cleaned up
 
     def test_generates_jwt_with_openssl_when_secret_unset(self):
