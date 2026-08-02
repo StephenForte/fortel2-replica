@@ -24,7 +24,8 @@ import urllib.request
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
-from zoneinfo import ZoneInfo
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _env(name: str, default: str = "") -> str:
@@ -74,12 +75,11 @@ def choose_upstream(
 
 
 def redact(url: str) -> str:
-    if "://" not in url:
-        return url
-    scheme_host, _, _rest = url.partition("://")
-    host_path = url.split("://", 1)[1]
-    host = host_path.split("/", 1)[0]
-    return f"{scheme_host}://{host}/<redacted>"
+    """Keep scheme + hostname only (drop userinfo, path, query, fragment)."""
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.hostname:
+        return "<redacted>"
+    return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
 
 
 class RouterState:
@@ -93,26 +93,21 @@ class RouterState:
         )
         self.start = parse_hour("L1_RPC_BUSINESS_START", 9)
         self.end = parse_hour("L1_RPC_BUSINESS_END", 17)
-        self.tz_name = _env("TZ", "UTC")
+        self.tz_name = _env("TZ", "UTC") or "UTC"
         try:
             self.tz = ZoneInfo(self.tz_name)
-        except Exception:
-            # Missing tzdata → fall back to system local.
-            self.tz = None
+        except ZoneInfoNotFoundError as exc:
+            raise SystemExit(
+                f"ERROR: invalid TZ={self.tz_name!r} "
+                f"(install tzdata / use e.g. America/Los_Angeles): {exc}"
+            ) from exc
         self.last_reason: Optional[str] = None
         self.last_upstream: Optional[str] = None
 
     def pick(self) -> tuple[str, str]:
-        if self.tz is not None:
-            now = datetime.now(self.tz)
-        else:
-            now = datetime.now().astimezone()
+        now = datetime.now(self.tz)
         force = _env("L1_RPC_FORCE")
-        # Re-read force each request so Render env updates apply after restart
-        # of *this* process only — FORCE is also baked at start via entrypoint
-        # when using L1_USE_PUBLIC_RPC. For live override without router
-        # restart, operators set L1_RPC_FORCE in a file… keep it simple: env
-        # at process start. Document restart-on-override.
+        # FORCE is read from process env; Render env edits restart the service.
         url, reason = choose_upstream(
             now,
             metered_url=self.metered,
