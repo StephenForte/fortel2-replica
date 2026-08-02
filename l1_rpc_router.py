@@ -82,14 +82,28 @@ def redact(url: str) -> str:
     return f"{parsed.scheme}://{parsed.hostname}/<redacted>"
 
 
+def require_http_url(name: str, url: str) -> str:
+    """Reject non-http(s) URLs so urllib cannot be pointed at file:// etc."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise SystemExit(
+            f"ERROR: {name} must be an http(s) URL with a host (got {redact(url)})"
+        )
+    return url
+
+
 class RouterState:
     def __init__(self) -> None:
-        self.metered = _env("L1_RPC_METERED_URL")
-        if not self.metered:
+        metered = _env("L1_RPC_METERED_URL")
+        if not metered:
             raise SystemExit("ERROR: L1_RPC_METERED_URL is required")
-        self.public = _env(
+        self.metered = require_http_url("L1_RPC_METERED_URL", metered)
+        self.public = require_http_url(
             "L1_RPC_PUBLIC_URL",
-            "https://ethereum-sepolia-rpc.publicnode.com",
+            _env(
+                "L1_RPC_PUBLIC_URL",
+                "https://ethereum-sepolia-rpc.publicnode.com",
+            ),
         )
         self.start = parse_hour("L1_RPC_BUSINESS_START", 9)
         self.end = parse_hour("L1_RPC_BUSINESS_END", 17)
@@ -141,6 +155,8 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length > 0 else b""
         upstream, _reason = STATE.pick()
+        # Upstream is operator env (L1_RPC_*), never request-controlled; schemes
+        # restricted to http(s) at RouterState init via require_http_url.
         req = urllib.request.Request(
             upstream,
             data=body,
@@ -151,6 +167,7 @@ class Handler(BaseHTTPRequestHandler):
             },
         )
         try:
+            # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
             with urllib.request.urlopen(req, timeout=60) as resp:
                 payload = resp.read()
                 self.send_response(resp.status)
