@@ -12,6 +12,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     openssl \
+    python3 \
+    tzdata \
   && rm -rf /var/lib/apt/lists/* \
   && mkdir -p /config /data \
   && groupadd --gid 10001 fortel2 \
@@ -23,9 +25,10 @@ COPY --from=geth /usr/local/bin/geth /usr/local/bin/geth
 COPY --from=node /usr/local/bin/op-node /usr/local/bin/op-node
 COPY entrypoint.sh /entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh
+COPY l1_rpc_router.py /l1_rpc_router.py
 COPY config/genesis.json /config/genesis.json
 COPY config/rollup.json /config/rollup.json
-RUN chmod +x /entrypoint.sh /healthcheck.sh /usr/local/bin/geth /usr/local/bin/op-node
+RUN chmod +x /entrypoint.sh /healthcheck.sh /l1_rpc_router.py /usr/local/bin/geth /usr/local/bin/op-node
 
 # Render Web Service sets PORT; default 8545 for local / private service.
 ENV DATA_DIR=/data \
@@ -34,6 +37,7 @@ ENV DATA_DIR=/data \
     L2_ENGINE_PORT=8551 \
     L2_NODE_RPC_PORT=9545 \
     L1_BLOCK_TIME=12 \
+    TZ=America/Los_Angeles \
     GENESIS=/config/genesis.json \
     ROLLUP=/config/rollup.json \
     PATH="/usr/local/bin:${PATH}"

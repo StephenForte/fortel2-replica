@@ -182,6 +182,68 @@ printf '%064d\n' 0
         self.assertEqual(1, result.returncode)
         self.assertIn("L1_USE_PUBLIC_RPC must be 0 or 1", result.stderr)
 
+    def test_force_public_skips_schedule(self):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "L1_RPC_URL": "https://metered.example/token",
+                "L1_RPC_SCHEDULE": "business",
+                "L1_RPC_FORCE": "public",
+            },
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("mode=public", result.stdout)
+        self.assertIn(
+            "op-node --l1=https://ethereum-sepolia-rpc.publicnode.com",
+            log,
+        )
+        self.assertNotIn("schedule router", result.stdout)
+
+    def test_business_schedule_starts_router(self):
+        with tempfile.TemporaryDirectory() as temp:
+            router = Path(temp) / "fake_router.py"
+            router.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import os, time
+                    with open(os.environ["COMMAND_LOG"], "a") as log:
+                        log.write("router metered=" + os.environ.get("L1_RPC_METERED_URL", "") + "\\n")
+                    time.sleep(float(os.environ.get("NODE_DELAY", "30")))
+                    """
+                )
+            )
+            router.chmod(0o755)
+            result, log, _, _ = self.run_entrypoint(
+                {
+                    "JWT_SECRET": "a" * 64,
+                    "L1_RPC_URL": "https://metered.example/secret-token",
+                    "L1_RPC_SCHEDULE": "business",
+                    "L1_RPC_ROUTER_SCRIPT": str(router),
+                    "L1_RPC_LISTEN": "127.0.0.1:18545",
+                    "TZ": "America/Los_Angeles",
+                    "L1_RPC_BUSINESS_START": "9",
+                    "L1_RPC_BUSINESS_END": "17",
+                },
+            )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("mode=schedule", result.stdout)
+        self.assertIn("Starting L1 RPC schedule router", result.stdout)
+        self.assertIn("op-node --l1=http://127.0.0.1:18545", log)
+        self.assertIn("router metered=https://metered.example/secret-token", log)
+        self.assertNotIn("secret-token", result.stdout)
+
+    def test_business_schedule_requires_metered_url(self):
+        result, _, _, _ = self.run_entrypoint(
+            {
+                "L1_RPC_URL": "",
+                "L1_RPC_SCHEDULE": "business",
+                "L1_USE_PUBLIC_RPC": "0",
+            },
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("L1_RPC_SCHEDULE=business requires L1_RPC_URL", result.stderr)
+
     def test_rejects_invalid_numeric_settings(self):
         for name, value, message in (
             ("GETH_READY_TIMEOUT_SECS", "soon", "non-negative integer"),

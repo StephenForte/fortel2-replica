@@ -43,14 +43,14 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 2. Connect this repo. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
 3. Attach a **persistent disk** at `/data` (≥ 20–50 GB).
 4. Env secrets: `L1_RPC_URL` (Sepolia — **Render-only** QuickNode endpoint; do not reuse the Mac mini URL), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`, optional `GETH_CACHE_MB=256`.
-5. **Credit budget:** Blueprint defaults to `L1_USE_PUBLIC_RPC=1` (publicnode — no QuickNode credits). Keep the QuickNode URL in `L1_RPC_URL` and set `L1_USE_PUBLIC_RPC=0` only when you need reliable catch-up. Soft throttle defaults: `L1_HTTP_POLL_INTERVAL=24s`, `L1_RPC_RATE_LIMIT=5`.
+5. **Credit budget:** Blueprint defaults to `L1_RPC_SCHEDULE=business` with `TZ=America/Los_Angeles`: QuickNode **09:00–17:00**, publicnode overnight (in-container JSON-RPC router — cutover without restarting op-node). Put the Render-only QuickNode URL in `L1_RPC_URL`. Soft throttle: `L1_HTTP_POLL_INTERVAL=24s`, `L1_RPC_RATE_LIMIT=5`. **Overrides:** `L1_RPC_FORCE=public|metered` or `L1_USE_PUBLIC_RPC=1` (skip schedule).
 6. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed for those.
 
 **Private Service tip:** you cannot flip Private → Web on an existing service. Compare sync via **Shell** (`geth attach --exec "eth.blockNumber" /data/geth.ipc`) or add a temporary reverse-proxy Web service on Render’s private network. Do not leave an open public `eth_sendRawTransaction` surface up.
 
 **Health check / long recovery:** until `entrypoint.sh` marks op-geth IPC ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful `geth attach`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot.
 
-**QuickNode:** Prefer a dedicated endpoint token for this replica. Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — keep the service Private and rotate the URL if leaked. When approaching your daily/monthly credit target, set `L1_USE_PUBLIC_RPC=1` (no redeploy of secrets needed) and resume the service; flip back to `0` for metered RPC.
+**QuickNode:** Prefer a dedicated endpoint token for this replica. Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — keep the service Private and rotate the URL if leaked. Daytime schedule uses that endpoint; overnight / `L1_RPC_FORCE=public` / `L1_USE_PUBLIC_RPC=1` use publicnode.
 
 If you change genesis/rollup (ForteL2 Phase 2b redeploy), **wipe `/data`** (or recreate the disk) after deploying the new image so the replica does not keep the old L1 history.
 
