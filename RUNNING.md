@@ -8,7 +8,7 @@ The only external thing they must supply is an Ethereum **Sepolia L1 RPC URL** â
 
 - Docker + the Compose plugin (`docker compose`). Nothing else â€” no Go/Node, no Foundry. `op-geth` and `op-node` run as pinned prebuilt images from `docker-compose.yml`.
 - A machine with enough RAM. This stack wants ~2 GB; a 512 MB box will OOM (same warning as the Render note in `README.md`).
-- A **Sepolia HTTPS RPC endpoint** for `L1_RPC_URL`. The public one in `.env.example` (`https://ethereum-sepolia-rpc.publicnode.com`) works for a smoke test; a dedicated provider (e.g. QuickNode) is better for sustained sync.
+- A **Sepolia HTTPS RPC endpoint** for `L1_RPC_URL`. The public one in `.env.example` (`https://ethereum-sepolia-rpc.publicnode.com`) is the default for smoke tests and credit-safe tip-follow; a dedicated provider (e.g. QuickNode) is better for fast catch-up. On the Render single-container image, set `L1_USE_PUBLIC_RPC=1` to force publicnode without clearing the QuickNode secret.
 
 ## Steps they run
 
