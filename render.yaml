@@ -1,7 +1,10 @@
 # Render Blueprint — ForteL2 L2 verifier (stock op-geth + op-node).
 # Private by default (JSON-RPC not on the public internet).
 # Dashboard: New → Blueprint → this repo. Set L1_RPC_URL secret (QuickNode).
-# Near credit cap: set L1_USE_PUBLIC_RPC=1 (keeps QuickNode secret for later).
+#
+# Credit schedule (observe): L1_RPC_SCHEDULE=business → QuickNode 09:00–17:00
+# America/Los_Angeles, publicnode overnight. Overrides:
+#   L1_RPC_FORCE=public|metered  or  L1_USE_PUBLIC_RPC=1
 #
 # Or: New → Private Service → Runtime Docker → root Dockerfile.
 # Attach a persistent disk at /data (≥20 GB).
@@ -27,10 +30,18 @@ services:
         value: "12"
       - key: GETH_CACHE_MB
         value: "256"
-      # 1 = publicnode (no QuickNode credits); 0 = use L1_RPC_URL (metered)
+      - key: TZ
+        value: America/Los_Angeles
+      # business = 09:00–17:00 QuickNode, else publicnode (in-container router)
+      - key: L1_RPC_SCHEDULE
+        value: business
       - key: L1_USE_PUBLIC_RPC
-        value: "1"
-      # Soft self-throttle (publicnode + QuickNode catch-up)
+        value: "0"
+      - key: L1_RPC_BUSINESS_START
+        value: "9"
+      - key: L1_RPC_BUSINESS_END
+        value: "17"
+      # Soft self-throttle (publicnode + QuickNode)
       - key: L1_HTTP_POLL_INTERVAL
         value: "24s"
       - key: L1_RPC_RATE_LIMIT

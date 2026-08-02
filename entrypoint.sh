@@ -46,27 +46,87 @@ case "$PROCESS_POLL_INTERVAL_SECS" in
     ;;
 esac
 
-# Near QuickNode credit cap: set L1_USE_PUBLIC_RPC=1 on Render (keeps L1_RPC_URL
-# secret for later). Publicnode is free but rate-limited — fine for tip-follow /
-# idle sync; use QuickNode (flag=0) when you need reliable catch-up.
+# Near QuickNode credit cap / overrides (highest priority wins for direct URL):
+#   L1_RPC_FORCE=public|metered  — pin upstream (skips schedule)
+#   L1_USE_PUBLIC_RPC=1          — same as FORCE=public
+#   L1_RPC_SCHEDULE=business     — 09:00–17:00 local TZ → QuickNode, else publicnode
+#                                  via in-container JSON-RPC router (no op-node restart)
 L1_RPC_PUBLIC_URL="${L1_RPC_PUBLIC_URL:-https://ethereum-sepolia-rpc.publicnode.com}"
-case "${L1_USE_PUBLIC_RPC:-0}" in
-  1|true|TRUE|yes|YES|on|ON)
+L1_RPC_SCHEDULE="${L1_RPC_SCHEDULE:-off}"
+L1_RPC_FORCE="${L1_RPC_FORCE:-}"
+L1_RPC_ROUTER_SCRIPT="${L1_RPC_ROUTER_SCRIPT:-/l1_rpc_router.py}"
+L1_RPC_LISTEN="${L1_RPC_LISTEN:-127.0.0.1:18545}"
+L1_RPC_METERED_URL="${L1_RPC_URL:-}"
+ROUTER_PID=""
+
+case "${L1_RPC_FORCE}" in
+  public|PUBLIC)
     L1_RPC_URL="$L1_RPC_PUBLIC_URL"
     L1_RPC_MODE=public
+    L1_RPC_SCHEDULE=off
     ;;
-  0|false|FALSE|no|NO|off|OFF|"")
+  metered|METERED|quicknode|QUICKNODE|qn|QN)
+    if [ -z "${L1_RPC_METERED_URL}" ]; then
+      echo "ERROR: L1_RPC_FORCE=metered requires L1_RPC_URL (QuickNode)" >&2
+      exit 1
+    fi
+    L1_RPC_URL="$L1_RPC_METERED_URL"
     L1_RPC_MODE=metered
+    L1_RPC_SCHEDULE=off
     ;;
+  "" ) ;;
   *)
-    echo "ERROR: L1_USE_PUBLIC_RPC must be 0 or 1 (got: ${L1_USE_PUBLIC_RPC})" >&2
+    echo "ERROR: L1_RPC_FORCE must be public, metered, or empty (got: ${L1_RPC_FORCE})" >&2
     exit 1
     ;;
 esac
 
-if [ -z "${L1_RPC_URL:-}" ]; then
+if [ -z "${L1_RPC_FORCE}" ]; then
+  case "${L1_USE_PUBLIC_RPC:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      L1_RPC_URL="$L1_RPC_PUBLIC_URL"
+      L1_RPC_MODE=public
+      L1_RPC_SCHEDULE=off
+      ;;
+    0|false|FALSE|no|NO|off|OFF|"")
+      L1_RPC_MODE=metered
+      ;;
+    *)
+      echo "ERROR: L1_USE_PUBLIC_RPC must be 0 or 1 (got: ${L1_USE_PUBLIC_RPC})" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+case "${L1_RPC_SCHEDULE}" in
+  business|BUSINESS|1|true|TRUE|yes|YES|on|ON)
+    L1_RPC_SCHEDULE=business
+    ;;
+  off|OFF|0|false|FALSE|no|NO|"")
+    L1_RPC_SCHEDULE=off
+    ;;
+  *)
+    echo "ERROR: L1_RPC_SCHEDULE must be business or off (got: ${L1_RPC_SCHEDULE})" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$L1_RPC_SCHEDULE" = "business" ]; then
+  if [ -z "${L1_RPC_METERED_URL}" ]; then
+    echo "ERROR: L1_RPC_SCHEDULE=business requires L1_RPC_URL (QuickNode / metered)" >&2
+    exit 1
+  fi
+  case "$L1_RPC_METERED_URL" in
+    *publicnode*|*rpc.sepolia.org*)
+      echo "WARN: L1_RPC_URL looks like a public RPC — business hours will not use QuickNode" >&2
+      ;;
+  esac
+  L1_RPC_MODE=schedule
+fi
+
+if [ -z "${L1_RPC_URL:-}" ] && [ "$L1_RPC_SCHEDULE" != "business" ]; then
   echo "ERROR: L1_RPC_URL is required (Ethereum Sepolia HTTPS)" >&2
-  echo "  Or set L1_USE_PUBLIC_RPC=1 to use ${L1_RPC_PUBLIC_URL}" >&2
+  echo "  Or set L1_USE_PUBLIC_RPC=1 / L1_RPC_FORCE=public to use ${L1_RPC_PUBLIC_URL}" >&2
   exit 1
 fi
 
@@ -109,9 +169,15 @@ cleanup() {
   if [ -n "${NODE_PID:-}" ]; then
     kill "$NODE_PID" 2>/dev/null || true
   fi
+  if [ -n "${ROUTER_PID:-}" ]; then
+    kill "$ROUTER_PID" 2>/dev/null || true
+  fi
   kill "$GETH_PID" 2>/dev/null || true
   if [ -n "${NODE_PID:-}" ]; then
     wait "$NODE_PID" 2>/dev/null || true
+  fi
+  if [ -n "${ROUTER_PID:-}" ]; then
+    wait "$ROUTER_PID" 2>/dev/null || true
   fi
   wait "$GETH_PID" 2>/dev/null || true
 }
@@ -164,13 +230,42 @@ echo "op-geth engine API ready after ${i}s"
 L1_HTTP_POLL="${L1_HTTP_POLL_INTERVAL:-24s}"
 L1_RPC_RATE_LIMIT="${L1_RPC_RATE_LIMIT:-5}"
 
-# Redact path tokens (QuickNode) from logs — host only.
-L1_RPC_LOG="$L1_RPC_URL"
-case "$L1_RPC_LOG" in
-  http://*|https://*)
-    L1_RPC_LOG="$(printf '%s\n' "$L1_RPC_LOG" | sed -E 's#(https?://[^/]+).*#\1/<redacted>#')"
-    ;;
-esac
+if [ "$L1_RPC_MODE" = "schedule" ]; then
+  if [ ! -f "$L1_RPC_ROUTER_SCRIPT" ]; then
+    echo "ERROR: missing L1 router script at $L1_RPC_ROUTER_SCRIPT" >&2
+    exit 1
+  fi
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "ERROR: python3 required for L1_RPC_SCHEDULE=business" >&2
+    exit 1
+  fi
+  export L1_RPC_METERED_URL L1_RPC_PUBLIC_URL L1_RPC_LISTEN
+  export L1_RPC_BUSINESS_START="${L1_RPC_BUSINESS_START:-9}"
+  export L1_RPC_BUSINESS_END="${L1_RPC_BUSINESS_END:-17}"
+  # Leave L1_RPC_FORCE empty so the router follows the clock; use FORCE / USE_PUBLIC
+  # above to skip schedule entirely.
+  unset L1_RPC_FORCE 2>/dev/null || true
+  echo "Starting L1 RPC schedule router (${L1_RPC_BUSINESS_START}:00-${L1_RPC_BUSINESS_END}:00 tz=${TZ:-UTC} listen=${L1_RPC_LISTEN})"
+  python3 "$L1_RPC_ROUTER_SCRIPT" &
+  ROUTER_PID=$!
+  # Brief wait so op-node does not race an unbound port.
+  sleep 1
+  if ! kill -0 "$ROUTER_PID" 2>/dev/null; then
+    echo "ERROR: L1 RPC router exited immediately" >&2
+    wait "$ROUTER_PID" || true
+    exit 1
+  fi
+  L1_RPC_URL="http://${L1_RPC_LISTEN}"
+  L1_RPC_LOG="http://${L1_RPC_LISTEN} (schedule ${L1_RPC_BUSINESS_START}:00-${L1_RPC_BUSINESS_END}:00 ${TZ:-UTC})"
+else
+  # Redact path tokens (QuickNode) from logs — host only.
+  L1_RPC_LOG="$L1_RPC_URL"
+  case "$L1_RPC_LOG" in
+    http://*|https://*)
+      L1_RPC_LOG="$(printf '%s\n' "$L1_RPC_LOG" | sed -E 's#(https?://[^/]+).*#\1/<redacted>#')"
+      ;;
+  esac
+fi
 
 echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT})"
 op-node \
@@ -194,9 +289,13 @@ op-node \
 NODE_PID=$!
 
 # Waiting for op-node alone can leave a superficially healthy container running
-# forever after geth crashes. Supervise both children and propagate op-node's
+# forever after geth crashes. Supervise children and propagate op-node's
 # status when it is the first process to stop.
 while kill -0 "$GETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
+  if [ -n "${ROUTER_PID}" ] && ! kill -0 "$ROUTER_PID" 2>/dev/null; then
+    echo "ERROR: L1 RPC router exited while op-node was running" >&2
+    exit 1
+  fi
   sleep "$PROCESS_POLL_INTERVAL_SECS"
 done
 
