@@ -81,6 +81,36 @@ class ChooseUpstreamTests(unittest.TestCase):
         )
         self.assertNotIn("secret", redact(METERED))
 
+    def test_redact_strips_query_and_userinfo(self):
+        self.assertEqual(
+            "https://rpc.example/<redacted>",
+            redact("https://rpc.example?api_key=secret"),
+        )
+        self.assertEqual(
+            "https://rpc.example/<redacted>",
+            redact("https://user:pass@rpc.example/path?token=abc"),
+        )
+        self.assertNotIn("secret", redact("https://rpc.example?api_key=secret"))
+        self.assertNotIn("pass", redact("https://user:pass@rpc.example/"))
+
+
+class RouterStateTimezoneTests(unittest.TestCase):
+    def test_invalid_tz_fails_startup(self):
+        import os
+        from unittest import mock
+
+        from l1_rpc_router import RouterState
+
+        env = {
+            "L1_RPC_METERED_URL": METERED,
+            "TZ": "America/Los_Anglees",  # typo
+        }
+        with mock.patch.dict(os.environ, env, clear=False):
+            with self.assertRaises(SystemExit) as ctx:
+                RouterState()
+        self.assertIn("invalid TZ", str(ctx.exception))
+        self.assertIn("America/Los_Anglees", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,11 +32,13 @@ services:
         value: "256"
       - key: TZ
         value: America/Los_Angeles
-      # business = 09:00–17:00 QuickNode, else publicnode (in-container router)
+      # business = 09:00–17:00 QuickNode (L1_RPC_URL), else public overnight
       - key: L1_RPC_SCHEDULE
         value: business
       - key: L1_USE_PUBLIC_RPC
         value: "0"
+      - key: L1_RPC_PUBLIC_URL
+        value: https://ethereum-sepolia-rpc.publicnode.com
       - key: L1_RPC_BUSINESS_START
         value: "9"
       - key: L1_RPC_BUSINESS_END
