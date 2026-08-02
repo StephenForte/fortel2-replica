@@ -93,6 +93,18 @@ class ChooseUpstreamTests(unittest.TestCase):
         self.assertNotIn("secret", redact("https://rpc.example?api_key=secret"))
         self.assertNotIn("pass", redact("https://user:pass@rpc.example/"))
 
+    def test_require_http_url_rejects_file_scheme(self):
+        from l1_rpc_router import require_http_url
+
+        with self.assertRaises(SystemExit) as ctx:
+            require_http_url("L1_RPC_PUBLIC_URL", "file:///etc/passwd")
+        self.assertIn("http(s)", str(ctx.exception))
+
+    def test_require_http_url_accepts_https(self):
+        from l1_rpc_router import require_http_url
+
+        self.assertEqual(PUBLIC, require_http_url("L1_RPC_PUBLIC_URL", PUBLIC))
+
 
 class RouterStateTimezoneTests(unittest.TestCase):
     def test_invalid_tz_fails_startup(self):
