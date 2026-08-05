@@ -17,6 +17,10 @@ L1_BLOCK_TIME="${L1_BLOCK_TIME:-12}"
 GETH_READY_TIMEOUT_SECS="${GETH_READY_TIMEOUT_SECS:-0}"
 # geth default --cache is 1024MB and will OOM Render Starter (512MB). Keep low on small plans.
 GETH_CACHE_MB="${GETH_CACHE_MB:-256}"
+# Optional Go soft memory caps (Go 1.19+). Set on Render Standard so op-geth + op-node +
+# the L1 router stay under the cgroup limit during L1 derivation bursts. Unset on ≥4GB hosts.
+GETH_GOMEMLIMIT="${GETH_GOMEMLIMIT:-}"
+OP_NODE_GOMEMLIMIT="${OP_NODE_GOMEMLIMIT:-}"
 # How often to check that both long-running processes are alive.
 PROCESS_POLL_INTERVAL_SECS="${PROCESS_POLL_INTERVAL_SECS:-1}"
 # Marker for Docker HEALTHCHECK: absent → probe fails (health=starting during
@@ -150,8 +154,10 @@ if [ ! -d "$DATA_DIR/geth" ]; then
   geth init --datadir="$DATA_DIR" --state.scheme=hash "$GENESIS"
 fi
 
-echo "Starting op-geth (verifier EL) on :$L2_HTTP_PORT (cache=${GETH_CACHE_MB}MB, gcmode=full)"
-geth \
+GETH_MEM_LOG=""
+[ -n "$GETH_GOMEMLIMIT" ] && GETH_MEM_LOG=", gomemlimit=${GETH_GOMEMLIMIT}"
+echo "Starting op-geth (verifier EL) on :$L2_HTTP_PORT (cache=${GETH_CACHE_MB}MB, gcmode=full${GETH_MEM_LOG})"
+env ${GETH_GOMEMLIMIT:+GOMEMLIMIT=$GETH_GOMEMLIMIT} geth \
   --datadir="$DATA_DIR" \
   --http --http.addr=0.0.0.0 --http.port="$L2_HTTP_PORT" \
   --http.api=eth,net,web3,debug,txpool \
@@ -160,6 +166,7 @@ geth \
   --authrpc.jwtsecret="$JWT_FILE" \
   --syncmode=full --gcmode=full \
   --cache="$GETH_CACHE_MB" \
+  --cache.preimages=false \
   --rollup.disabletxpoolgossip=true \
   --nodiscover --maxpeers=0 \
   --verbosity=3 &
@@ -267,8 +274,10 @@ else
   esac
 fi
 
-echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT})"
-op-node \
+NODE_MEM_LOG=""
+[ -n "$OP_NODE_GOMEMLIMIT" ] && NODE_MEM_LOG=" gomemlimit=${OP_NODE_GOMEMLIMIT}"
+echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT}${NODE_MEM_LOG})"
+env ${OP_NODE_GOMEMLIMIT:+GOMEMLIMIT=$OP_NODE_GOMEMLIMIT} op-node \
   --l1="$L1_RPC_URL" \
   --l1.rpckind=standard \
   --l1.trustrpc=true \

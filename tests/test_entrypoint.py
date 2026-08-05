@@ -40,6 +40,8 @@ class EntrypointTests(unittest.TestCase):
                 r'''#!/usr/bin/env python3
 import os, signal, socket, sys, time
 with open(os.environ["COMMAND_LOG"], "a") as log:
+    if os.environ.get("GOMEMLIMIT"):
+        log.write("geth-env GOMEMLIMIT=" + os.environ["GOMEMLIMIT"] + "\n")
     log.write("geth " + " ".join(sys.argv[1:]) + "\n")
 if sys.argv[1:2] == ["init"]:
     os.makedirs(os.path.join(os.environ["DATA_DIR"], "geth"), exist_ok=True)
@@ -82,6 +84,8 @@ while True:
                 r'''#!/usr/bin/env python3
 import os, sys, time
 with open(os.environ["COMMAND_LOG"], "a") as log:
+    if os.environ.get("GOMEMLIMIT"):
+        log.write("op-node-env GOMEMLIMIT=" + os.environ["GOMEMLIMIT"] + "\n")
     log.write("op-node " + " ".join(sys.argv[1:]) + "\n")
 time.sleep(float(os.environ.get("NODE_DELAY", "0")))
 sys.exit(int(os.environ.get("NODE_EXIT", "0")))
@@ -272,6 +276,7 @@ printf '%064d\n' 0
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("geth init --datadir=", log)
         self.assertIn("--cache=256", log)
+        self.assertIn("--cache.preimages=false", log)
         self.assertIn("op-node --l1=https://example.invalid", log)
         self.assertIn("--l1.http-poll-interval=24s", log)
         self.assertIn("--l1.rpc-rate-limit=5", log)
@@ -370,6 +375,20 @@ printf '%064d\n' 0
         self.assertIn("--l1.beacon.slot-duration-override=6", log)
         self.assertIn("--l2=http://127.0.0.1:8559", log)
         self.assertIn("--rpc.port=9549", log)
+
+    def test_honors_gomemlimit_overrides(self):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "GETH_GOMEMLIMIT": "700MiB",
+                "OP_NODE_GOMEMLIMIT": "768MiB",
+            },
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("geth-env GOMEMLIMIT=700MiB", log)
+        self.assertIn("op-node-env GOMEMLIMIT=768MiB", log)
+        self.assertIn("gomemlimit=700MiB", result.stdout)
+        self.assertIn("gomemlimit=768MiB", result.stdout)
 
     def test_propagates_op_node_failure(self):
         # Mock geth stays up until SIGTERM. The entrypoint must exit with
