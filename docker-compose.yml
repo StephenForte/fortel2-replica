@@ -32,6 +32,7 @@ services:
           --authrpc.jwtsecret=/config/jwt.txt \
           --syncmode=full --gcmode=full \
           --cache=${GETH_CACHE_MB:-256} \
+          --cache.preimages=false \
           --rollup.disabletxpoolgossip=true \
           --nodiscover --maxpeers=0
     ports:

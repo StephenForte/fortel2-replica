@@ -37,12 +37,14 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 
 ## Render
 
-**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node in one container. Set `GETH_CACHE_MB=256` (default in entrypoint); do not leave geth’s 1024MB default.
+**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node (+ optional L1 router) in one container. Blueprint defaults: `GETH_CACHE_MB=128`, `GETH_GOMEMLIMIT=700MiB`, `OP_NODE_GOMEMLIMIT=768MiB`. Do not leave geth’s 1024MB default.
+
+**OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. If Render kills the service with exit 137 / “Ran out of memory”, confirm the plan is **Standard or Pro** (not Starter), redeploy with the Blueprint memory env vars above, or bump to **Pro (4GB)** if spikes persist after tuning.
 
 1. **New → Private Service** (preferred) or **Web Service**.
 2. Connect this repo. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
 3. Attach a **persistent disk** at `/data` (≥ 20–50 GB).
-4. Env secrets: `L1_RPC_URL` (Sepolia — **Render-only** QuickNode endpoint; do not reuse the Mac mini URL), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`, optional `GETH_CACHE_MB=256`.
+4. Env secrets: `L1_RPC_URL` (Sepolia — **Render-only** QuickNode endpoint; do not reuse the Mac mini URL), optional `JWT_SECRET`, `L1_BLOCK_TIME=12`. Memory knobs (Blueprint defaults): `GETH_CACHE_MB=128`, `GETH_GOMEMLIMIT=700MiB`, `OP_NODE_GOMEMLIMIT=768MiB`.
 5. **Credit budget:** Blueprint defaults to `L1_RPC_SCHEDULE=business` with `TZ=America/Los_Angeles`: QuickNode **09:00–17:00**, publicnode overnight (in-container JSON-RPC router — cutover without restarting op-node). Put the Render-only QuickNode URL in `L1_RPC_URL`. Soft throttle: `L1_HTTP_POLL_INTERVAL=24s`, `L1_RPC_RATE_LIMIT=5`. **Overrides:** `L1_RPC_FORCE=public|metered` or `L1_USE_PUBLIC_RPC=1` (skip schedule).
 6. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed for those.
 
