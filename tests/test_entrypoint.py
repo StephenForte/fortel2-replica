@@ -482,7 +482,9 @@ printf '%064d\n' 0
         result, log, _, _ = self.run_entrypoint(
             {
                 "JWT_SECRET": "a" * 64,
-                "GETH_EXIT_AFTER_SECS": "0.5",
+                # Must exceed entrypoint's `sleep 1` after filter start, or geth
+                # dies during that sleep and cleanup SIGTERMs op-node before it logs.
+                "GETH_EXIT_AFTER_SECS": "2.5",
                 "GETH_EXIT_CODE": "7",
                 "NODE_DELAY": "5",
                 "PROCESS_POLL_INTERVAL_SECS": "1",

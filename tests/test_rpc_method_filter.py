@@ -125,6 +125,100 @@ class RpcMethodFilterTests(unittest.TestCase):
         self.assertIsInstance(rejects[1], dict)
         self.assertIn("eth_sendRawTransaction", rejects[1]["error"]["message"])
 
+    def test_oversize_content_length_does_not_smuggle(self):
+        """Pipelined second JSON-RPC after oversize CL must not be a second request."""
+        import importlib.util
+        import json
+        import os
+        import socket
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+
+        seen: list = []
+
+        class Upstream(BaseHTTPRequestHandler):
+            server_version = "test-upstream/1"
+            sys_version = ""
+
+            def log_message(self, *_args) -> None:
+                return
+
+            def do_POST(self) -> None:
+                n = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(n)
+                seen.append(json.loads(body.decode()))
+                payload = b'{"jsonrpc":"2.0","id":1,"result":"0x1"}'
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+
+        up = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        threading.Thread(target=up.serve_forever, daemon=True).start()
+        os.environ["L2_RPC_FILTER_UPSTREAM"] = f"http://127.0.0.1:{up.server_address[1]}"
+        mod.STATE = mod.FilterState()
+        filt = ThreadingHTTPServer(("127.0.0.1", 0), mod.Handler)
+        threading.Thread(target=filt.serve_forever, daemon=True).start()
+        try:
+            second = b'{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+            sock = socket.create_connection(("127.0.0.1", filt.server_address[1]), timeout=5)
+            sock.sendall(
+                b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                + f"Content-Length: {mod.MAX_BODY_BYTES + 1}\r\n\r\n".encode()
+                + b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+                + f"Content-Length: {len(second)}\r\n\r\n".encode()
+                + second
+            )
+            data = b""
+            while True:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            sock.close()
+            self.assertEqual(1, data.count(b"HTTP/1.1 "), data[:300])
+            self.assertIn(b"400", data.split(b"\r\n", 1)[0])
+            self.assertIn(b"Connection: close", data)
+            self.assertEqual([], seen)
+        finally:
+            filt.shutdown()
+            filt.server_close()
+            up.shutdown()
+            up.server_close()
+
+    def test_long_chunk_size_line_without_newline_is_capped(self):
+        import importlib.util
+        import io
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        buf = io.BytesIO(b"a" * (mod.MAX_LINE_BYTES + 4096))
+        with self.assertRaises(ValueError) as ctx:
+            mod.read_chunked_body(buf)
+        self.assertIn("header line exceeds", str(ctx.exception))
+        self.assertLessEqual(buf.tell(), mod.MAX_LINE_BYTES + 1)
+
+    def test_trailer_flood_is_capped(self):
+        import importlib.util
+        import io
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        flood = b"0\r\n" + b"x:1\r\n" * (mod.MAX_TRAILER_LINES + 8) + b"\r\n"
+        with self.assertRaises(ValueError) as ctx:
+            mod.read_chunked_body(io.BytesIO(flood))
+        self.assertIn("trailer", str(ctx.exception).lower())
+
 
 if __name__ == "__main__":
     unittest.main()

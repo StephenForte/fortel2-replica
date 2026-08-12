@@ -53,10 +53,10 @@ Filter source: vendored from ForteL2 `scripts/rpc-method-filter.py` (see header 
 
 ### Revert (public → private)
 
-Render cannot flip Web ↔ Private in place. To make the service private again:
+Render cannot flip Web ↔ Private in place, and **cannot reattach an existing disk to another service**. To go private again:
 
-1. Note the current disk (`/data`) and env vars.
-2. Create a **new Private Service** (`type: pserv` in `render.yaml`, or Dashboard → Private Service) from this repo, attach the same disk (or a copy), paste the same env vars, deploy.
+1. Recreate as a Private Service (`type: pserv` in `render.yaml`, or Dashboard → Private Service) with a **new** disk.
+2. Paste the same env vars. Accept a full L2 resync (new disk is empty).
 3. Delete or suspend the public Web Service once the private one is healthy.
 4. Optionally set `render.yaml` `type:` back to `pserv` and remove `healthCheckPath` so Blueprint matches.
 
@@ -77,7 +77,7 @@ Render Blueprints apply cleanly to **new** services. If you already have a Priva
 5. Set every env var in the table below (secrets first).
 6. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
-If you still have a **Private Service** from before MR-2: Render cannot convert it to Web in place — recreate as a Web Service and reattach `/data` (see **Revert** above for the reverse).
+If you still have a **Private Service** from before MR-2: Render cannot convert it to Web in place and **cannot reattach `/data` to a new service**. Deploy this image onto the existing Private Service (filter on `PORT`; geth/op-node stay loopback). A public URL requires a new Web Service with a **new** disk and a full resync.
 
 #### Required secrets
 

@@ -12,6 +12,8 @@ MR-2 adaptations in this repo (keep in sync when pulling fixes from ForteL2):
   - Upstream remains loopback-only
   - CORS (OPTIONS + ACAO) for browser clients hitting the public Render URL
   - JSON-RPC notifications (no "id") never get a Response object, including rejects
+  - HTTP/1.1 keep-alive: unread/oversize bodies close the connection (no smuggle)
+  - Chunk-size lines, trailers, and trailer count share MAX_BODY_BYTES / line caps
 
 Fixes for the filter logic must be applied in BOTH repos (ForteL2 first, then here).
 
@@ -110,7 +112,10 @@ JSONRPC_PARSE_ERROR = -32700
 JSONRPC_SERVER_ERROR = -32000
 
 # Cap request bodies — cloudflared may deliver chunked; never read unbounded.
+# Size lines and trailers share this budget; a payload-only cap is not enough.
 MAX_BODY_BYTES = 1_048_576  # 1 MiB
+MAX_LINE_BYTES = 8192  # chunk-size lines and trailer lines
+MAX_TRAILER_LINES = 64
 
 # Sentinel from filter_single: request must not reach upstream and must not
 # produce a JSON-RPC Response (notification with absent "id").
@@ -240,19 +245,38 @@ def _transfer_encoding_is_chunked(te_header: str) -> bool:
     return bool(parts) and parts[-1] == "chunked"
 
 
+def _readline_bounded(rfile, max_line: int = MAX_LINE_BYTES) -> bytes:
+    """Read one line; reject if it exceeds max_line (including CRLF)."""
+    line = rfile.readline(max_line + 1)
+    if not line:
+        return b""
+    if b"\n" not in line or len(line) > max_line:
+        raise ValueError(f"header line exceeds max {max_line} bytes")
+    return line
+
+
 def read_chunked_body(rfile, max_bytes: int = MAX_BODY_BYTES) -> bytes:
-    """Decode an HTTP/1.1 chunked body; reject if total exceeds max_bytes."""
+    """Decode an HTTP/1.1 chunked body; reject if total exceeds max_bytes.
+
+    Size lines, chunk payloads, chunk CRLFs, and trailers all count toward
+    max_bytes. Line length and trailer count are capped separately so a
+    missing newline cannot grow RSS without bound.
+    """
     chunks: list[bytes] = []
     total = 0
+    trailer_count = 0
     while True:
-        size_line = rfile.readline()
+        size_line = _readline_bounded(rfile)
         if not size_line:
             raise ValueError("truncated chunked body")
-        size_line = size_line.strip()
-        if b";" in size_line:
-            size_line = size_line.split(b";", 1)[0].strip()
+        total += len(size_line)
+        if total > max_bytes:
+            raise ValueError(f"body exceeds max {max_bytes} bytes")
+        size_field = size_line.strip()
+        if b";" in size_field:
+            size_field = size_field.split(b";", 1)[0].strip()
         try:
-            size = int(size_line, 16)
+            size = int(size_field, 16)
         except ValueError as exc:
             raise ValueError("bad chunk size") from exc
         if size < 0:
@@ -260,11 +284,19 @@ def read_chunked_body(rfile, max_bytes: int = MAX_BODY_BYTES) -> bytes:
         if size == 0:
             # Consume optional trailers until the terminating blank line.
             while True:
-                trailer = rfile.readline()
-                if trailer in (b"\r\n", b"\n", b""):
+                trailer = _readline_bounded(rfile)
+                if not trailer:
+                    raise ValueError("truncated chunked trailers")
+                total += len(trailer)
+                if total > max_bytes:
+                    raise ValueError(f"body exceeds max {max_bytes} bytes")
+                if trailer in (b"\r\n", b"\n"):
                     break
+                trailer_count += 1
+                if trailer_count > MAX_TRAILER_LINES:
+                    raise ValueError(f"too many trailer lines (max {MAX_TRAILER_LINES})")
             break
-        if total + size > max_bytes:
+        if total + size + 2 > max_bytes:
             raise ValueError(f"body exceeds max {max_bytes} bytes")
         data = rfile.read(size)
         if len(data) < size:
@@ -274,6 +306,7 @@ def read_chunked_body(rfile, max_bytes: int = MAX_BODY_BYTES) -> bytes:
         crlf = rfile.read(2)
         if crlf != b"\r\n":
             raise ValueError("missing chunk CRLF")
+        total += 2
     return b"".join(chunks)
 
 
@@ -346,9 +379,21 @@ def _add_cors_headers(handler: BaseHTTPRequestHandler) -> None:
     handler.send_header("Access-Control-Max-Age", CORS_MAX_AGE)
 
 
-def _write_json(handler: BaseHTTPRequestHandler, status: int, payload: bytes, ctype: str = "application/json") -> None:
+def _write_json(
+    handler: BaseHTTPRequestHandler,
+    status: int,
+    payload: bytes,
+    ctype: str = "application/json",
+    close: bool = False,
+) -> None:
     handler.send_response(status)
     _add_cors_headers(handler)
+    if close:
+        # RFC 9112 §9.6: a server that does not consume the entire request
+        # body MUST close rather than reuse the connection. Keep-alive after
+        # an unread oversize/chunked error desyncs the next request (smuggle).
+        handler.send_header("Connection", "close")
+        handler.close_connection = True
     handler.send_header("Content-Type", ctype)
     handler.send_header("Content-Length", str(len(payload)))
     handler.end_headers()
@@ -446,7 +491,7 @@ class Handler(BaseHTTPRequestHandler):
             body = read_http_body(self.headers, self.rfile)
         except ValueError as exc:
             msg = reject_response(None, f"bad request body: {exc}", JSONRPC_INVALID_REQUEST)
-            _write_json(self, 400, json.dumps(msg).encode())
+            _write_json(self, 400, json.dumps(msg).encode(), close=True)
             return
         ctype = self.headers.get("Content-Type", "application/json")
         try:
@@ -540,6 +585,23 @@ def self_test() -> None:
     assert (
         read_http_body(_Hdr({"Transfer-Encoding": "chunked"}), io.BytesIO(chunked)) == raw
     )
+
+    # Unbounded chunk-size line (no newline) must reject without slurping the rest.
+    long_line = io.BytesIO(b"a" * (MAX_LINE_BYTES + 64))
+    try:
+        read_chunked_body(long_line)
+        raise AssertionError("oversize chunk-size line should have failed")
+    except ValueError as exc:
+        assert "header line exceeds" in str(exc)
+    assert long_line.tell() <= MAX_LINE_BYTES + 1
+
+    # Trailer flood: many short lines stay under MAX_BODY_BYTES but must still cap.
+    flood = b"0\r\n" + b"x:1\r\n" * (MAX_TRAILER_LINES + 5) + b"\r\n"
+    try:
+        read_chunked_body(io.BytesIO(flood))
+        raise AssertionError("trailer flood should have failed")
+    except ValueError as exc:
+        assert "trailer" in str(exc).lower()
 
     seen: list[Any] = []
     upstream_status = {"code": 200}
@@ -735,6 +797,30 @@ def self_test() -> None:
     assert b"Access-Control-Allow-Methods:" in opt_hdr
     assert b"POST" in opt_hdr
     assert b"Access-Control-Allow-Headers:" in opt_hdr
+
+    # Keep-alive desync: oversize Content-Length 400 must close; a pipelined
+    # second POST on the same socket must not be handled as another request.
+    seen.clear()
+    second = b'{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+    smuggle = socket.create_connection(("127.0.0.1", filt_port), timeout=5)
+    smuggle.sendall(
+        b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {MAX_BODY_BYTES + 1}\r\n\r\n".encode()
+        + b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\n"
+        + f"Content-Length: {len(second)}\r\n\r\n".encode()
+        + second
+    )
+    smuggled = b""
+    while True:
+        chunk = smuggle.recv(4096)
+        if not chunk:
+            break
+        smuggled += chunk
+    smuggle.close()
+    assert smuggled.count(b"HTTP/1.1 ") == 1, smuggled[:200]
+    assert b"400" in smuggled.split(b"\r\n", 1)[0]
+    assert b"Connection: close" in smuggled
+    assert seen == []  # second POST must not reach upstream
 
     filt.shutdown()
     up.shutdown()

@@ -5,11 +5,11 @@
 # Blueprint env vars apply to NEW services only. Existing services do not sync
 # from this file — copy the tables in README.md → Render → Manual setup.
 #
-# IMPORTANT: Render cannot convert Private Service (pserv) → Web Service in place.
-# If fortel2-replica is still a Private Service, create a new Web Service from
-# this Blueprint (or Dashboard) and attach/migrate the /data disk. To revert to
-# private: recreate as type pserv (or Dashboard → Private Service) with the same
-# disk/env; see README "Public read RPC → Revert".
+# IMPORTANT: Render cannot convert Private Service (pserv) → Web Service in place
+# and cannot reattach an existing disk to another service. Merge this image onto
+# the existing pserv (filter on PORT). A public URL means a new Web Service +
+# new disk + full resync. Revert: recreate pserv with a new disk; accept resync.
+# See README "Public read RPC → Revert".
 #
 # Dashboard: New → Blueprint → this repo. Set L1_RPC_URL secret (QuickNode).
 #
