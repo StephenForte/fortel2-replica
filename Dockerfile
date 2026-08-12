@@ -26,14 +26,18 @@ COPY --from=node /usr/local/bin/op-node /usr/local/bin/op-node
 COPY entrypoint.sh /entrypoint.sh
 COPY healthcheck.sh /healthcheck.sh
 COPY l1_rpc_router.py /l1_rpc_router.py
+COPY rpc-method-filter.py /rpc-method-filter.py
 COPY config/genesis.json /config/genesis.json
 COPY config/rollup.json /config/rollup.json
-RUN chmod +x /entrypoint.sh /healthcheck.sh /l1_rpc_router.py /usr/local/bin/geth /usr/local/bin/op-node
+RUN chmod +x /entrypoint.sh /healthcheck.sh /l1_rpc_router.py /rpc-method-filter.py \
+    /usr/local/bin/geth /usr/local/bin/op-node
 
-# Render Web Service sets PORT; default 8545 for local / private service.
+# Render Web Service sets PORT (often 10000) for the public method filter.
+# op-geth HTTP stays on loopback L2_GETH_HTTP_PORT; op-node on loopback :9545.
 ENV DATA_DIR=/data \
     HOME=/data \
     L2_HTTP_PORT=8545 \
+    L2_GETH_HTTP_PORT=8546 \
     L2_ENGINE_PORT=8551 \
     L2_NODE_RPC_PORT=9545 \
     L1_BLOCK_TIME=12 \
@@ -43,7 +47,7 @@ ENV DATA_DIR=/data \
     PATH="/usr/local/bin:${PATH}"
 
 VOLUME ["/data"]
-EXPOSE 8545 9545
+EXPOSE 8545
 
 USER fortel2
 # During --start-period, failed probes (no FORTEL2_EL_READY_FILE yet / no IPC)

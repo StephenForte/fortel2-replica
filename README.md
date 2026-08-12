@@ -35,6 +35,31 @@ cast block-number --rpc-url http://127.0.0.1:9545
 cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l2.number, unsafe:.unsafe_l2.number}'
 ```
 
+## Public read RPC
+
+The Render deploy is a **public Web Service**. Clients hit a **method-filter** on Render’s published `PORT` (default **10000**). op-geth listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed.
+
+| Fact | Detail |
+|---|---|
+| URL | `https://<service>.onrender.com/` (Dashboard → service → URL) |
+| Surface | Read-only JSON-RPC allowlist (`eth` / `net` / `web3` reads + log/block filters) |
+| Writes | `eth_sendRawTransaction` is **rejected** (`-32601 method not allowed`) |
+| Lag | ~3 minutes behind the sequencer is **normal** — the replica derives from L1 batches, not P2P tip-follow |
+| Nightly window | Sequencer sleeps **23:45–03:00** `America/Los_Angeles`. The replica keeps serving whatever tip it already derived; new L2 progress pauses until the sequencer posts batches again after wake |
+| Filters | `eth_newFilter` / `eth_newBlockFilter` IDs are in-memory and die on every deploy/restart — clients must re-create on filter-not-found (not an outage) |
+| Rate limiting | Render provides platform DDoS protection only — **no per-RPC / per-IP request rate limit** on Standard. Do not invent an in-process limiter here; that is an operator decision |
+
+Filter source: vendored from ForteL2 `scripts/rpc-method-filter.py` (see header in `rpc-method-filter.py`). **Security fixes must be applied in both repos** (ForteL2 first, then copy here).
+
+### Revert (public → private)
+
+Render cannot flip Web ↔ Private in place, and **cannot reattach an existing disk to another service**. To go private again:
+
+1. Recreate as a Private Service (`type: pserv` in `render.yaml`, or Dashboard → Private Service) with a **new** disk.
+2. Paste the same env vars. Accept a full L2 resync (new disk is empty).
+3. Delete or suspend the public Web Service once the private one is healthy.
+4. Optionally set `render.yaml` `type:` back to `pserv` and remove `healthCheckPath` so Blueprint matches.
+
 ## Render
 
 **RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node (+ optional L1 router) in one container. Do not leave geth’s 1024MB default cache.
@@ -45,12 +70,14 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 
 Render Blueprints apply cleanly to **new** services. If you already have a Private Service, env vars from `render.yaml` usually **do not** sync on redeploy — set them in the dashboard (**Environment** tab) or recreate the service from the Blueprint.
 
-1. **New → Private Service** (preferred) or **Web Service**.
-2. Connect this repo. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
-3. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
-4. Attach a **persistent disk** mounted at `/data` (≥ 20 GB).
+1. **New → Web Service** (public read RPC). Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
+2. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
+3. Attach a **persistent disk** mounted at `/data` (≥ 20 GB).
+4. Health check path: `/` (method filter GET).
 5. Set every env var in the table below (secrets first).
 6. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
+
+If you still have a **Private Service** from before MR-2: Render cannot convert it to Web in place and **cannot reattach `/data` to a new service**. Deploy this image onto the existing Private Service (filter on `PORT`; geth/op-node stay loopback). A public URL requires a new Web Service with a **new** disk and a full resync.
 
 #### Required secrets
 
@@ -94,11 +121,11 @@ Copy these into **Environment → Environment Variables** if Blueprint sync did 
 
 Or apply `render.yaml` as a Blueprint on a **new** service.
 
-**Private Service tip:** you cannot flip Private → Web on an existing service. Compare sync via **Shell** (`geth attach --exec "eth.blockNumber" /data/geth.ipc`) or add a temporary reverse-proxy Web service on Render’s private network. Do not leave an open public `eth_sendRawTransaction` surface up.
+**Web Shell tip:** the image has no `curl`. Use dashboard **Shell** with `python3`/`urllib` against `http://127.0.0.1:$PORT` (filter) or `geth attach --exec "eth.blockNumber" /data/geth.ipc`. op-node is `http://127.0.0.1:9545` (loopback only).
 
-**Health check / long recovery:** until `entrypoint.sh` marks op-geth IPC ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful `geth attach`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot.
+**Health check / long recovery:** until `entrypoint.sh` marks op-geth IPC ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful `geth attach`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot. Render’s HTTP `healthCheckPath: /` hits the method filter once it is up.
 
-**QuickNode:** Prefer a dedicated endpoint token for this replica. Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — keep the service Private and rotate the URL if leaked. Daytime schedule uses that endpoint; overnight / `L1_RPC_FORCE=public` / `L1_USE_PUBLIC_RPC=1` use publicnode.
+**QuickNode:** Prefer a dedicated endpoint token for this replica. Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — rotate the URL if leaked. Daytime schedule uses that endpoint; overnight / `L1_RPC_FORCE=public` / `L1_USE_PUBLIC_RPC=1` use publicnode.
 
 If you change genesis/rollup (ForteL2 Phase 2b redeploy), **wipe `/data`** (or recreate the disk) after deploying the new image so the replica does not keep the old L1 history.
 

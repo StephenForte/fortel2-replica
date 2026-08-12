@@ -98,6 +98,26 @@ printf 'openssl %s\n' "$*" >>"$COMMAND_LOG"
 printf '%064d\n' 0
 ''',
             )
+            # Stub filter so entrypoint tests do not bind a real HTTP port.
+            filter_script = root / "fake_rpc_filter.py"
+            filter_script.write_text(
+                textwrap.dedent(
+                    """\
+                    #!/usr/bin/env python3
+                    import os, time
+                    with open(os.environ["COMMAND_LOG"], "a") as log:
+                        log.write(
+                            "filter listen="
+                            + os.environ.get("L2_RPC_FILTER_LISTEN", "")
+                            + " upstream="
+                            + os.environ.get("L2_RPC_FILTER_UPSTREAM", "")
+                            + "\\n"
+                        )
+                    time.sleep(float(os.environ.get("FILTER_DELAY", "30")))
+                    """
+                )
+            )
+            filter_script.chmod(0o755)
             jwt_file = data_dir / "jwt.txt"
             ready_file = data_dir / "fortel2-el-ready"
             env = {
@@ -110,6 +130,7 @@ printf '%064d\n' 0
                 "COMMAND_LOG": str(log),
                 "PROCESS_POLL_INTERVAL_SECS": "1",
                 "GETH_READY_TIMEOUT_SECS": "2",
+                "RPC_FILTER_SCRIPT": str(filter_script),
                 # Always pin JWT into the temp tree so an inherited JWT_FILE
                 # from the invoking shell/CI cannot escape the fixture.
                 "JWT_FILE": str(jwt_file),
@@ -277,7 +298,21 @@ printf '%064d\n' 0
         self.assertIn("geth init --datadir=", log)
         self.assertIn("--cache=256", log)
         self.assertIn("--cache.preimages=false", log)
+        # MR-2: geth is loopback-only with a narrow namespace; filter is public.
+        self.assertIn("--http.addr=127.0.0.1", log)
+        self.assertIn("--http.port=8546", log)
+        http_api = [
+            part
+            for part in log.split()
+            if part.startswith("--http.api=")
+        ]
+        self.assertEqual(["--http.api=eth,net,web3"], http_api)
+        self.assertIn(
+            "filter listen=0.0.0.0:8545 upstream=http://127.0.0.1:8546",
+            log,
+        )
         self.assertIn("op-node --l1=https://example.invalid", log)
+        self.assertIn("--rpc.addr=127.0.0.1", log)
         self.assertIn("--l1.http-poll-interval=24s", log)
         self.assertIn("--l1.rpc-rate-limit=5", log)
         self.assertIn("--sequencer.enabled=false", log)
@@ -360,14 +395,21 @@ printf '%064d\n' 0
                 "L1_RPC_RATE_LIMIT": "5",
                 "L1_BLOCK_TIME": "6",
                 "GETH_CACHE_MB": "128",
-                "PORT": "8545",
-                "L2_HTTP_PORT": "9999",  # PORT must win
+                "PORT": "10000",
+                "L2_HTTP_PORT": "9999",  # PORT must win for the public filter
+                "L2_GETH_HTTP_PORT": "8546",
                 "L2_ENGINE_PORT": "8559",
                 "L2_NODE_RPC_PORT": "9549",
             },
         )
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("--http.port=8545", log)
+        # Published PORT → filter; geth stays on L2_GETH_HTTP_PORT.
+        self.assertIn(
+            "filter listen=0.0.0.0:10000 upstream=http://127.0.0.1:8546",
+            log,
+        )
+        self.assertIn("--http.port=8546", log)
+        self.assertIn("--http.addr=127.0.0.1", log)
         self.assertIn("--cache=128", log)
         self.assertIn("--authrpc.port=8559", log)
         self.assertIn("--l1.http-poll-interval=30s", log)
@@ -375,6 +417,27 @@ printf '%064d\n' 0
         self.assertIn("--l1.beacon.slot-duration-override=6", log)
         self.assertIn("--l2=http://127.0.0.1:8559", log)
         self.assertIn("--rpc.port=9549", log)
+
+    def test_rejects_colliding_geth_and_filter_ports(self):
+        result, _, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "PORT": "8546",
+                "L2_GETH_HTTP_PORT": "8546",
+            },
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("must differ from published", result.stderr)
+
+    def test_fails_when_filter_script_missing(self):
+        result, _, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "RPC_FILTER_SCRIPT": "/nonexistent/rpc-method-filter.py",
+            },
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("missing RPC method filter", result.stderr)
 
     def test_honors_gomemlimit_overrides(self):
         result, log, _, _ = self.run_entrypoint(
@@ -419,7 +482,9 @@ printf '%064d\n' 0
         result, log, _, _ = self.run_entrypoint(
             {
                 "JWT_SECRET": "a" * 64,
-                "GETH_EXIT_AFTER_SECS": "0.5",
+                # Must exceed entrypoint's `sleep 1` after filter start, or geth
+                # dies during that sleep and cleanup SIGTERMs op-node before it logs.
+                "GETH_EXIT_AFTER_SECS": "2.5",
                 "GETH_EXIT_CODE": "7",
                 "NODE_DELAY": "5",
                 "PROCESS_POLL_INTERVAL_SECS": "1",

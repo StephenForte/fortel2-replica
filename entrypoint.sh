@@ -7,10 +7,13 @@ DATA_DIR="${DATA_DIR:-/data}"
 JWT_FILE="${JWT_FILE:-$DATA_DIR/jwt.txt}"
 GENESIS="${GENESIS:-/config/genesis.json}"
 ROLLUP="${ROLLUP:-/config/rollup.json}"
-# Render Web Service injects PORT — prefer it for EL HTTP when set.
+# Published read RPC = method filter. Render Web Service injects PORT (often 10000).
 L2_HTTP_PORT="${PORT:-${L2_HTTP_PORT:-8545}}"
+# Loopback-only op-geth HTTP behind the filter (never the published port).
+L2_GETH_HTTP_PORT="${L2_GETH_HTTP_PORT:-8546}"
 L2_ENGINE_PORT="${L2_ENGINE_PORT:-8551}"
 L2_NODE_RPC_PORT="${L2_NODE_RPC_PORT:-9545}"
+RPC_FILTER_SCRIPT="${RPC_FILTER_SCRIPT:-/rpc-method-filter.py}"
 L1_BLOCK_TIME="${L1_BLOCK_TIME:-12}"
 # Seconds to wait for op-geth IPC after start. 0 = keep waiting while the PID is alive
 # (datadir open / crash recovery on constrained disks can exceed 60s).
@@ -28,6 +31,7 @@ PROCESS_POLL_INTERVAL_SECS="${PROCESS_POLL_INTERVAL_SECS:-1}"
 # a stale ready flag.
 FORTEL2_EL_READY_FILE="${FORTEL2_EL_READY_FILE:-/tmp/fortel2-el-ready}"
 rm -f "$FORTEL2_EL_READY_FILE"
+FILTER_PID=""
 
 case "$GETH_READY_TIMEOUT_SECS" in
   ''|*[!0-9]*)
@@ -154,13 +158,18 @@ if [ ! -d "$DATA_DIR/geth" ]; then
   geth init --datadir="$DATA_DIR" --state.scheme=hash "$GENESIS"
 fi
 
+if [ "$L2_GETH_HTTP_PORT" = "$L2_HTTP_PORT" ]; then
+  echo "ERROR: L2_GETH_HTTP_PORT ($L2_GETH_HTTP_PORT) must differ from published L2_HTTP_PORT/PORT ($L2_HTTP_PORT)" >&2
+  exit 1
+fi
+
 GETH_MEM_LOG=""
 [ -n "$GETH_GOMEMLIMIT" ] && GETH_MEM_LOG=", gomemlimit=${GETH_GOMEMLIMIT}"
-echo "Starting op-geth (verifier EL) on :$L2_HTTP_PORT (cache=${GETH_CACHE_MB}MB, gcmode=full${GETH_MEM_LOG})"
+echo "Starting op-geth (verifier EL) loopback :$L2_GETH_HTTP_PORT (cache=${GETH_CACHE_MB}MB, gcmode=full${GETH_MEM_LOG}; public filter :$L2_HTTP_PORT)"
 env ${GETH_GOMEMLIMIT:+GOMEMLIMIT=$GETH_GOMEMLIMIT} geth \
   --datadir="$DATA_DIR" \
-  --http --http.addr=0.0.0.0 --http.port="$L2_HTTP_PORT" \
-  --http.api=eth,net,web3,debug,txpool \
+  --http --http.addr=127.0.0.1 --http.port="$L2_GETH_HTTP_PORT" \
+  --http.api=eth,net,web3 \
   --http.vhosts=* --http.corsdomain=* \
   --authrpc.addr=127.0.0.1 --authrpc.port="$L2_ENGINE_PORT" --authrpc.vhosts=* \
   --authrpc.jwtsecret="$JWT_FILE" \
@@ -176,12 +185,18 @@ cleanup() {
   if [ -n "${NODE_PID:-}" ]; then
     kill "$NODE_PID" 2>/dev/null || true
   fi
+  if [ -n "${FILTER_PID:-}" ]; then
+    kill "$FILTER_PID" 2>/dev/null || true
+  fi
   if [ -n "${ROUTER_PID:-}" ]; then
     kill "$ROUTER_PID" 2>/dev/null || true
   fi
   kill "$GETH_PID" 2>/dev/null || true
   if [ -n "${NODE_PID:-}" ]; then
     wait "$NODE_PID" 2>/dev/null || true
+  fi
+  if [ -n "${FILTER_PID:-}" ]; then
+    wait "$FILTER_PID" 2>/dev/null || true
   fi
   if [ -n "${ROUTER_PID:-}" ]; then
     wait "$ROUTER_PID" 2>/dev/null || true
@@ -231,6 +246,27 @@ fi
 # Signal HEALTHCHECK that EL is ready; probes may now succeed (healthy).
 : >"$FORTEL2_EL_READY_FILE"
 echo "op-geth engine API ready after ${i}s"
+
+# Public read door: allowlist proxy on the published port; geth stays loopback.
+if [ ! -f "$RPC_FILTER_SCRIPT" ]; then
+  echo "ERROR: missing RPC method filter at $RPC_FILTER_SCRIPT" >&2
+  exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 required for RPC method filter" >&2
+  exit 1
+fi
+export L2_RPC_FILTER_LISTEN="0.0.0.0:${L2_HTTP_PORT}"
+export L2_RPC_FILTER_UPSTREAM="http://127.0.0.1:${L2_GETH_HTTP_PORT}"
+echo "Starting RPC method filter on ${L2_RPC_FILTER_LISTEN} → ${L2_RPC_FILTER_UPSTREAM}"
+python3 "$RPC_FILTER_SCRIPT" &
+FILTER_PID=$!
+sleep 1
+if ! kill -0 "$FILTER_PID" 2>/dev/null; then
+  echo "ERROR: RPC method filter exited immediately" >&2
+  wait "$FILTER_PID" || true
+  exit 1
+fi
 
 # Credit-budget defaults (Render catch-up previously burned ~3M+ credits/half-day
 # at rate-limit=20). Override via Render env / .env.
@@ -292,7 +328,7 @@ env ${OP_NODE_GOMEMLIMIT:+GOMEMLIMIT=$OP_NODE_GOMEMLIMIT} op-node \
   --sequencer.enabled=false \
   --verifier.l1-confs=1 \
   --p2p.disable=true \
-  --rpc.addr=0.0.0.0 \
+  --rpc.addr=127.0.0.1 \
   --rpc.port="$L2_NODE_RPC_PORT" \
   --log.level=info &
 NODE_PID=$!
@@ -303,6 +339,10 @@ NODE_PID=$!
 while kill -0 "$GETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
   if [ -n "${ROUTER_PID}" ] && ! kill -0 "$ROUTER_PID" 2>/dev/null; then
     echo "ERROR: L1 RPC router exited while op-node was running" >&2
+    exit 1
+  fi
+  if [ -n "${FILTER_PID}" ] && ! kill -0 "$FILTER_PID" 2>/dev/null; then
+    echo "ERROR: RPC method filter exited while op-node was running" >&2
     exit 1
   fi
   sleep "$PROCESS_POLL_INTERVAL_SECS"

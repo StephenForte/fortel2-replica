@@ -43,6 +43,8 @@ If they have Foundry, the `cast` equivalents are in `README.md`; `jq`/`cast` are
 - **Don't reuse your `.env`/`jwt.txt`.** Each person makes their own (especially the RPC URL if it has a token).
 - **Stop/reset:** `docker compose down` to stop; `docker compose down -v` to also wipe the chain datadir (needed if `config/genesis.json` or `config/rollup.json` ever changes after a ForteL2 redeploy — see `README.md`).
 - **Always-on deploy:** see **Render → Manual setup** in `README.md` for the full env-var checklist (Blueprint sync often skips existing services).
+- **Public Render URL (if using the hosted replica):** read-only JSON-RPC through a method filter — writes (`eth_sendRawTransaction`) are rejected; expect ~3 minutes of lag vs the sequencer; sequencer downtime **23:45–03:00** `America/Los_Angeles` means the replica may keep serving a stale tip until new batches land. Details in `README.md` → **Public read RPC**.
+- **Local `docker compose`** still publishes raw op-geth on host `:9545` (friend laptop path). The method filter is wired in the single-container Render image (`entrypoint.sh`), not in compose.
 
 ## Before you share
 

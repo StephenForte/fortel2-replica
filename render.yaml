@@ -1,8 +1,15 @@
 # Render Blueprint — ForteL2 L2 verifier (stock op-geth + op-node).
-# Private by default (JSON-RPC not on the public internet).
+# Public Web Service: JSON-RPC reads via the method filter on PORT (default 10000).
+# op-geth and op-node bind loopback only; only the filter is edge-reachable.
 #
-# Blueprint env vars apply to NEW services only. Existing Private Services do
-# not sync from this file — copy the tables in README.md → Render → Manual setup.
+# Blueprint env vars apply to NEW services only. Existing services do not sync
+# from this file — copy the tables in README.md → Render → Manual setup.
+#
+# IMPORTANT: Render cannot convert Private Service (pserv) → Web Service in place
+# and cannot reattach an existing disk to another service. Merge this image onto
+# the existing pserv (filter on PORT). A public URL means a new Web Service +
+# new disk + full resync. Revert: recreate pserv with a new disk; accept resync.
+# See README "Public read RPC → Revert".
 #
 # Dashboard: New → Blueprint → this repo. Set L1_RPC_URL secret (QuickNode).
 #
@@ -10,17 +17,19 @@
 # America/Los_Angeles, publicnode overnight. Overrides:
 #   L1_RPC_FORCE=public|metered  or  L1_USE_PUBLIC_RPC=1
 #
-# Or: New → Private Service → Runtime Docker → root Dockerfile.
+# Or: New → Web Service → Runtime Docker → root Dockerfile.
 # Attach a persistent disk at /data (≥20 GB).
 
 services:
-  - type: pserv
+  - type: web
     name: fortel2-replica
     runtime: docker
     plan: standard
     dockerfilePath: ./Dockerfile
     dockerContext: .
     region: oregon
+    # Filter answers GET / with {"ok":true,...} for Render's edge probe.
+    healthCheckPath: /
     disk:
       name: fortel2-replica-data
       mountPath: /data
