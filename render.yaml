@@ -1,5 +1,9 @@
 # Render Blueprint — ForteL2 L2 verifier (stock op-geth + op-node).
 # Private by default (JSON-RPC not on the public internet).
+#
+# Blueprint env vars apply to NEW services only. Existing Private Services do
+# not sync from this file — copy the tables in README.md → Render → Manual setup.
+#
 # Dashboard: New → Blueprint → this repo. Set L1_RPC_URL secret (QuickNode).
 #
 # Credit schedule (observe): L1_RPC_SCHEDULE=business → QuickNode 09:00–17:00
