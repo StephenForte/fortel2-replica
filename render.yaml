@@ -2,14 +2,19 @@
 # Public Web Service: JSON-RPC reads via the method filter on PORT (default 10000).
 # op-geth and op-node bind loopback only; only the filter is edge-reachable.
 #
-# Blueprint env vars apply to NEW services only. Existing services do not sync
-# from this file — copy the tables in README.md → Render → Manual setup.
+# Preferred: New → Blueprint → this repo (keeps this service Blueprint-managed).
+# On Blueprint sync, envVars with `value:` are applied/updated. Keys with
+# `sync: false` (L1_RPC_URL, JWT_SECRET) are prompted only on first create;
+# later syncs ignore them — set/rotate those secrets in the dashboard.
 #
 # IMPORTANT: Render cannot convert Private Service (pserv) → Web Service in place
 # and cannot reattach an existing disk to another service. Merge this image onto
 # the existing pserv (filter on PORT). A public URL means a new Web Service +
 # new disk + full resync. Revert: recreate pserv with a new disk; accept resync.
 # See README "Public read RPC → Revert".
+#
+# If you instead create a Private Service from the dashboard (not via this
+# Blueprint), it is unattached to render.yaml — paste the README checklist.
 #
 # Dashboard: New → Blueprint → this repo. Set L1_RPC_URL secret (QuickNode).
 #

@@ -66,29 +66,30 @@ Render cannot flip Web ↔ Private in place, and **cannot reattach an existing d
 
 **OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. If Render kills the service with exit 137 / “Ran out of memory”, confirm the plan is **Standard or Pro** (not Starter), set the memory env vars below, or bump to **Pro (4GB)** if spikes persist.
 
-### Manual setup (Blueprint sync often skips existing services)
+### Blueprint vs dashboard-created services
 
-Render Blueprints apply cleanly to **new** services. If you already have a Private Service, env vars from `render.yaml` usually **do not** sync on redeploy — set them in the dashboard (**Environment** tab) or recreate the service from the Blueprint.
+**Prefer Blueprint-managed:** **New → Blueprint** → this repo. While the service stays attached to this Blueprint:
 
-1. **New → Web Service** (public read RPC). Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
-2. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
-3. Attach a **persistent disk** mounted at `/data` (≥ 20 GB).
-4. Health check path: `/` (method filter GET).
-5. Set every env var in the table below (secrets first).
-6. Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
+- Env vars with a literal `value:` in `render.yaml` are created/updated on each Blueprint sync.
+- Keys with `sync: false` (`L1_RPC_URL`, `JWT_SECRET`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
+- Dashboard edits that conflict with Blueprint `value:` fields are overwritten on the next sync.
+
+**Dashboard-created (unattached):** **New → Private Service** (or Web) without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the tables below into **Environment**, then redeploy.
+
+Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
 If you still have a **Private Service** from before MR-2: Render cannot convert it to Web in place and **cannot reattach `/data` to a new service**. Deploy this image onto the existing Private Service (filter on `PORT`; geth/op-node stay loopback). A public URL requires a new Web Service with a **new** disk and a full resync.
 
-#### Required secrets
+#### Required secrets (`sync: false` in Blueprint)
 
 | Variable | Example / notes |
 |---|---|
 | `L1_RPC_URL` | Render-only **QuickNode** Sepolia HTTPS URL (not the Mac mini endpoint). Required when `L1_RPC_SCHEDULE=business`. |
 | `JWT_SECRET` | Optional. 64 hex chars to pin JWT across redeploys; omit to auto-generate on `/data`. |
 
-#### Recommended env vars (match `render.yaml`)
+#### Recommended env vars (match `render.yaml` `value:` keys)
 
-Copy these into **Environment → Environment Variables** if Blueprint sync did not apply them:
+On a Blueprint-managed service these come from sync. On a dashboard-created service, copy into **Environment → Environment Variables**:
 
 | Variable | Value |
 |---|---|
@@ -119,7 +120,13 @@ Copy these into **Environment → Environment Variables** if Blueprint sync did 
 | `L1_USE_PUBLIC_RPC` | `1` — same as `L1_RPC_FORCE=public` |
 | `GETH_READY_TIMEOUT_SECS` | `0` (default) — wait forever for geth IPC during slow disk recovery |
 
-Or apply `render.yaml` as a Blueprint on a **new** service.
+#### Manual Private Service checklist (unattached only)
+
+1. **New → Private Service** (or Web). Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root).
+2. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
+3. Attach a **persistent disk** at `/data` (≥ 20 GB).
+4. Set secrets + recommended env vars from the tables above.
+5. Deploy / restart after dashboard env edits.
 
 **Web Shell tip:** the image has no `curl`. Use dashboard **Shell** with `python3`/`urllib` against `http://127.0.0.1:$PORT` (filter) or `geth attach --exec "eth.blockNumber" /data/geth.ipc`. op-node is `http://127.0.0.1:9545` (loopback only).
 
@@ -129,7 +136,7 @@ Or apply `render.yaml` as a Blueprint on a **new** service.
 
 If you change genesis/rollup (ForteL2 Phase 2b redeploy), **wipe `/data`** (or recreate the disk) after deploying the new image so the replica does not keep the old L1 history.
 
-After changing env vars in the dashboard, **Manual Deploy** (or restart) the service — Render does not always pick up Blueprint-only changes on an existing Private Service.
+After changing env vars in the dashboard (especially `sync: false` secrets), **Manual Deploy** or restart so the running container picks them up. Blueprint `value:` changes apply on Blueprint sync (Auto Sync or Manual Sync on the Blueprint page).
 
 ## Sync model
 
