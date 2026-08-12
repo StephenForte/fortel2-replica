@@ -10,6 +10,8 @@ MR-2 adaptations in this repo (keep in sync when pulling fixes from ForteL2):
   - ALLOWED_METHODS derived from T5-D1 then minus eth_sendRawTransaction (read-only)
   - Listen host may be 0.0.0.0 (Render publishes this process; geth stays loopback)
   - Upstream remains loopback-only
+  - CORS (OPTIONS + ACAO) for browser clients hitting the public Render URL
+  - JSON-RPC notifications (no "id") never get a Response object, including rejects
 
 Fixes for the filter logic must be applied in BOTH repos (ForteL2 first, then here).
 
@@ -110,6 +112,16 @@ JSONRPC_SERVER_ERROR = -32000
 # Cap request bodies — cloudflared may deliver chunked; never read unbounded.
 MAX_BODY_BYTES = 1_048_576  # 1 MiB
 
+# Sentinel from filter_single: request must not reach upstream and must not
+# produce a JSON-RPC Response (notification with absent "id").
+OMIT_RESPONSE: object = object()
+
+# Match op-geth --http.corsdomain=* so browser SOS / explorer clients work.
+CORS_ALLOW_ORIGIN = "*"
+CORS_ALLOW_METHODS = "GET, POST, OPTIONS"
+CORS_ALLOW_HEADERS = "Content-Type"
+CORS_MAX_AGE = "86400"
+
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name, default).strip()
@@ -120,6 +132,11 @@ def is_method_allowed(method: Any) -> bool:
     return isinstance(method, str) and method in ALLOWED_METHODS
 
 
+def is_jsonrpc_notification(obj: Any) -> bool:
+    """JSON-RPC 2.0 Notification = Request object with no id member."""
+    return isinstance(obj, dict) and "id" not in obj
+
+
 def reject_response(req_id: Any, message: str, code: int = JSONRPC_METHOD_NOT_FOUND) -> dict:
     return {
         "jsonrpc": "2.0",
@@ -128,27 +145,41 @@ def reject_response(req_id: Any, message: str, code: int = JSONRPC_METHOD_NOT_FO
     }
 
 
-def filter_single(obj: Any) -> Optional[dict]:
-    """Return a JSON-RPC error dict if this call must not be forwarded, else None."""
+def filter_single(obj: Any) -> Any:
+    """
+    Classify one JSON-RPC request element.
+
+    Returns:
+      None           — forward upstream
+      dict           — synthesised JSON-RPC error Response to return
+      OMIT_RESPONSE  — do not forward and do not emit a Response (notification)
+    """
     if not isinstance(obj, dict):
         return reject_response(None, "invalid request", JSONRPC_INVALID_REQUEST)
-    req_id = obj.get("id", None)
+    notif = is_jsonrpc_notification(obj)
+    # id:null is a valid request id and must get a response; only absent id is a notification.
+    req_id = obj["id"] if not notif else None
     method = obj.get("method", None)
     if not isinstance(method, str):
+        if notif:
+            return OMIT_RESPONSE
         return reject_response(req_id, "invalid request: method must be a string", JSONRPC_INVALID_REQUEST)
     if not is_method_allowed(method):
+        if notif:
+            return OMIT_RESPONSE
         return reject_response(req_id, f"method not allowed: {method}", JSONRPC_METHOD_NOT_FOUND)
     return None
 
 
-def classify_body(parsed: Any) -> tuple[str, list[Any], list[Optional[dict]]]:
+def classify_body(parsed: Any) -> tuple[str, list[Any], list[Any]]:
     """
     Classify a parsed JSON-RPC body.
 
     Returns (kind, items, rejects) where kind is 'single', 'batch', or 'empty_batch'.
     For 'empty_batch', items is [] and rejects holds a single error Response object
     (JSON-RPC 2.0: empty array → one Response, not []).
-    For 'batch'/'single', items and rejects are the same length.
+    For 'batch'/'single', items and rejects are the same length; each reject entry
+    is None (forward), a Response dict, or OMIT_RESPONSE.
     """
     if isinstance(parsed, list):
         if len(parsed) == 0:
@@ -308,12 +339,26 @@ def _forward(body: bytes, content_type: str) -> tuple[int, bytes, str]:
         return err.code, payload, ctype
 
 
+def _add_cors_headers(handler: BaseHTTPRequestHandler) -> None:
+    handler.send_header("Access-Control-Allow-Origin", CORS_ALLOW_ORIGIN)
+    handler.send_header("Access-Control-Allow-Methods", CORS_ALLOW_METHODS)
+    handler.send_header("Access-Control-Allow-Headers", CORS_ALLOW_HEADERS)
+    handler.send_header("Access-Control-Max-Age", CORS_MAX_AGE)
+
+
 def _write_json(handler: BaseHTTPRequestHandler, status: int, payload: bytes, ctype: str = "application/json") -> None:
     handler.send_response(status)
+    _add_cors_headers(handler)
     handler.send_header("Content-Type", ctype)
     handler.send_header("Content-Length", str(len(payload)))
     handler.end_headers()
-    handler.wfile.write(payload)
+    if payload:
+        handler.wfile.write(payload)
+
+
+def _empty_rpc_reply() -> tuple[int, bytes, str]:
+    """No JSON-RPC Response object to return (notifications-only / omitted)."""
+    return 200, b"", "text/plain"
 
 
 def handle_jsonrpc_body(body: bytes, content_type: str) -> tuple[int, bytes, str]:
@@ -332,20 +377,25 @@ def handle_jsonrpc_body(body: bytes, content_type: str) -> tuple[int, bytes, str
 
     if kind == "single":
         reject = rejects[0]
+        if reject is OMIT_RESPONSE:
+            return _empty_rpc_reply()
         if reject is not None:
             return 200, json.dumps(reject).encode(), "application/json"
         return _forward(body, content_type)
 
     # Batch: if every element is allowed, forward the original body unchanged.
+    # (Upstream op-geth already omits notification responses correctly.)
     if all(r is None for r in rejects):
         return _forward(body, content_type)
 
     # Mixed / all-rejected batch: check each element independently.
     # Forward allowed calls one-by-one; synthesise errors for the rest.
-    # Preserve request order in the response array.
+    # Preserve request order among Response objects; omit notifications entirely.
     out: list[Any] = []
     http_status = 200
     for item, reject in zip(items, rejects):
+        if reject is OMIT_RESPONSE:
+            continue
         if reject is not None:
             out.append(reject)
             continue
@@ -355,6 +405,9 @@ def handle_jsonrpc_body(body: bytes, content_type: str) -> tuple[int, bytes, str
         # *a* failure rather than a silent HTTP 200 wrapping upstream 429/5xx.
         if not (200 <= status < 300) and http_status == 200:
             http_status = status
+        # Allowed notification: may reach upstream, but never emit a Response.
+        if is_jsonrpc_notification(item):
+            continue
         try:
             out.append(json.loads(payload.decode("utf-8")))
         except (UnicodeDecodeError, json.JSONDecodeError):
@@ -366,6 +419,9 @@ def handle_jsonrpc_body(body: bytes, content_type: str) -> tuple[int, bytes, str
                     JSONRPC_SERVER_ERROR,
                 )
             )
+    if not out:
+        # JSON-RPC 2.0: if a batch yields no Response objects, return nothing.
+        return _empty_rpc_reply()
     return http_status, json.dumps(out).encode(), "application/json"
 
 
@@ -377,6 +433,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt: str, *args) -> None:  # noqa: A003
         sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        # Browser preflight for cross-origin application/json POSTs.
+        self.send_response(204)
+        _add_cors_headers(self)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
         try:
@@ -604,9 +667,74 @@ def self_test() -> None:
     seen.clear()
     deny_body = b'{"jsonrpc":"2.0","id":1,"method":"admin_peers","params":[]}'
     deny_chunk = f"{len(deny_body):x}\r\n".encode() + deny_body + b"\r\n0\r\n\r\n"
-    _hdr, body = _raw_post(filt_port, b"Transfer-Encoding: chunked\r\n", deny_chunk)
+    deny_hdr, body = _raw_post(filt_port, b"Transfer-Encoding: chunked\r\n", deny_chunk)
     assert json.loads(body)["error"]["code"] == JSONRPC_METHOD_NOT_FOUND
     assert seen == []  # must still filter after reading chunked body
+    # CORS on every JSON response (browser clients on the public URL).
+    assert b"Access-Control-Allow-Origin: *" in hdr
+    assert b"Access-Control-Allow-Origin: *" in deny_hdr
+
+    # Notifications (no id): rejected single emits no Response and never hits upstream.
+    seen.clear()
+    status, payload, _ctype = handle_jsonrpc_body(
+        b'{"jsonrpc":"2.0","method":"admin_peers","params":[]}',
+        "application/json",
+    )
+    assert status == 200 and payload == b""
+    assert seen == []
+    assert (
+        filter_single({"jsonrpc": "2.0", "method": "admin_peers", "params": []})
+        is OMIT_RESPONSE
+    )
+    # id:null is a request id, not a notification — still gets an error Response.
+    null_id_reject = filter_single(
+        {"jsonrpc": "2.0", "id": None, "method": "admin_peers", "params": []}
+    )
+    assert isinstance(null_id_reject, dict)
+    assert null_id_reject["error"]["code"] == JSONRPC_METHOD_NOT_FOUND
+    assert null_id_reject["id"] is None
+
+    # Mixed batch: omit disallowed notification; keep correlated Responses only.
+    seen.clear()
+    status, payload, _ctype = handle_jsonrpc_body(
+        json.dumps(
+            [
+                {"jsonrpc": "2.0", "method": "admin_peers", "params": []},
+                {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []},
+                {"jsonrpc": "2.0", "id": 2, "method": "txpool_status", "params": []},
+            ]
+        ).encode(),
+        "application/json",
+    )
+    assert status == 200
+    mixed_notif = json.loads(payload)
+    assert isinstance(mixed_notif, list) and len(mixed_notif) == 2
+    assert mixed_notif[0].get("result") == "0x1"
+    assert mixed_notif[1]["error"]["code"] == JSONRPC_METHOD_NOT_FOUND
+    assert len(seen) == 1 and seen[0]["method"] == "eth_blockNumber"
+
+    # OPTIONS preflight for cross-origin application/json POSTs.
+    s = socket.create_connection(("127.0.0.1", filt_port), timeout=5)
+    s.sendall(
+        b"OPTIONS / HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        b"Origin: https://example.com\r\n"
+        b"Access-Control-Request-Method: POST\r\n"
+        b"Access-Control-Request-Headers: content-type\r\n"
+        b"\r\n"
+    )
+    opt_data = b""
+    while b"\r\n\r\n" not in opt_data:
+        chunk = s.recv(4096)
+        if not chunk:
+            break
+        opt_data += chunk
+    s.close()
+    opt_hdr = opt_data.split(b"\r\n\r\n", 1)[0]
+    assert b"204" in opt_hdr.split(b"\r\n", 1)[0]
+    assert b"Access-Control-Allow-Origin: *" in opt_hdr
+    assert b"Access-Control-Allow-Methods:" in opt_hdr
+    assert b"POST" in opt_hdr
+    assert b"Access-Control-Allow-Headers:" in opt_hdr
 
     filt.shutdown()
     up.shutdown()

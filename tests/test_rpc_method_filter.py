@@ -72,6 +72,59 @@ class RpcMethodFilterTests(unittest.TestCase):
         chunked = f"{len(raw):x}\r\n".encode() + raw + b"\r\n0\r\n\r\n"
         self.assertEqual(raw, mod.read_chunked_body(io.BytesIO(chunked)))
 
+    def test_disallowed_notification_omits_response(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        self.assertTrue(
+            mod.is_jsonrpc_notification(
+                {"jsonrpc": "2.0", "method": "admin_peers", "params": []}
+            )
+        )
+        self.assertFalse(
+            mod.is_jsonrpc_notification(
+                {"jsonrpc": "2.0", "id": None, "method": "admin_peers", "params": []}
+            )
+        )
+        self.assertIs(
+            mod.filter_single(
+                {"jsonrpc": "2.0", "method": "eth_sendRawTransaction", "params": ["0x"]}
+            ),
+            mod.OMIT_RESPONSE,
+        )
+        status, payload, _ctype = mod.handle_jsonrpc_body(
+            b'{"jsonrpc":"2.0","method":"eth_sendRawTransaction","params":["0x"]}',
+            "application/json",
+        )
+        self.assertEqual(200, status)
+        self.assertEqual(b"", payload)
+
+    def test_mixed_batch_omits_notification_error(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        kind, _items, rejects = mod.classify_body(
+            [
+                {"jsonrpc": "2.0", "method": "admin_peers", "params": []},
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "eth_sendRawTransaction",
+                    "params": ["0x00"],
+                },
+            ]
+        )
+        self.assertEqual("batch", kind)
+        self.assertIs(rejects[0], mod.OMIT_RESPONSE)
+        self.assertIsInstance(rejects[1], dict)
+        self.assertIn("eth_sendRawTransaction", rejects[1]["error"]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()
