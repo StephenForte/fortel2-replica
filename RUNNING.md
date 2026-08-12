@@ -42,7 +42,7 @@ If they have Foundry, the `cast` equivalents are in `README.md`; `jq`/`cast` are
 - **No secrets or keys needed.** This is a read-only verifier — there are no sequencer/batcher/proposer keys, and `L1_RPC_URL` is the only sensitive value. `.env` and `jwt.txt` are gitignored, so they won't get committed.
 - **Don't reuse your `.env`/`jwt.txt`.** Each person makes their own (especially the RPC URL if it has a token).
 - **Stop/reset:** `docker compose down` to stop; `docker compose down -v` to also wipe the chain datadir (needed if `config/genesis.json` or `config/rollup.json` ever changes after a ForteL2 redeploy — see `README.md`).
-- **Always-on deploy:** to run it as a service instead of on a laptop, point them at the **Render** section / `render.yaml` in `README.md`.
+- **Always-on deploy:** see **Render → Manual setup** in `README.md` for the full env-var checklist (Blueprint sync often skips existing services).
 
 ## Before you share
 
