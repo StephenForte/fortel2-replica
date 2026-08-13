@@ -35,13 +35,15 @@ cast block-number --rpc-url http://127.0.0.1:9545
 cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l2.number, unsafe:.unsafe_l2.number}'
 ```
 
-## Public read RPC
+## Read RPC (live: Private Service)
 
-The Render deploy is a **public Web Service**. Clients hit a **method-filter** on Render’s published `PORT` (default **10000**). op-geth listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed.
+The live Render deploy is a **Private Service** (`fortel2-replica`, `srv-d9fsgi3rjlhs73ceh6tg`, Oregon env `evm-d9h424715fvs73cq2gl0`). There is **no** public `onrender.com` URL (ForteL2 D-0031). SettlementOS reads at `http://fortel2-replica:10000` on the same private network (D-0032).
+
+Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). op-geth listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed.
 
 | Fact | Detail |
 |---|---|
-| URL | `https://<service>.onrender.com/` (Dashboard → service → URL) |
+| URL | Private: `http://fortel2-replica:10000`. No public hostname until a diskless reverse-proxy exists. |
 | Surface | Read-only JSON-RPC allowlist (`eth` / `net` / `web3` reads + log/block filters) |
 | Writes | `eth_sendRawTransaction` is **rejected** (`-32601 method not allowed`) |
 | Lag | ~3 minutes behind the sequencer is **normal** — the replica derives from L1 batches, not P2P tip-follow |
@@ -51,14 +53,9 @@ The Render deploy is a **public Web Service**. Clients hit a **method-filter** o
 
 Filter source: vendored from ForteL2 `scripts/rpc-method-filter.py` (see header in `rpc-method-filter.py`). **Security fixes must be applied in both repos** (ForteL2 first, then copy here).
 
-### Revert (public → private)
+### Do not convert this service to Web
 
-Render cannot flip Web ↔ Private in place, and **cannot reattach an existing disk to another service**. To go private again:
-
-1. Recreate as a Private Service (`type: pserv` in `render.yaml`, or Dashboard → Private Service) with a **new** disk.
-2. Paste the same env vars. Accept a full L2 resync (new disk is empty).
-3. Delete or suspend the public Web Service once the private one is healthy.
-4. Optionally set `render.yaml` `type:` back to `pserv` and remove `healthCheckPath` so Blueprint matches.
+Render cannot flip Private ↔ Web in place, and **cannot reattach `/data` to a new service**. The live disk is **50 GB**. Do not apply `render.yaml` as a **new** Blueprint (`type: web` / `sizeGB: 20` would create a second service with an empty disk). A public URL would require a **new** Web Service, a **new** disk, and a full resync — currently rejected (D-0031).
 
 ## Render
 
@@ -78,7 +75,7 @@ Render cannot flip Web ↔ Private in place, and **cannot reattach an existing d
 
 Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
-If you still have a **Private Service** from before MR-2: Render cannot convert it to Web in place and **cannot reattach `/data` to a new service**. Deploy this image onto the existing Private Service (filter on `PORT`; geth/op-node stay loopback). A public URL requires a new Web Service with a **new** disk and a full resync.
+Live service is already that Private Service. Keep deploying this image onto it (filter on `PORT`; geth/op-node stay loopback). Do not create a second service for a public URL.
 
 #### Required secrets (`sync: false` in Blueprint)
 
