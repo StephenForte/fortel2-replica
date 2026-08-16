@@ -55,7 +55,7 @@ Filter source: vendored from ForteL2 `scripts/rpc-method-filter.py` (see header 
 
 ### Do not convert this service to Web
 
-Render cannot flip Private ↔ Web in place, and **cannot reattach `/data` to a new service**. The live disk is **50 GB**. Do not apply `render.yaml` as a **new** Blueprint (`type: web` / `sizeGB: 20` would create a second replica with an empty disk and a full L1 resync).
+Render cannot flip Private ↔ Web in place, and **cannot reattach `/data` to a new service**. The live disk is **50 GB**. Do not apply `render.yaml` as a **new** Blueprint onto the live Oregon pserv (`type: pserv` / `sizeGB: 20` would create a second replica with an empty disk and a full L1 resync).
 
 A public URL is a **second, diskless** Web Service that proxies to this Private Service — not a new geth disk. See [Going public](#going-public).
 
@@ -75,7 +75,7 @@ Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`:
 
 | Field | Value |
 |---|---|
-| Create | **New → Web Service** (not **New → Blueprint** — current `render.yaml` still names `fortel2-replica` as `type: web` with a 20 GB disk) |
+| Create | **New → Web Service** (not **New → Blueprint** — `render.yaml` defines only the private replica, not the diskless gateway) |
 | Repo | `StephenForte/fortel2-replica` |
 | Name | `fortel2-replica-rpc` (never reuse `fortel2-replica`) |
 | Region | **Oregon** (private DNS fails across regions) |
@@ -121,7 +121,7 @@ Expect `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTr
 
 ### Blueprint vs dashboard-created services
 
-**Prefer Blueprint-managed (greenfield only):** **New → Blueprint** → this repo is for a **new** replica, not for the live Oregon pserv. While a service stays attached to this Blueprint:
+**Prefer Blueprint-managed (greenfield only):** **New → Blueprint** → this repo is for a **new** private replica (`type: pserv` in `render.yaml`), not for the live Oregon pserv. While a service stays attached to this Blueprint:
 
 - Env vars with a literal `value:` in `render.yaml` are created/updated on each Blueprint sync.
 - Keys with `sync: false` (`L1_RPC_URL`, `JWT_SECRET`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
