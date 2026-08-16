@@ -8,11 +8,14 @@
 FROM nginxinc/nginx-unprivileged:1.30.4-alpine
 
 # Contract defaults. Render injects PORT; the rest are overridable at runtime.
+# RPC_REAL_IP_HEADER defaults to CF-Connecting-IP: every Render Web Service
+# terminates through Cloudflare first (platform edge, not optional orange-cloud).
+# X-Forwarded-For's rightmost hop is therefore a CF PoP, not the client.
 ENV PORT=10000 \
     REPLICA_UPSTREAM=http://fortel2-replica:10000 \
     RPC_RATE=20r/s \
     RPC_BURST=40 \
-    RPC_REAL_IP_HEADER=X-Forwarded-For \
+    RPC_REAL_IP_HEADER=CF-Connecting-IP \
     RPC_MAX_BODY=1m \
     NGINX_ENVSUBST_FILTER="^(PORT|REPLICA_UPSTREAM|RPC_RATE|RPC_BURST|RPC_REAL_IP_HEADER|RPC_MAX_BODY)$"
 
