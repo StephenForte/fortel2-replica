@@ -1,29 +1,41 @@
 # Render Blueprint — ForteL2 L2 verifier (stock op-geth + op-node).
-# Public Web Service: JSON-RPC reads via the method filter on PORT (default 10000).
-# op-geth and op-node bind loopback only; only the filter is edge-reachable.
 #
-# Preferred: New → Blueprint → this repo (keeps this service Blueprint-managed).
-# On Blueprint sync, envVars with `value:` are applied/updated. Keys with
-# `sync: false` (L1_RPC_URL, JWT_SECRET) are prompted only on first create;
-# later syncs ignore them — set/rotate those secrets in the dashboard.
+# LIVE (Oregon): Private Service `fortel2-replica` with a 50 GB disk at /data.
+# JSON-RPC reads go through the method filter on PORT (default 10000).
+# op-geth and op-node bind loopback only; only the filter is reachable
+# (private network today; public traffic must hit a *diskless* gateway).
 #
-# IMPORTANT: Render cannot convert Private Service (pserv) → Web Service in place
-# and cannot reattach an existing disk to another service. Merge this image onto
-# the existing pserv (filter on PORT). A public URL means a new Web Service +
-# new disk + full resync. Revert: recreate pserv with a new disk; accept resync.
-# See README "Public read RPC → Revert".
+# Do NOT apply this file as a **new** Blueprint. Render cannot convert
+# Private ↔ Web in place and cannot reattach the live 50 GB disk. A new
+# apply of `type: web` / `sizeGB: 20` would create a second replica with
+# an empty disk and a full L1 resync. Keep deploying this image onto the
+# existing pserv. See README "Do not convert this service to Web" and
+# "Going public" / "Revert".
+#
+# sizeGB: 20 below is the greenfield minimum, not the live disk. Do not
+# "fix" live to 20. Raising 20→50 on a *new* apply still creates an empty
+# 50 GB volume.
+#
+# Public URL: New → Web Service named `fortel2-replica-rpc` (no disk),
+# Dockerfile `./gateway/Dockerfile`, same Oregon env, upstream
+# http://fortel2-replica:10000. Wait until gateway/ exists on the deploy
+# branch. Do not point a Web Service at ./Dockerfile.
+#
+# Preferred for a *new* replica: New → Blueprint → this repo (then the
+# service stays Blueprint-managed). On Blueprint sync, envVars with
+# `value:` are applied/updated. Keys with `sync: false` (L1_RPC_URL,
+# JWT_SECRET) are prompted only on first create; later syncs ignore
+# them — set/rotate those secrets in the dashboard.
 #
 # If you instead create a Private Service from the dashboard (not via this
 # Blueprint), it is unattached to render.yaml — paste the README checklist.
-#
-# Dashboard: New → Blueprint → this repo. Set L1_RPC_URL secret (QuickNode).
 #
 # Credit schedule (observe): L1_RPC_SCHEDULE=business → QuickNode 09:00–17:00
 # America/Los_Angeles, publicnode overnight. Overrides:
 #   L1_RPC_FORCE=public|metered  or  L1_USE_PUBLIC_RPC=1
 #
-# Or: New → Web Service → Runtime Docker → root Dockerfile.
-# Attach a persistent disk at /data (≥20 GB).
+# Dashboard replica: New → Private Service → Runtime Docker → root Dockerfile.
+# Attach a persistent disk at /data (≥20 GB; live is 50 GB).
 
 services:
   - type: web
