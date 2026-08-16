@@ -1,0 +1,95 @@
+# ForteL2 public RPC gateway — included in http {} via conf.d/.
+# Braced env names are substituted at container start. nginx
+# variables ($remote_addr and friends) are left alone — see
+# NGINX_ENVSUBST_FILTER.
+
+# Real-IP / rate-limit key
+# ------------------------
+# This container never sees the client TCP peer. Render (and Cloudflare,
+# when used) terminate TLS in front of us, so $remote_addr is the proxy
+# hop. Keying limit_req on $binary_remote_addr *without* rewriting it
+# puts every client on earth in one bucket — a self-DoS that looks
+# healthy under single-client testing.
+#
+# ngx_http_realip_module:
+#   real_ip_header     ${RPC_REAL_IP_HEADER}   (default X-Forwarded-For)
+#   real_ip_recursive  on
+#   set_real_ip_from   RFC1918 / loopback / link-local / CGNAT
+#
+# Which X-Forwarded-For entry we take: the RIGHTMOST untrusted address.
+# nginx walks the header from the right, skips hops in set_real_ip_from,
+# and stops at the first address that is not trusted. That is the client
+# as seen by the last trusted proxy (Render's edge).
+#
+# We do NOT take the leftmost entry. Render appends to X-Forwarded-For
+# and does not reset it, so a client can send `X-Forwarded-For: 1.2.3.4`
+# and the leftmost value is attacker-controlled.
+#
+# Cloudflare: XFF becomes `client, cf-edge`, so the rightmost untrusted
+# hop is Cloudflare, not the client. Set
+# RPC_REAL_IP_HEADER=CF-Connecting-IP (a single, CF-authored value).
+#
+# Header absent or unparseable: real_ip leaves $remote_addr as the TCP
+# peer. An empty limit_req_zone key disables the limiter silently; the
+# map below never emits one (empty → 0.0.0.0, a shared fail-closed bucket).
+
+map $remote_addr $rpc_limit_key {
+    ""      0.0.0.0;
+    default $remote_addr;
+}
+
+limit_req_zone $rpc_limit_key zone=rpc:10m rate=${RPC_RATE};
+limit_req_status 429;
+
+log_format rpc_gateway escape=default
+    '$remote_addr key=$rpc_limit_key peer=$realip_remote_addr '
+    '$request_method $request_uri $status '
+    'xff="$http_x_forwarded_for" cf="$http_cf_connecting_ip"';
+
+# Trust only hops that can sit between the client and this container.
+# Do not add 0.0.0.0/0 — that would make the leftmost (spoofable) XFF
+# entry win. If Render's peer is not in this list, real_ip does not
+# rewrite and every client shares the peer bucket (loud, not silent).
+set_real_ip_from 10.0.0.0/8;
+set_real_ip_from 172.16.0.0/12;
+set_real_ip_from 192.168.0.0/16;
+set_real_ip_from 127.0.0.0/8;
+set_real_ip_from 169.254.0.0/16;
+set_real_ip_from 100.64.0.0/10;
+set_real_ip_from ::1;
+set_real_ip_from fc00::/7;
+set_real_ip_from fe80::/10;
+
+real_ip_header ${RPC_REAL_IP_HEADER};
+real_ip_recursive on;
+
+server {
+    listen ${PORT};
+    server_name _;
+
+    client_max_body_size ${RPC_MAX_BODY};
+
+    access_log /dev/stdout rpc_gateway;
+    error_log  /dev/stderr warn;
+
+    # Local liveness. No proxy_pass, no limit_req — Render / compose
+    # probes must not consume the per-IP budget or depend on the replica.
+    location = /healthz {
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # Everything else, including GET /, goes to the replica method filter.
+    # CORS is owned by the filter — do not add, hide, or rewrite it here.
+    location / {
+        limit_req zone=rpc burst=${RPC_BURST} nodelay;
+
+        proxy_pass ${REPLICA_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 10s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
