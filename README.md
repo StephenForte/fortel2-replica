@@ -73,7 +73,7 @@ This section is the operator's entire configuration path. Gateway env is **not s
 
 ### Dashboard
 
-Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`. Create it from the Dashboard; both live services are unattached, by design.
+Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`. Create it from the Dashboard. The replica is already unattached; the gateway is **not created yet** and must be unattached the same way — do not attach either to this Blueprint.
 
 | Field | Value |
 |---|---|
@@ -142,7 +142,7 @@ Expect a healthy `/healthz`, `result: "0x354"` on reads, `-32601 method not allo
 
 ### Blueprint vs dashboard-created services
 
-`render.yaml` is the canonical copy of the **replica's** env values and a reference for a **greenfield** replica. It is **not** the deployment mechanism for anything that currently exists. Live `fortel2-replica` and the public gateway `fortel2-replica-rpc` are both Dashboard-created and **unattached** to any Blueprint, permanently and by design (R-0008). Do not apply this file as a new Blueprint onto the live Oregon environment — that creates a second replica with an empty disk, not a gateway in front of the live node.
+`render.yaml` is the canonical copy of the **replica's** env values and a reference for a **greenfield** replica. It is **not** the deployment mechanism for anything that currently exists. Live `fortel2-replica` is Dashboard-created and **unattached** to any Blueprint. The public gateway `fortel2-replica-rpc` does **not** exist yet (no public URL; ForteL2 D-0031); when you create it, it must be Dashboard-created and unattached the same way, permanently and by design (R-0008). Do not apply this file as a new Blueprint onto the live Oregon environment — that creates a second replica with an empty disk, not a gateway in front of the live node.
 
 The `sync: false` / Blueprint-sync mechanics below stay accurate, but they describe a path nobody live is on. They matter only if you ever stand up a *new* private replica from **New → Blueprint** (not this live one, and not as a way to add the gateway).
 
@@ -152,7 +152,7 @@ The `sync: false` / Blueprint-sync mechanics below stay accurate, but they descr
 - Keys with `sync: false` (`L1_RPC_URL`, `JWT_SECRET`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
 - Dashboard edits that conflict with Blueprint `value:` fields are overwritten on the next sync.
 
-**Dashboard-created (unattached) — every live service:** **New → Private Service** (replica) or **New → Web Service** (gateway, [Going public](#going-public)) without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the replica tables below into **Environment**, then redeploy. Gateway env is the table in [Going public](#going-public), not the replica tables here.
+**Dashboard-created (unattached):** the live replica, and the gateway once you create it. **New → Private Service** (replica) or **New → Web Service** (gateway, [Going public](#going-public)) without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the replica tables below into **Environment**, then redeploy. Gateway env is the table in [Going public](#going-public), not the replica tables here.
 
 Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
