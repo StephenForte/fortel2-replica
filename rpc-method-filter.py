@@ -554,13 +554,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         _write_json(self, status, payload, out_ctype)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def _health_body(self) -> bytes:
         assert STATE is not None
-        body = (
+        return (
             f'{{"ok":true,"upstream":"{STATE.upstream}",'
             f'"allowed":{len(ALLOWED_METHODS)}}}\n'
         ).encode()
-        _write_json(self, 200, body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        _write_json(self, 200, self._health_body())
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        # Render's default health probe is HEAD /. BaseHTTPRequestHandler 501s
+        # unknown methods, which shows up as a failed deploy even when GET works.
+        body = self._health_body()
+        self.send_response(200)
+        _add_cors_headers(self)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
 
 
 def self_test() -> None:
