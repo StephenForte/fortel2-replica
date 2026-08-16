@@ -1,0 +1,4 @@
+# Native Python runtime for sequencer-read/start.sh (Render Web Service).
+# rpc-method-filter.py is stdlib-only; this file exists so Render's Python
+# build has a lockfile to install. Do not add dependencies here — the replica
+# Docker image never pip-installs this file.

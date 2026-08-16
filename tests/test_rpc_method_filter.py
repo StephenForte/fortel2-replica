@@ -219,6 +219,77 @@ class RpcMethodFilterTests(unittest.TestCase):
             mod.read_chunked_body(io.BytesIO(flood))
         self.assertIn("trailer", str(ctx.exception).lower())
 
+    def test_remote_upstream_requires_access_env(self):
+        import importlib.util
+        import os
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+
+        saved = {
+            k: os.environ.get(k)
+            for k in (
+                "L2_RPC_FILTER_UPSTREAM",
+                "L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS",
+                "CF_ACCESS_CLIENT_ID",
+                "CF_ACCESS_CLIENT_SECRET",
+            )
+        }
+        try:
+            os.environ["L2_RPC_FILTER_UPSTREAM"] = "https://fortel2-write.ente.ltd"
+            os.environ["L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS"] = "fortel2-write.ente.ltd"
+            os.environ.pop("CF_ACCESS_CLIENT_ID", None)
+            os.environ.pop("CF_ACCESS_CLIENT_SECRET", None)
+            with self.assertRaises(SystemExit) as ctx:
+                mod.FilterState()
+            self.assertIn("CF_ACCESS", str(ctx.exception))
+
+            os.environ["CF_ACCESS_CLIENT_ID"] = "id"
+            os.environ["CF_ACCESS_CLIENT_SECRET"] = "secret"
+            state = mod.FilterState()
+            self.assertTrue(state.remote)
+            self.assertEqual(state.access_id, "id")
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_loopback_upstream_ignores_access_env(self):
+        import importlib.util
+        import os
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+
+        saved = {
+            k: os.environ.get(k)
+            for k in (
+                "L2_RPC_FILTER_UPSTREAM",
+                "L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS",
+                "CF_ACCESS_CLIENT_ID",
+                "CF_ACCESS_CLIENT_SECRET",
+            )
+        }
+        try:
+            os.environ["L2_RPC_FILTER_UPSTREAM"] = "http://127.0.0.1:8546"
+            os.environ.pop("L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS", None)
+            os.environ["CF_ACCESS_CLIENT_ID"] = "id"
+            os.environ["CF_ACCESS_CLIENT_SECRET"] = "secret"
+            state = mod.FilterState()
+            self.assertFalse(state.remote)
+        finally:
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -134,6 +134,58 @@ curl -s http://fortel2-replica:10000 -H 'content-type: application/json' \
 
 Expect a healthy `/healthz`, `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTransaction`, and HTTP `429` under a burst. Lag and the sequencer sleep window are the same as the private replica (~3 minutes behind; 23:45–03:00 Pacific).
 
+## Public sequencer reads
+
+The replica gateway above is L1-derived (~3 minutes behind the sequencer tip). SettlementOS Explorer needs a just-settled escrow hash in **seconds**, not minutes. Do **not** point the browser at `https://fortel2-write.ente.ltd` (Cloudflare Access 403; it accepts writes). Do **not** retarget `fortel2-replica-rpc` at the sequencer (R-0009).
+
+A third diskless Web Service runs the same method filter against the Access-gated sequencer. Browsers talk to this URL; Access headers stay on the server.
+
+### Dashboard
+
+Same GitHub repo, **third** service, same Oregon env. Create from the Dashboard — **New → Web Service**, unattached (R-0008). Python native, not Docker (the replica `Dockerfile` would boot a second verifier).
+
+| Field | Value |
+|---|---|
+| Create | **New → Web Service** (not Blueprint, not the replica Dockerfile) |
+| Repo | `StephenForte/fortel2-replica` |
+| Name | `fortel2-sequencer-rpc` (never reuse `fortel2-replica` or `fortel2-replica-rpc`) |
+| Region | **Oregon** |
+| Runtime | **Python 3** |
+| Build command | `python3 --version` |
+| Start command | `sh sequencer-read/start.sh` |
+| Health Check Path | `/` |
+| Disk | **None** |
+| Plan | Starter or higher (Free spins down after 15 minutes) |
+
+Env (R-0009). Paste into **Environment**. Copy `CF_ACCESS_*` from SettlementOS — same service token, never commit, never `VITE_*`.
+
+| Key | Value | Meaning |
+|---|---|---|
+| `PORT` | Render-injected | filter listen port; `start.sh` binds `0.0.0.0:$PORT` |
+| `L2_RPC_FILTER_UPSTREAM` | `https://fortel2-write.ente.ltd` | sequencer JSON-RPC (Access-gated) |
+| `L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS` | `fortel2-write.ente.ltd` | exact-hostname allowlist; unset keeps the replica loopback-only |
+| `CF_ACCESS_CLIENT_ID` | from SettlementOS | Cloudflare Access service token id |
+| `CF_ACCESS_CLIENT_SECRET` | from SettlementOS | Cloudflare Access service token secret |
+
+SettlementOS **writes** stay on `fortel2-write.ente.ltd` + Access. SettlementOS **reads** stay on `http://fortel2-replica:10000`. The explorer puts this public URL **first** and `https://fortel2-replica-rpc.onrender.com` second (fallback when the sequencer is in its overnight window).
+
+### Smoke test
+
+```bash
+# health (does not hit the sequencer)
+curl -sS https://<sequencer-rpc-host>/
+# chain id 852
+curl -s https://<sequencer-rpc-host> -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
+# writes still rejected here — never forwarded
+curl -s https://<sequencer-rpc-host> -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x"]}'
+```
+
+Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on the write. Tip reads should match the sequencer, not the replica head.
+
+**Rate limit.** None in-process (R-0003). Render platform DDoS only until a `gateway/` nginx is put in front. The sequencer sleep window is **23:45–03:00** `America/Los_Angeles` — this door 502s/403s then; the explorer falls back to the replica.
+
 ## Render
 
 **RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node (+ optional L1 router) in one container. Do not leave geth’s 1024MB default cache.
