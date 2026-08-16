@@ -32,6 +32,27 @@ Do not rename these. The default for `RPC_REAL_IP_HEADER` is
 `CF-Connecting-IP` because Render's edge is always Cloudflare; older
 root docs that treat that header as an optional override are stale.
 
+`NGINX_LOCAL_RESOLVERS` is **not** an operator key. A startup script
+reads this container's `/etc/resolv.conf` and envsubst injects it into
+`resolver`. Do not set it in the Dashboard, and do not point `resolver`
+at `8.8.8.8` / `1.1.1.1` — `fortel2-replica` is a Render private name
+and public DNS does not know it.
+
+## Upstream DNS (replica redeploys)
+
+A literal `proxy_pass http://fortel2-replica:10000` is resolved **once**,
+at nginx config load, and cached for the life of the process. After
+`fortel2-replica` redeploys it gets a new private IP; the gateway keeps
+dialing the old one and every request 504s (`upstream timed out`) until
+someone restarts `fortel2-replica-rpc`. That happened on 2026-08-16.
+
+This image uses a variable `proxy_pass` plus `resolver` so nginx
+re-queries the container's own nameserver, respecting whatever TTL
+Render's private DNS returns. There is no `valid=` override — do not
+invent one without live evidence the TTL is too long.
+
+`GET /healthz` is still local. Real-IP / `limit_req` are unchanged.
+
 ## Real-IP scheme
 
 The container's TCP peer is Render's proxy, not the client. The limiter
@@ -143,17 +164,48 @@ done
 wait
 ```
 
+### 5. Resolver matches this container's DNS (after every gateway deploy)
+
+Shell into `fortel2-replica-rpc` and confirm nginx is using the same
+nameserver the OS already uses — not a public resolver:
+
+```bash
+cat /etc/resolv.conf
+nginx -T 2>&1 | grep -E 'resolver |proxy_pass |set \$replica_upstream'
+```
+
+`resolver` must list the `nameserver` address(es) from `resolv.conf`.
+`proxy_pass` must be `$replica_upstream$request_uri`, not a literal
+`http://fortel2-replica:10000`.
+
+Then, **without restarting the gateway**, redeploy only `fortel2-replica`
+and curl the public URL through that window. Expect `200` / `429` —
+not `504`, and no `upstream timed out` in the gateway error log. A
+manual gateway restart "fixing" it is the old bug, not a success.
+
+A request already in flight to the old IP can still fail at the moment
+of switchover. After that, the residual window is Render's DNS TTL
+(unknown; this image does not override it).
+
 ## Local run (dummy upstream)
+
+nginx re-resolves via the container resolver and **does not read
+`/etc/hosts`**. `host.docker.internal` from `--add-host` will 502.
+Use the numeric host-gateway IP:
 
 ```bash
 # terminal 1 — stand-in for the replica filter
 python3 -m http.server 18080
 # terminal 2
+docker build -f gateway/Dockerfile -t fortel2-gw:test gateway/
+HOST_IP=$(docker run --rm --add-host=host.docker.internal:host-gateway \
+  fortel2-gw:test awk '$2=="host.docker.internal"{print $1; exit}' /etc/hosts)
 docker run --rm -p 10000:10000 \
-  -e REPLICA_UPSTREAM=http://host.docker.internal:18080 \
+  --add-host=host.docker.internal:host-gateway \
+  -e REPLICA_UPSTREAM=http://${HOST_IP}:18080 \
   fortel2-gw:test
 curl -sS http://127.0.0.1:10000/healthz   # ok
 ```
 
-On Linux, add `--add-host=host.docker.internal:host-gateway` if the
-upstream is on the host.
+On Linux, `--add-host=host.docker.internal:host-gateway` is what makes
+that `HOST_IP` line work if the upstream is on the host.
