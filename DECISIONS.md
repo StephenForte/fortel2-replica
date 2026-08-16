@@ -164,3 +164,40 @@ steady state — not a temporary condition to be cleaned up later.
   public". Nothing syncs them — drift between the two is a documentation bug that no tool
   will catch.
 - `sizeGB: 20` in `render.yaml` stays as-is, unchanged and still not the live disk (R-0004).
+
+## R-0009 — Public sequencer reads are a third diskless service, not the replica gateway
+
+*2026-08-16*
+
+The explorer needs chain-852 **tip** reads (a just-settled escrow hash in seconds). The
+public replica (`fortel2-replica-rpc`) derives from L1 batches and lags ~3 minutes; pointing
+the browser at `https://fortel2-write.ente.ltd` is wrong (Cloudflare Access 403 without
+service-token headers, and it accepts `eth_sendRawTransaction`).
+
+**Do this:** a new diskless Web Service (`fortel2-sequencer-rpc`) that runs
+`sequencer-read/start.sh` → `rpc-method-filter.py` with:
+
+- `L2_RPC_FILTER_UPSTREAM=https://fortel2-write.ente.ltd`
+- `L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS=fortel2-write.ente.ltd` (exact hostname, https/443 only)
+- `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` copied from SettlementOS (`sync: false`)
+
+The filter still drops `eth_sendRawTransaction`. Browsers never see the Access token.
+SettlementOS **write** transports stay on `fortel2-write.ente.ltd` + Access; SettlementOS
+**reads** stay on `http://fortel2-replica:10000`. Do not retarget `fortel2-replica-rpc` at
+the sequencer — that would lose the L1-verified replica and put Access secrets on the
+replica-lag gateway.
+
+**Not this:** proxying the sequencer through the explorer Express app (explorer D32
+declined: write-capable relay). A remote upstream is an **opt-in allowlist**; unset
+`L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS` keeps the replica loopback-only.
+
+**Rate limit.** R-0003 still forbids a limiter inside the filter. v1 ships without nginx
+`limit_req` (Render platform DDoS only). If this door sees real traffic, put a copy of
+`gateway/` in front the same way `fortel2-replica-rpc` sits in front of the replica — do
+not add a token bucket to `rpc-method-filter.py`.
+
+**Replica bounce.** This service can deploy from a feature branch. Merging the filter
+change to `main` will rebuild `fortel2-replica` (auto-deploy on checks). That restart is
+a catch-up lag event; do not merge until that bounce is acceptable.
+
+See `README.md` §"Public sequencer reads".
