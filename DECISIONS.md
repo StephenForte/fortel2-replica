@@ -52,7 +52,10 @@ alongside op-geth and op-node, and it is **vendored from ForteL2** `scripts/rpc-
 
 ## R-0004 — The gateway upstream is a literal, never `fromService`
 
-*2026-08-16*
+*2026-08-16* · **SUPERSEDED by R-0008 (2026-08-16)** — the gateway is not declared in
+`render.yaml` at all, so there is no `fromService` decision left to make. The analysis below is
+retained because it is *why* R-0008 goes further, and because the prohibition still binds
+anyone who later proposes adding the gateway back to the Blueprint.
 
 `render.yaml` sets `REPLICA_UPSTREAM: http://fortel2-replica:10000` as a literal `value:`.
 **Do not** use `fromService`.
@@ -76,6 +79,10 @@ it to 50 resizes nothing; it only makes a *new* apply provision an empty 50 GB v
 
 Fixed names and defaults, shared by `gateway/` and `render.yaml`. Changing one of these is a
 decision, not an implementation detail — supersede this entry rather than editing in place.
+
+**Amended 2026-08-16 by R-0008:** the values are unchanged, but they are pasted into the
+Dashboard as a checklist rather than synced from `render.yaml` — the gateway is not declared
+there. `README.md` §"Going public" is the authoritative copy of this table.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -122,3 +129,38 @@ allowlisted and unweighted, and a JSON-RPC **batch counts as one HTTP request**.
 **Why.** Ship the door before the tuning. Recorded as a known gap so it is documented as a gap
 rather than implied to be covered — a client can still buy expensive work per request within
 the rate limit. Revisit if the public endpoint sees real traffic.
+
+## R-0008 — The gateway is not declared in `render.yaml`; the Blueprint stays single-service
+
+*2026-08-16 · supersedes R-0004, amends R-0005*
+
+`render.yaml` continues to define **exactly one** service: the private replica. The gateway
+(`fortel2-replica-rpc`) is created from the Dashboard — **New → Web Service** — and is
+unattached to any Blueprint, like the live replica already is. Its configuration lives as a
+paste-in checklist in `README.md` §"Going public" (R-0005 table + Dockerfile path
+`./gateway/Dockerfile`, context `./gateway`, no disk, region `oregon`, health check
+`/healthz`, plan Starter or higher).
+
+**Why.** A Blueprint apply cannot add a service *into* the existing Oregon environment
+alongside an unattached pserv — it creates its own services. So the Blueprint path can never
+produce the gateway that is actually wanted: one that reaches the **live** 50 GB replica over
+private DNS. It can only produce a second replica plus a gateway, which is the R-0001 /
+D-0031 outcome. Declaring the gateway in a file whose own header says "do not apply this"
+is a document that contradicts itself, and the contradiction is the kind that gets resolved
+at 2am by clicking the button.
+
+Both live services are therefore Dashboard-created and unattached, and that is the intended
+steady state — not a temporary condition to be cleaned up later.
+
+**Consequences.**
+
+- `render.yaml` keeps its single-service greenfield-reference role: it is the canonical copy
+  of the **replica's** env values, which `README.md`'s tables mirror. It is not a deployment
+  mechanism for anything live.
+- `README.md` should not present Blueprint as the *preferred* path. It is a reference for a
+  hypothetical greenfield replica; every service that actually exists is created and
+  configured by hand.
+- Gateway env changes are made in the Dashboard and mirrored into `README.md` §"Going
+  public". Nothing syncs them — drift between the two is a documentation bug that no tool
+  will catch.
+- `sizeGB: 20` in `render.yaml` stays as-is, unchanged and still not the live disk (R-0004).
