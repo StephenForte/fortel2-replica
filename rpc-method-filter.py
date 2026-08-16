@@ -9,7 +9,8 @@ Includes round-1 chunked-body fix: yes
 MR-2 adaptations in this repo (keep in sync when pulling fixes from ForteL2):
   - ALLOWED_METHODS derived from T5-D1 then minus eth_sendRawTransaction (read-only)
   - Listen host may be 0.0.0.0 (Render publishes this process; geth stays loopback)
-  - Upstream remains loopback-only
+  - Upstream is loopback-only unless L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS allowlists
+    an https host (sequencer-read gateway → fortel2-write.ente.ltd + Access headers)
   - CORS (OPTIONS + ACAO) for browser clients hitting the public Render URL
   - JSON-RPC notifications (no "id") never get a Response object, including rejects
   - HTTP/1.1 keep-alive: unread/oversize bodies close the connection (no smuggle)
@@ -20,7 +21,8 @@ Fixes for the filter logic must be applied in BOTH repos (ForteL2 first, then he
 Public read-path JSON-RPC method filter for the fortel2-replica verifier.
 
 Forwards only an explicit allowlist of eth/net/web3 *read* methods to loopback
-op-geth. Render's edge dials this process — never op-geth or op-node directly.
+op-geth (replica) or an allowlisted remote HTTPS JSON-RPC (sequencer-read).
+Render's edge dials this process — never op-geth or op-node directly.
 
 Allowlist semantics (fail closed):
   - exact method string match only (no prefix, no case/whitespace normalisation)
@@ -31,7 +33,14 @@ Env:
   L2_RPC_FILTER_LISTEN     host:port (default 0.0.0.0:10000);
                            host must be loopback or 0.0.0.0
   L2_RPC_FILTER_UPSTREAM   http(s) URL of op-geth (default http://127.0.0.1:8546);
-                           host must be loopback
+                           host must be loopback, or https to a host in
+                           L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS
+  L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS
+                           comma-separated exact hostnames allowed as a
+                           non-loopback upstream (empty = loopback only)
+  CF_ACCESS_CLIENT_ID / CF_ACCESS_CLIENT_SECRET
+                           required when upstream is remote; attached as
+                           CF-Access-Client-* headers. Never logged.
 """
 
 from __future__ import annotations
@@ -221,6 +230,9 @@ def require_loopback_listen(host: str) -> str:
     return host
 
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
 def require_http_url(name: str, url: str) -> str:
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
@@ -228,10 +240,37 @@ def require_http_url(name: str, url: str) -> str:
     return url
 
 
+def remote_upstream_hosts() -> frozenset[str]:
+    raw = _env("L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS", "")
+    return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())
+
+
+def require_upstream(url: str) -> str:
+    """Loopback always; remote only when the hostname is explicitly allowlisted."""
+    url = require_http_url("L2_RPC_FILTER_UPSTREAM", url)
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if parsed.username is not None or parsed.password is not None:
+        raise SystemExit("ERROR: L2_RPC_FILTER_UPSTREAM must not include userinfo")
+    if host in LOOPBACK_HOSTS:
+        return url
+    allowed = remote_upstream_hosts()
+    if host not in allowed:
+        raise SystemExit(
+            f"ERROR: L2_RPC_FILTER_UPSTREAM must be loopback "
+            f"or an allowlisted remote host (got host {host!r})"
+        )
+    if parsed.scheme != "https":
+        raise SystemExit("ERROR: remote L2_RPC_FILTER_UPSTREAM must be https")
+    if parsed.port not in (None, 443):
+        raise SystemExit("ERROR: remote L2_RPC_FILTER_UPSTREAM must use port 443")
+    return url
+
+
 def require_loopback_upstream(url: str) -> str:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
-    if host not in ("127.0.0.1", "localhost", "::1"):
+    if host not in LOOPBACK_HOSTS:
         raise SystemExit(
             f"ERROR: L2_RPC_FILTER_UPSTREAM must be loopback "
             f"(got host {host!r})"
@@ -346,19 +385,32 @@ STATE: Optional["FilterState"] = None
 class FilterState:
     def __init__(self) -> None:
         upstream = _env("L2_RPC_FILTER_UPSTREAM", "http://127.0.0.1:8546")
-        self.upstream = require_loopback_upstream(require_http_url("L2_RPC_FILTER_UPSTREAM", upstream))
+        self.upstream = require_upstream(upstream)
+        host = (urlparse(self.upstream).hostname or "").lower()
+        self.remote = host not in LOOPBACK_HOSTS
+        self.access_id = _env("CF_ACCESS_CLIENT_ID")
+        self.access_secret = _env("CF_ACCESS_CLIENT_SECRET")
+        if self.remote and (not self.access_id or not self.access_secret):
+            raise SystemExit(
+                "ERROR: remote upstream requires CF_ACCESS_CLIENT_ID and "
+                "CF_ACCESS_CLIENT_SECRET"
+            )
 
 
 def _forward(body: bytes, content_type: str) -> tuple[int, bytes, str]:
     assert STATE is not None
+    headers = {
+        "Content-Type": content_type or "application/json",
+        "User-Agent": "fortel2-rpc-method-filter/1",
+    }
+    if STATE.remote:
+        headers["CF-Access-Client-Id"] = STATE.access_id
+        headers["CF-Access-Client-Secret"] = STATE.access_secret
     req = urllib.request.Request(
         STATE.upstream,
         data=body,
         method="POST",
-        headers={
-            "Content-Type": content_type or "application/json",
-            "User-Agent": "fortel2-rpc-method-filter/1",
-        },
+        headers=headers,
     )
     try:
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
@@ -502,13 +554,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         _write_json(self, status, payload, out_ctype)
 
-    def do_GET(self) -> None:  # noqa: N802
+    def _health_body(self) -> bytes:
         assert STATE is not None
-        body = (
+        return (
             f'{{"ok":true,"upstream":"{STATE.upstream}",'
             f'"allowed":{len(ALLOWED_METHODS)}}}\n'
         ).encode()
-        _write_json(self, 200, body)
+
+    def do_GET(self) -> None:  # noqa: N802
+        _write_json(self, 200, self._health_body())
+
+    def do_HEAD(self) -> None:  # noqa: N802
+        # Render's default health probe is HEAD /. BaseHTTPRequestHandler 501s
+        # unknown methods, which shows up as a failed deploy even when GET works.
+        body = self._health_body()
+        self.send_response(200)
+        _add_cors_headers(self)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
 
 
 def self_test() -> None:
@@ -549,6 +613,35 @@ def self_test() -> None:
         raise AssertionError("require_listen_host should have exited")
     except SystemExit as exc:
         assert "0.0.0.0" in str(exc) or "loopback" in str(exc).lower()
+
+    assert require_upstream("http://127.0.0.1:8546") == "http://127.0.0.1:8546"
+    try:
+        require_upstream("https://fortel2-write.ente.ltd")
+        raise AssertionError("require_upstream should have exited")
+    except SystemExit as exc:
+        assert "allowlisted" in str(exc) or "loopback" in str(exc).lower()
+    prev_hosts = os.environ.get("L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS")
+    os.environ["L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS"] = "fortel2-write.ente.ltd"
+    try:
+        assert (
+            require_upstream("https://fortel2-write.ente.ltd")
+            == "https://fortel2-write.ente.ltd"
+        )
+        try:
+            require_upstream("http://fortel2-write.ente.ltd")
+            raise AssertionError("http remote should have exited")
+        except SystemExit as exc:
+            assert "https" in str(exc)
+        try:
+            require_upstream("https://evil.example")
+            raise AssertionError("non-allowlisted host should have exited")
+        except SystemExit as exc:
+            assert "allowlisted" in str(exc) or "loopback" in str(exc).lower()
+    finally:
+        if prev_hosts is None:
+            os.environ.pop("L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS", None)
+        else:
+            os.environ["L2_RPC_FILTER_REMOTE_UPSTREAM_HOSTS"] = prev_hosts
 
     kind, _items, rejects = classify_body(
         [
@@ -848,7 +941,8 @@ def main() -> int:
     STATE = FilterState()
     print(
         f"rpc-method-filter: listening on http://{host}:{port} "
-        f"upstream={STATE.upstream} allowlist={len(ALLOWED_METHODS)} methods",
+        f"upstream={STATE.upstream} remote={STATE.remote} "
+        f"allowlist={len(ALLOWED_METHODS)} methods",
         flush=True,
     )
     server = ThreadingHTTPServer((host, port), Handler)
