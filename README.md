@@ -121,7 +121,7 @@ Expect `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTr
 
 ### Blueprint vs dashboard-created services
 
-**Prefer Blueprint-managed (greenfield only):** **New → Blueprint** → this repo is for a **new** replica, not for the live Oregon pserv. While a service stays attached to this Blueprint:
+**Prefer Blueprint-managed (greenfield only):** **New → Blueprint** → this repo is for a **new** private replica (`type: pserv` in `render.yaml`), not for the live Oregon pserv. While a service stays attached to this Blueprint:
 
 - Env vars with a literal `value:` in `render.yaml` are created/updated on each Blueprint sync.
 - Keys with `sync: false` (`L1_RPC_URL`, `JWT_SECRET`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
