@@ -3,17 +3,6 @@
 # variables ($remote_addr and friends) are left alone — see
 # NGINX_ENVSUBST_FILTER.
 
-# Re-resolve the replica hostname on each request (respecting DNS TTL).
-# A literal proxy_pass is resolved once at config load and cached for
-# the process lifetime — after a replica redeploy that is a dead IP
-# and every request 504s until this container is restarted.
-# nginx only re-queries DNS when proxy_pass uses a variable *and* a
-# resolver is set. NGINX_LOCAL_RESOLVERS is filled from this
-# container's /etc/resolv.conf at start (14-resolvers-from-resolv.conf.envsh).
-# Do not hardcode 8.8.8.8 / 1.1.1.1 — Render private names do not exist there.
-resolver ${NGINX_LOCAL_RESOLVERS};
-resolver_timeout 5s;
-
 # Real-IP / rate-limit key
 # ------------------------
 # This container never sees the client TCP peer. Every Render Web Service
@@ -123,12 +112,7 @@ server {
     location / {
         limit_req zone=rpc burst=${RPC_BURST} nodelay;
 
-        # Variable form is what makes the resolver above run per request.
-        # $request_uri is required when proxy_pass is a variable: nginx
-        # will not infer the original path/query the way a no-path
-        # literal proxy_pass does. Upstream is scheme://host:port only.
-        set $replica_upstream ${REPLICA_UPSTREAM};
-        proxy_pass $replica_upstream$request_uri;
+        proxy_pass ${REPLICA_UPSTREAM};
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header Connection "";
