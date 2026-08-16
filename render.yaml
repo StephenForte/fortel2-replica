@@ -5,12 +5,12 @@
 # op-geth and op-node bind loopback only; only the filter is reachable
 # (private network today; public traffic must hit a *diskless* gateway).
 #
-# Do NOT apply this file as a **new** Blueprint. Render cannot convert
-# Private ↔ Web in place and cannot reattach the live 50 GB disk. A new
-# apply of `type: web` / `sizeGB: 20` would create a second replica with
-# an empty disk and a full L1 resync. Keep deploying this image onto the
-# existing pserv. See README "Do not convert this service to Web" and
-# "Going public" / "Revert".
+# Do NOT apply this file as a **new** Blueprint onto the live Oregon pserv.
+# Render cannot reattach the live 50 GB disk. A new apply of this Blueprint
+# (`type: pserv` / `sizeGB: 20`) would create a second replica with an empty
+# disk and a full L1 resync. Keep deploying this image onto the existing
+# pserv. See README "Do not convert this service to Web" and "Going public"
+# / "Revert".
 #
 # sizeGB: 20 below is the greenfield minimum, not the live disk. Do not
 # "fix" live to 20. Raising 20→50 on a *new* apply still creates an empty
@@ -38,14 +38,14 @@
 # Attach a persistent disk at /data (≥20 GB; live is 50 GB).
 
 services:
-  - type: web
+  - type: pserv
     name: fortel2-replica
     runtime: docker
     plan: standard
     dockerfilePath: ./Dockerfile
     dockerContext: .
     region: oregon
-    # Filter answers GET / with {"ok":true,...} for Render's edge probe.
+    # Filter answers GET / with {"ok":true,...} for Render's private-network probe.
     healthCheckPath: /
     disk:
       name: fortel2-replica-data
