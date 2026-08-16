@@ -25,24 +25,27 @@ Upstream is `$REPLICA_UPSTREAM` (default `http://fortel2-replica:10000`).
 | `REPLICA_UPSTREAM` | `http://fortel2-replica:10000` | upstream origin, scheme included |
 | `RPC_RATE` | `20r/s` | `limit_req_zone` rate |
 | `RPC_BURST` | `40` | `limit_req` burst (`nodelay`) |
-| `RPC_REAL_IP_HEADER` | `X-Forwarded-For` | header carrying the client IP; set to `CF-Connecting-IP` when Cloudflare fronts the hostname |
+| `RPC_REAL_IP_HEADER` | `CF-Connecting-IP` | header carrying the client IP. Render Web Services always terminate through Cloudflare first, so this is the default — not an optional override. Set to `X-Forwarded-For` only if you need the chain; CF CIDRs are already trusted so the walk skips PoPs |
 | `RPC_MAX_BODY` | `1m` | `client_max_body_size` — matches the filter's 1 MiB cap |
 
-Do not rename these. The Render Web Service (`fortel2-replica-rpc`) and the
-root README document the same names.
+Do not rename these. The default for `RPC_REAL_IP_HEADER` is
+`CF-Connecting-IP` because Render's edge is always Cloudflare; older
+root docs that treat that header as an optional override are stale.
 
 ## Real-IP scheme
 
 The container's TCP peer is Render's proxy, not the client. The limiter
 key is therefore **not** bare `$remote_addr` / `$binary_remote_addr`.
 
-1. `real_ip_header` reads `RPC_REAL_IP_HEADER`.
-2. `set_real_ip_from` trusts RFC1918, loopback, link-local, and CGNAT
-   (the hops that can sit between the client and this process).
+1. `real_ip_header` reads `RPC_REAL_IP_HEADER` (default `CF-Connecting-IP`).
+2. `set_real_ip_from` trusts RFC1918, loopback, link-local, CGNAT, **and
+   Cloudflare's published CIDRs**. Render's edge is always Cloudflare
+   (platform DDoS, not the optional operator orange-cloud). Without those
+   CIDRs, an `X-Forwarded-For` walk stops on the CF PoP and every client
+   at that PoP shares one 20 r/s bucket.
 3. `real_ip_recursive on` walks `X-Forwarded-For` from the **right** and
-   takes the first address that is not trusted — the client as seen by
-   Render. Leftmost is ignored because Render **appends** to XFF and a
-   client can spoof the left side.
+   takes the first address that is not trusted. Leftmost is ignored
+   because Render **appends** to XFF and a client can spoof the left side.
 4. After that rewrite, `$remote_addr` is mapped to `$rpc_limit_key`.
    An empty value becomes `0.0.0.0` so `limit_req` never sees an empty
    key (empty keys disable the limiter silently).
@@ -50,15 +53,16 @@ key is therefore **not** bare `$remote_addr` / `$binary_remote_addr`.
    key falls back to the TCP peer. Still limited; possibly one shared
    bucket. That is fail-safe, not fail-open.
 
-When Cloudflare is in front, XFF looks like `client, cf-edge` and the
-rightmost untrusted hop is Cloudflare. Set
-`RPC_REAL_IP_HEADER=CF-Connecting-IP`.
+Operator orange-cloud in front of the `onrender.com` hostname is a
+**second** Cloudflare hop. Leave `RPC_REAL_IP_HEADER=CF-Connecting-IP`
+(their edge overwrites it with the same client). Do not treat
+"Cloudflare is off" as the Render default — it never is.
 
 ## Post-deploy verification
 
 The true chain can only be confirmed on the live Web Service. After
 `fortel2-replica-rpc` is up, do this before pointing a custom domain
-or Cloudflare at it.
+at it. Platform Cloudflare is already in the path.
 
 ### 1. Local health (no replica, no limiter)
 
@@ -96,34 +100,36 @@ Each proxied request logs:
 | first column / `key=` | the rate-limit bucket (post-`real_ip`, never empty) |
 | `peer=` | the TCP hop nginx actually accepted (`$realip_remote_addr`) |
 | `xff=` | raw `X-Forwarded-For` |
-| `cf=` | raw `CF-Connecting-IP` (empty unless Cloudflare is on) |
+| `cf=` | raw `CF-Connecting-IP` (always set on a Render Web Service) |
 
 ### Working vs wrong key vs limiter off
 
 **Working.** Two requests from two networks show two different `key=`
-values. `key=` is a public client IP, not a `10/8` or `172.16/12` Render
-hop. `peer=` is the Render (or Cloudflare) hop and stays the same across
-clients. A single client bursting well past `RPC_BURST` gets HTTP **429**;
-a second client on a different IP is unaffected.
+values. `key=` matches `cf=` (a public client IP), not a `10/8` Render
+hop and **not** a Cloudflare PoP (`104.16.0.0/13`, `172.64.0.0/13`,
+`162.158.0.0/15`, …). `peer=` is the Render proxy and stays the same
+across clients. A single client bursting well past `RPC_BURST` gets
+HTTP **429**; a second client on a different IP is unaffected.
 
 **Limiting the wrong key (shared bucket).** Every request has the same
-`key=`, and that value equals `peer=` (a Render or Cloudflare address).
-Two ordinary users together trip 429s at ~20 r/s combined. Single-client
-smoke tests still look fine. Typical causes: `X-Forwarded-For` missing,
-or Render's peer is not in the RFC1918 trust list so `real_ip` never
-rewrites. Do not "fix" this by trusting `0.0.0.0/0` (that takes the
-spoofable leftmost XFF entry). Capture a log line and the peer CIDR
-before changing `set_real_ip_from`.
+`key=`, and that value equals `peer=` (a Render address). Two ordinary
+users together trip 429s at ~20 r/s combined. Single-client smoke tests
+still look fine. Typical cause: the real-IP header is missing and the
+peer is not in the trust list. Do not "fix" this by trusting `0.0.0.0/0`
+(that takes the spoofable leftmost XFF entry).
+
+**Limiting the Cloudflare PoP (the easy miss).** `key=` is a public IP
+that does **not** match `cf=`, and matches the rightmost `xff=` entry
+(a CF edge such as `104.22.x.x`). Many clients at one PoP share a
+bucket; two users on different ISPs in the same city can trip 429s
+together. This is the default-`X-Forwarded-For` + private-only trust
+list failure. This image defaults to `CF-Connecting-IP` and trusts CF
+CIDRs so an XFF override still walks past the PoP. If you still see
+this, the running config is stale or CF republished ranges.
 
 **Limiter silently off.** `key=` is empty or `-`. A burst never 429s.
 This image maps empty → `0.0.0.0`, so this should not happen. If it
 does, the running config is not this template.
-
-**Cloudflare on, header still `X-Forwarded-For`.** `key=` matches the
-rightmost XFF entry (Cloudflare), `cf=` shows the real client, and
-every visitor shares one bucket again. Set
-`RPC_REAL_IP_HEADER=CF-Connecting-IP` and redeploy; `key=` should then
-match `cf=`.
 
 ### 4. Burst (expect 429)
 

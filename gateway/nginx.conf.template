@@ -5,29 +5,30 @@
 
 # Real-IP / rate-limit key
 # ------------------------
-# This container never sees the client TCP peer. Render (and Cloudflare,
-# when used) terminate TLS in front of us, so $remote_addr is the proxy
-# hop. Keying limit_req on $binary_remote_addr *without* rewriting it
-# puts every client on earth in one bucket — a self-DoS that looks
-# healthy under single-client testing.
+# This container never sees the client TCP peer. Every Render Web Service
+# terminates TLS at Cloudflare, then a Render proxy (typically 10/8).
+# Keying limit_req on $binary_remote_addr *without* rewriting it puts
+# every client on earth in one bucket — a self-DoS that looks healthy
+# under single-client testing.
 #
 # ngx_http_realip_module:
-#   real_ip_header     ${RPC_REAL_IP_HEADER}   (default X-Forwarded-For)
+#   real_ip_header     ${RPC_REAL_IP_HEADER}   (default CF-Connecting-IP)
 #   real_ip_recursive  on
-#   set_real_ip_from   RFC1918 / loopback / link-local / CGNAT
+#   set_real_ip_from   RFC1918 / loopback / link-local / CGNAT / Cloudflare
 #
-# Which X-Forwarded-For entry we take: the RIGHTMOST untrusted address.
-# nginx walks the header from the right, skips hops in set_real_ip_from,
-# and stops at the first address that is not trusted. That is the client
-# as seen by the last trusted proxy (Render's edge).
+# Default header is CF-Connecting-IP: a single, CF-authored client IP.
+# Render's platform edge always sets it. Operator orange-cloud (optional
+# second CF hop) overwrites it with the same client. Do not treat
+# Cloudflare as optional on this deploy path.
 #
-# We do NOT take the leftmost entry. Render appends to X-Forwarded-For
-# and does not reset it, so a client can send `X-Forwarded-For: 1.2.3.4`
-# and the leftmost value is attacker-controlled.
-#
-# Cloudflare: XFF becomes `client, cf-edge`, so the rightmost untrusted
-# hop is Cloudflare, not the client. Set
-# RPC_REAL_IP_HEADER=CF-Connecting-IP (a single, CF-authored value).
+# If RPC_REAL_IP_HEADER=X-Forwarded-For: we take the RIGHTMOST untrusted
+# address. nginx walks from the right, skips set_real_ip_from hops, and
+# stops at the first address that is not trusted. Cloudflare CIDRs must
+# be trusted — otherwise the walk stops on the CF PoP (104.x / 172.64/13
+# / 162.158/15) and every visitor at that PoP shares one 20 r/s bucket.
+# Leftmost is ignored: Render appends to XFF and does not reset it, so a
+# client can send `X-Forwarded-For: 1.2.3.4` and leftmost is attacker-
+# controlled.
 #
 # Header absent or unparseable: real_ip leaves $remote_addr as the TCP
 # peer. An empty limit_req_zone key disables the limiter silently; the
@@ -48,8 +49,8 @@ log_format rpc_gateway escape=default
 
 # Trust only hops that can sit between the client and this container.
 # Do not add 0.0.0.0/0 — that would make the leftmost (spoofable) XFF
-# entry win. If Render's peer is not in this list, real_ip does not
-# rewrite and every client shares the peer bucket (loud, not silent).
+# entry win. If the peer is not in this list, real_ip does not rewrite
+# and every client shares the peer bucket (loud, not silent).
 set_real_ip_from 10.0.0.0/8;
 set_real_ip_from 172.16.0.0/12;
 set_real_ip_from 192.168.0.0/16;
@@ -59,6 +60,33 @@ set_real_ip_from 100.64.0.0/10;
 set_real_ip_from ::1;
 set_real_ip_from fc00::/7;
 set_real_ip_from fe80::/10;
+
+# Cloudflare published ranges (https://www.cloudflare.com/ips/ as of
+# 2026-08-16). Render's edge is always CF; 172.64.0.0/13 is CF, not
+# RFC1918 (172.16.0.0/12 ends at 172.31.255.255). Without these, an
+# X-Forwarded-For walk keys on the PoP. Refresh if CF republishes.
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2a06:98c0::/29;
+set_real_ip_from 2c0f:f248::/32;
 
 real_ip_header ${RPC_REAL_IP_HEADER};
 real_ip_recursive on;

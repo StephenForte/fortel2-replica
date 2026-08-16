@@ -26,7 +26,7 @@ CONTRACT_DEFAULTS = {
     "REPLICA_UPSTREAM": "http://fortel2-replica:10000",
     "RPC_RATE": "20r/s",
     "RPC_BURST": "40",
-    "RPC_REAL_IP_HEADER": "X-Forwarded-For",
+    "RPC_REAL_IP_HEADER": "CF-Connecting-IP",
     "RPC_MAX_BODY": "1m",
 }
 
@@ -161,6 +161,7 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertRegex(df, r"(?m)^FROM nginxinc/nginx-unprivileged:\d")
         self.assertNotRegex(df, r"(?m)^VOLUME\b")
         self.assertNotRegex(df, r"(?im)^(RUN|COPY|ADD)\b.*\bgeth\b")
+        self.assertIn("RPC_REAL_IP_HEADER=CF-Connecting-IP", df)
 
     def test_rendered_defaults_match_contract(self):
         conf = render_gateway_conf()
@@ -176,7 +177,7 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertIn("client_max_body_size 1m;", conf)
         self.assertIn("proxy_pass http://fortel2-replica:10000;", conf)
         self.assertIn("listen 10000;", conf)
-        self.assertIn("real_ip_header X-Forwarded-For;", conf)
+        self.assertIn("real_ip_header CF-Connecting-IP;", conf)
         self.assertIn("real_ip_recursive on;", conf)
         self.assertIn("limit_req zone=rpc burst=40 nodelay;", conf)
         self.assertIn("key=$rpc_limit_key", conf)
@@ -200,7 +201,7 @@ class GatewayConfigTests(unittest.TestCase):
                 "REPLICA_UPSTREAM": "http://example.internal:9",
                 "RPC_RATE": "5r/s",
                 "RPC_BURST": "7",
-                "RPC_REAL_IP_HEADER": "CF-Connecting-IP",
+                "RPC_REAL_IP_HEADER": "X-Forwarded-For",
                 "RPC_MAX_BODY": "512k",
             }
         )
@@ -208,7 +209,7 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertIn("proxy_pass http://example.internal:9;", conf)
         self.assertIn("rate=5r/s;", conf)
         self.assertIn("burst=7", conf)
-        self.assertIn("real_ip_header CF-Connecting-IP;", conf)
+        self.assertIn("real_ip_header X-Forwarded-For;", conf)
         self.assertIn("client_max_body_size 512k;", conf)
 
     def test_empty_limit_key_falls_back_to_nonempty(self):
@@ -228,6 +229,27 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertEqual("$rpc_limit_key", zone.group(1))
         self.assertIsNone(re.search(r"(?m)^limit_req_zone \$http_", conf))
         self.assertIsNone(re.search(r"(?m)^limit_req_zone \$remote_addr", conf))
+
+    def test_trusts_cloudflare_pops_so_xff_walk_skips_them(self):
+        """Render Web Services always sit behind Cloudflare.
+
+        XFF is `client, cf-pop`. Private-only set_real_ip_from makes
+        real_ip_recursive key on the PoP (shared 20 r/s bucket).
+        """
+        conf = render_gateway_conf()
+        for cidr in (
+            "104.16.0.0/13",
+            "104.24.0.0/14",
+            "172.64.0.0/13",
+            "162.158.0.0/15",
+            "173.245.48.0/20",
+            "2400:cb00::/32",
+            "2a06:98c0::/29",
+        ):
+            self.assertIn(f"set_real_ip_from {cidr};", conf, cidr)
+        # 172.64/13 is CF, not RFC1918 — 172.16/12 alone is not enough.
+        self.assertIn("set_real_ip_from 172.16.0.0/12;", conf)
+        self.assertIn("set_real_ip_from 172.64.0.0/13;", conf)
 
 
 class GatewayDockerTests(unittest.TestCase):
