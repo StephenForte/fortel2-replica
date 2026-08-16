@@ -42,7 +42,7 @@ If they have Foundry, the `cast` equivalents are in `README.md`; `jq`/`cast` are
 - **No secrets or keys needed.** This is a read-only verifier — there are no sequencer/batcher/proposer keys, and `L1_RPC_URL` is the only sensitive value. `.env` and `jwt.txt` are gitignored, so they won't get committed.
 - **Don't reuse your `.env`/`jwt.txt`.** Each person makes their own (especially the RPC URL if it has a token).
 - **Stop/reset:** `docker compose down` to stop; `docker compose down -v` to also wipe the chain datadir (needed if `config/genesis.json` or `config/rollup.json` ever changes after a ForteL2 redeploy — see `README.md`).
-- **Always-on deploy:** see **Render → Blueprint vs dashboard-created services** in `README.md` (Blueprint syncs `value:` keys; unattached services need the manual checklist).
+- **Always-on deploy:** live services are Dashboard-created and unattached. See **Render → Blueprint vs dashboard-created services** in `README.md` (`render.yaml` is a greenfield replica reference; unattached services need the manual checklist).
 - **Hosted replica is private.** The live Render node has **no** public URL. SettlementOS and other in-workspace clients use `http://fortel2-replica:10000` (read-only method filter; writes rejected; ~3 minutes of lag; sequencer sleep **23:45–03:00** `America/Los_Angeles`). A public URL is a **separate diskless** Web Service — see `README.md` → **Going public**. Do not convert the Private Service to Web.
 - **Local `docker compose`** still publishes raw op-geth on host `:9545` (friend laptop path). The method filter is wired in the single-container Render image (`entrypoint.sh`), not in compose.
 
