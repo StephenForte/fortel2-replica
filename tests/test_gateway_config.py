@@ -552,47 +552,80 @@ class GatewayDockerTests(unittest.TestCase):
             upstream.shutdown()
 
     def test_running_config_resolver_matches_resolv_conf(self):
-        """Live container: resolver IPs must be this container's nameservers."""
-        result = subprocess.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                IMAGE,
-                "sh",
-                "-c",
-                "cat /etc/resolv.conf; echo '---NGINX---'; nginx -T",
-            ],
-            capture_output=True,
+        """Live container: resolver IPs must be this container's nameservers.
+
+        The nginxinc entrypoint only sources /docker-entrypoint.d/ when
+        argv[1] is nginx or nginx-debug. `docker run IMAGE sh -c …`
+        skips 14-resolvers-from-resolv.conf.envsh and envsubst, so this
+        test must start the default CMD (nginx) and exec into it.
+        """
+        cid = subprocess.check_output(
+            ["docker", "run", "-d", "--rm", IMAGE],
             text=True,
             timeout=60,
-        )
-        self.assertEqual(0, result.returncode, result.stderr or result.stdout)
-        stdout = result.stdout or ""
-        combined = stdout + "\n" + (result.stderr or "")
-        resolv_part, _, _nginx_part = stdout.partition("---NGINX---")
-        nameservers = []
-        for line in resolv_part.splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[0] == "nameserver":
-                ip = parts[1]
-                if ":" in ip and not ip.startswith("["):
-                    ip = f"[{ip}]"
-                nameservers.append(ip)
-        self.assertTrue(nameservers, "container /etc/resolv.conf had no nameserver")
+        ).strip()
+        try:
+            nginx_t = None
+            last_err = None
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                probe = subprocess.run(
+                    ["docker", "exec", cid, "nginx", "-T"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                if probe.returncode == 0:
+                    nginx_t = probe
+                    break
+                last_err = probe.stderr or probe.stdout
+                time.sleep(0.2)
+            if nginx_t is None:
+                logs = subprocess.run(
+                    ["docker", "logs", cid],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                )
+                raise AssertionError(
+                    (
+                        f"nginx -T never succeeded: {last_err}\n"
+                        f"logs:\n{(logs.stderr or '') + (logs.stdout or '')}"
+                    )[-2000:]
+                )
 
-        resolver_line = None
-        for line in combined.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("resolver ") and stripped.endswith(";"):
-                resolver_line = stripped
-                break
-        self.assertIsNotNone(resolver_line, combined[-2000:])
-        for ns in nameservers:
-            self.assertIn(ns, resolver_line, resolver_line)
-        for public in PUBLIC_RESOLVERS:
-            if public not in nameservers:
-                self.assertNotIn(public, resolver_line)
+            resolv = subprocess.run(
+                ["docker", "exec", cid, "cat", "/etc/resolv.conf"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            self.assertEqual(0, resolv.returncode, resolv.stderr)
+            nameservers = []
+            for line in (resolv.stdout or "").splitlines():
+                parts = line.split()
+                if len(parts) >= 2 and parts[0] == "nameserver":
+                    ip = parts[1]
+                    if ":" in ip and not ip.startswith("["):
+                        ip = f"[{ip}]"
+                    nameservers.append(ip)
+            self.assertTrue(nameservers, "container /etc/resolv.conf had no nameserver")
+
+            combined = (nginx_t.stdout or "") + "\n" + (nginx_t.stderr or "")
+            resolver_line = None
+            for line in combined.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("resolver ") and stripped.endswith(";"):
+                    resolver_line = stripped
+                    break
+            self.assertIsNotNone(resolver_line, combined[-2000:])
+            for ns in nameservers:
+                self.assertIn(ns, resolver_line, resolver_line)
+            for public in PUBLIC_RESOLVERS:
+                if public not in nameservers:
+                    self.assertNotIn(public, resolver_line)
+        finally:
+            self._stop(cid)
 
         # DNS-change-without-restart (the 2026-08-16 incident) is not
         # simulated here. Docker /etc/hosts and a loopback dummy do not
