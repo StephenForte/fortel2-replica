@@ -1,5 +1,9 @@
 # Render Blueprint — ForteL2 L2 verifier (stock op-geth + op-node).
 #
+# This file defines exactly one service, by decision (R-0008): the private
+# replica. The public gateway is not declared here. Create it from the
+# Dashboard — see README "Going public".
+#
 # LIVE (Oregon): Private Service `fortel2-replica` with a 50 GB disk at /data.
 # JSON-RPC reads go through the method filter on PORT (default 10000).
 # op-geth and op-node bind loopback only; only the filter is reachable
@@ -17,15 +21,18 @@
 # 50 GB volume.
 #
 # Public URL: New → Web Service named `fortel2-replica-rpc` (no disk),
-# Dockerfile `./gateway/Dockerfile`, same Oregon env, upstream
-# http://fortel2-replica:10000. Wait until gateway/ exists on the deploy
-# branch. Do not point a Web Service at ./Dockerfile.
+# Dockerfile `./gateway/Dockerfile`, context `./gateway`, same Oregon env,
+# upstream http://fortel2-replica:10000. Do not point a Web Service at
+# ./Dockerfile. Do not add that gateway to this file — a Blueprint apply
+# cannot attach it to the live unattached pserv; it would create its own
+# replica instead (R-0008).
 #
-# Preferred for a *new* replica: New → Blueprint → this repo (then the
-# service stays Blueprint-managed). On Blueprint sync, envVars with
-# `value:` are applied/updated. Keys with `sync: false` (L1_RPC_URL,
-# JWT_SECRET) are prompted only on first create; later syncs ignore
-# them — set/rotate those secrets in the dashboard.
+# Greenfield replica only: New → Blueprint → this repo (then the service
+# stays Blueprint-managed). Live services are Dashboard-created and
+# unattached. On Blueprint sync, envVars with `value:` are applied/updated.
+# Keys with `sync: false` (L1_RPC_URL, JWT_SECRET) are prompted only on
+# first create; later syncs ignore them — set/rotate those secrets in the
+# dashboard.
 #
 # If you instead create a Private Service from the dashboard (not via this
 # Blueprint), it is unattached to render.yaml — paste the README checklist.

@@ -61,30 +61,47 @@ A public URL is a **second, diskless** Web Service that proxies to this Private 
 
 ### Revert
 
-If a mistaken public replica (Web Service + its own disk) is created: delete that extra service. The live Private Service and its 50 GB `/data` stay as they are. Recreating `fortel2-replica` itself still means a **new disk and a full resync** — do not do that to “go private again.” To take a public gateway down, delete or suspend only `fortel2-replica-rpc` (or disable its custom domain). SettlementOS keeps using `http://fortel2-replica:10000`.
+If a mistaken public replica (Web Service + its own disk) is created: delete that extra service. The live Private Service and its 50 GB `/data` stay as they are. Recreating `fortel2-replica` itself still means a **new disk and a full resync** — do not do that to “go private again.” To take a public gateway down, delete or suspend only `fortel2-replica-rpc` (or disable its custom domain). There is no `render.yaml` entry to remove — the gateway was never declared there (R-0008). SettlementOS keeps using `http://fortel2-replica:10000`.
 
 ## Going public
 
 Keep the live Private Service and its 50 GB disk. Publish read-only JSON-RPC through a **new diskless Web Service** that reverse-proxies to `http://fortel2-replica:10000` and rate-limits. SettlementOS stays on the private URL.
 
-**Repo first, then Dashboard.** Do not create the Web Service until `gateway/Dockerfile` exists on the branch that service deploys (usually `main`). Today this repo only has the replica image (`./Dockerfile` = op-geth + op-node). Pointing a Web Service at that path would boot a **second public verifier**.
+**Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). The replica image is still `./Dockerfile` (op-geth + op-node). Pointing a Web Service at that replica path would boot a **second public verifier**.
 
-### Dashboard (after `gateway/` lands)
+This section is the operator's entire configuration path. Gateway env is **not synced from `render.yaml`** — the gateway is not declared there (R-0008). Changing a key in the Dashboard means editing the table below too; nothing will catch the drift.
 
-Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`:
+### Dashboard
+
+Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`. Create it from the Dashboard; both live services are unattached, by design.
 
 | Field | Value |
 |---|---|
-| Create | **New → Web Service** (not **New → Blueprint** — `render.yaml` defines only the private replica, not the diskless gateway) |
+| Create | **New → Web Service** (not **New → Blueprint**). A Blueprint apply cannot add a service into the existing Oregon environment alongside the unattached live pserv — it creates its own services, which is a second replica plus a gateway pointed at that new replica, not at the live 50 GB node (R-0008 / ForteL2 D-0031). |
 | Repo | `StephenForte/fortel2-replica` |
 | Name | `fortel2-replica-rpc` (never reuse `fortel2-replica`) |
 | Region | **Oregon** (private DNS fails across regions) |
 | Disk | **None** |
 | Dockerfile path | `./gateway/Dockerfile` (not `./Dockerfile`) |
-| Env | `REPLICA_UPSTREAM=http://fortel2-replica:10000` |
+| Docker build context | `./gateway` |
+| Health Check Path | `/healthz` |
+| Env | Paste every row of the table below **except** `PORT`. Render injects `PORT`; do not set it. |
 | Plan | Starter or higher (Free spins down after 15 minutes) |
 
-If the form is filled in before `gateway/` exists: leave Dockerfile Path as `./gateway/Dockerfile` and let the first deploy fail. Do not “fix” that by switching back to `./Dockerfile`.
+If the first deploy fails because `gateway/` is missing from the tracked branch: leave Dockerfile Path as `./gateway/Dockerfile` and wait for that path to land. Do not “fix” that by switching back to `./Dockerfile`.
+
+Gateway env (R-0005). This table is the authoritative operator copy — paste into **Environment**.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `PORT` | Render-injected | nginx listen port (not declared in `render.yaml`) |
+| `REPLICA_UPSTREAM` | `http://fortel2-replica:10000` | upstream origin, scheme included (R-0004) |
+| `RPC_RATE` | `20r/s` | `limit_req_zone` rate |
+| `RPC_BURST` | `40` | `limit_req` burst |
+| `RPC_REAL_IP_HEADER` | `X-Forwarded-For` | header carrying the client IP; `CF-Connecting-IP` when Cloudflare fronts it (R-0006) |
+| `RPC_MAX_BODY` | `1m` | `client_max_body_size`, matched to the filter's `MAX_BODY_BYTES` (1 MiB) |
+
+After deploy, verify that rate limiting keys on the real client IP — see [`gateway/README.md`](./gateway/README.md). Do not skip that check; a wrong key puts every client in one bucket.
 
 ### Rate limit / DDoS
 
@@ -97,9 +114,13 @@ If the form is filled in before `gateway/` exists: leave Dockerfile Path as `./g
 
 Do not put a token bucket inside `rpc-method-filter.py`.
 
+First version limits HTTP requests per IP only (R-0007). There is no method-level or cost-aware limiting — `eth_getLogs`, `eth_call`, and `eth_getProof` stay allowlisted and unweighted, and a JSON-RPC batch counts as one HTTP request. A client can still buy expensive work per request within the rate limit.
+
 ### Smoke test (once the gateway is live)
 
 ```bash
+# health check
+curl -sS https://<gateway-host>/healthz
 # chain id 852
 curl -s https://<gateway-host> -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
@@ -111,7 +132,7 @@ curl -s http://fortel2-replica:10000 -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
 ```
 
-Expect `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTransaction`, and HTTP `429` under a burst. Lag and the sequencer sleep window are the same as the private replica (~3 minutes behind; 23:45–03:00 Pacific).
+Expect a healthy `/healthz`, `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTransaction`, and HTTP `429` under a burst. Lag and the sequencer sleep window are the same as the private replica (~3 minutes behind; 23:45–03:00 Pacific).
 
 ## Render
 
@@ -121,13 +142,17 @@ Expect `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTr
 
 ### Blueprint vs dashboard-created services
 
-**Prefer Blueprint-managed (greenfield only):** **New → Blueprint** → this repo is for a **new** private replica (`type: pserv` in `render.yaml`), not for the live Oregon pserv. While a service stays attached to this Blueprint:
+`render.yaml` is the canonical copy of the **replica's** env values and a reference for a **greenfield** replica. It is **not** the deployment mechanism for anything that currently exists. Live `fortel2-replica` and the public gateway `fortel2-replica-rpc` are both Dashboard-created and **unattached** to any Blueprint, permanently and by design (R-0008). Do not apply this file as a new Blueprint onto the live Oregon environment — that creates a second replica with an empty disk, not a gateway in front of the live node.
+
+The `sync: false` / Blueprint-sync mechanics below stay accurate, but they describe a path nobody live is on. They matter only if you ever stand up a *new* private replica from **New → Blueprint** (not this live one, and not as a way to add the gateway).
+
+**If a service is attached to this Blueprint** (greenfield replica only):
 
 - Env vars with a literal `value:` in `render.yaml` are created/updated on each Blueprint sync.
 - Keys with `sync: false` (`L1_RPC_URL`, `JWT_SECRET`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
 - Dashboard edits that conflict with Blueprint `value:` fields are overwritten on the next sync.
 
-**Dashboard-created (unattached):** **New → Private Service** without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the tables below into **Environment**, then redeploy.
+**Dashboard-created (unattached) — every live service:** **New → Private Service** (replica) or **New → Web Service** (gateway, [Going public](#going-public)) without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the replica tables below into **Environment**, then redeploy. Gateway env is the table in [Going public](#going-public), not the replica tables here.
 
 Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
@@ -174,6 +199,8 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 | `GETH_READY_TIMEOUT_SECS` | `0` (default) — wait forever for geth IPC during slow disk recovery |
 
 #### Manual Private Service checklist (unattached only)
+
+For a **new** replica somewhere else — not the live Oregon node, and not a substitute for [Going public](#going-public). The live `fortel2-replica` already exists; running this checklist in that environment creates a second disk and a full L1 resync.
 
 1. **New → Private Service**. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root). Do **not** choose Web here — that would be a public replica with its own disk.
 2. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
