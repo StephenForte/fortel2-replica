@@ -17,23 +17,32 @@ Handing this to a friend? See [`RUNNING.md`](./RUNNING.md) for a full walkthroug
 
 ## Quick start (laptop / VPS)
 
+Needs Docker Compose and ~2 GB RAM. Foundry (`cast`) is optional. This path is **raw** op-geth + op-node on the host — not the Render method filter.
+
 ```bash
 git clone https://github.com/StephenForte/fortel2-replica.git
 cd fortel2-replica
 cp .env.example .env
-# set L1_RPC_URL to a Sepolia HTTPS endpoint (QuickNode recommended)
+# .env already has a public Sepolia URL for smoke tests; swap L1_RPC_URL
+# for a dedicated provider if you will leave it running.
 openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 docker compose up -d
 ```
 
-- L2 EL: `http://127.0.0.1:9545`
-- op-node: `http://127.0.0.1:9547`
+- L2 execution RPC: `http://127.0.0.1:9545`
+- op-node RPC: `http://127.0.0.1:9547`
 
 ```bash
-cast chain-id --rpc-url http://127.0.0.1:9545   # → 852
-cast block-number --rpc-url http://127.0.0.1:9545
-cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l2.number, unsafe:.unsafe_l2.number}'
+curl -s http://127.0.0.1:9545 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
+# → {"result":"0x354"}  (852)
+
+curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"optimism_syncStatus","params":[]}' | jq \
+  '{current_l1:.result.current_l1.number, head_l1:.result.head_l1.number, safe_l2:.result.safe_l2.number}'
 ```
+
+`current_l1` should climb toward `head_l1` right away. `safe_l2` staying `0` until derivation reaches posted batches is normal. Full walkthrough: [`RUNNING.md`](./RUNNING.md).
 
 ## Read RPC (live: Private Service)
 

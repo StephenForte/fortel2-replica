@@ -1,29 +1,32 @@
 # Running a ForteL2 replica node
 
-How to hand this project to a friend and have them run their own ForteL2 verifier node.
+How to clone this repo and run a read-only ForteL2 verifier on a laptop or VPS.
 
-The only external thing they must supply is an Ethereum **Sepolia L1 RPC URL** — everything else (chain config, pinned images) is already in the repo.
+The only external thing you must supply is an Ethereum **Sepolia L1 RPC URL** — chain config and pinned images are already in the repo. No sequencer, batcher, or proposer keys.
 
-## What they need installed
+This is **not** the hosted Render node. Local compose publishes raw op-geth / op-node. The method filter, public URLs, and L1 schedule router are the single-container Render image — see `README.md` if you meant to call those instead.
 
-- Docker + the Compose plugin (`docker compose`). Nothing else — no Go/Node, no Foundry. `op-geth` and `op-node` run as pinned prebuilt images from `docker-compose.yml`.
-- A machine with enough RAM. This stack wants ~2 GB; a 512 MB box will OOM (same warning as the Render note in `README.md`).
-- A **Sepolia HTTPS RPC endpoint** for `L1_RPC_URL`. On Render, put a **QuickNode** URL there and set `L1_RPC_SCHEDULE=business` so daytime (09:00–17:00 `America/Los_Angeles`) uses QuickNode and overnight uses publicnode automatically. For local compose, set `L1_RPC_URL` directly (compose does not run the schedule router). Overrides on the single-container image: `L1_RPC_FORCE=public|metered` or `L1_USE_PUBLIC_RPC=1`.
+## What you need
 
-## Steps they run
+- Docker + the Compose plugin (`docker compose`). Nothing else — no Go/Node, no Foundry.
+- ~2 GB RAM. A 512 MB box will OOM (same warning as the Render note in `README.md`).
+- Disk for the `geth-data` volume. Derivation starts at L1 block `11323401` and the volume grows as it catches up.
+- A **Sepolia HTTPS** endpoint in `L1_RPC_URL`. `.env.example` already has `https://ethereum-sepolia-rpc.publicnode.com` for a smoke test. Use a dedicated provider for anything you leave running. Compose does **not** run `L1_RPC_SCHEDULE` / the in-container router — those are Render-only.
+
+## Steps
 
 ```bash
 git clone https://github.com/StephenForte/fortel2-replica.git
 cd fortel2-replica
 cp .env.example .env
-# edit .env → set L1_RPC_URL to a Sepolia HTTPS endpoint
+# optional: edit L1_RPC_URL if you have your own Sepolia endpoint
 openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 docker compose up -d
 ```
 
-That's it. `docker compose up` auto-pulls the images, `geth init`s the datadir from `config/genesis.json` on first run, then starts op-geth + op-node. Ports published on the host are `9545` (L2 execution RPC) and `9547` (op-node RPC), per `docker-compose.yml`.
+`docker compose up` pulls the pinned images, `geth init`s the datadir from `config/genesis.json` on first run, then starts op-geth + op-node. Host ports are `9545` (L2 execution RPC) and `9547` (op-node RPC). Compose only reads `L1_RPC_URL` (required), plus optional `L1_BLOCK_TIME`, `L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`, and `GETH_CACHE_MB`. Everything else in `.env.example` is Render-only and ignored here.
 
-## How they confirm it works
+## Confirm it works
 
 ```bash
 curl -s http://127.0.0.1:9545 -H 'content-type: application/json' \
@@ -34,18 +37,15 @@ curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
   '{current_l1:.result.current_l1.number, head_l1:.result.head_l1.number, safe_l2:.result.safe_l2.number}'
 ```
 
-If they have Foundry, the `cast` equivalents are in `README.md`; `jq`/`cast` are optional.
+`jq` is optional. Foundry `cast` is optional too — if you have it, the same checks are `cast chain-id` / `cast block-number` on `:9545` and `cast rpc optimism_syncStatus` on `:9547`.
 
-## Things to tell them
+## What to expect
 
-- **Give it a few minutes.** op-node replays Sepolia from the rollup genesis L1 block forward, so `current_l1` climbs right away but `safe_l2`/`unsafe_l2` stay `0` until derivation reaches the L1 blocks where batches were posted. That lag is normal, not a bug.
-- **No secrets or keys needed.** This is a read-only verifier — there are no sequencer/batcher/proposer keys, and `L1_RPC_URL` is the only sensitive value. `.env` and `jwt.txt` are gitignored, so they won't get committed.
-- **Don't reuse your `.env`/`jwt.txt`.** Each person makes their own (especially the RPC URL if it has a token).
-- **Stop/reset:** `docker compose down` to stop; `docker compose down -v` to also wipe the chain datadir (needed if `config/genesis.json` or `config/rollup.json` ever changes after a ForteL2 redeploy — see `README.md`).
-- **Always-on deploy:** live services are Dashboard-created and unattached. See **Render → Blueprint vs dashboard-created services** in `README.md` (`render.yaml` is a greenfield replica reference; unattached services need the manual checklist).
-- **Hosted replica is private.** SettlementOS and other in-workspace clients use `http://fortel2-replica:10000` (read-only method filter; writes rejected; ~3 minutes of lag; sequencer sleep **23:45–03:00** `America/Los_Angeles`). Public replica reads are a **separate diskless** Web Service (`https://fortel2-replica-rpc.onrender.com`) — see `README.md` → **Going public**. Sequencer-tip reads are `https://fortel2-sequencer-rpc.onrender.com`. Do not convert the Private Service to Web.
-- **Local `docker compose`** still publishes raw op-geth on host `:9545` (friend laptop path). The method filter is wired in the single-container Render image (`entrypoint.sh`), not in compose.
+- **Give it time.** op-node replays Sepolia from the rollup genesis L1 block forward. `current_l1` climbs right away; `safe_l2` / `unsafe_l2` stay `0` until derivation reaches the L1 blocks where batches were posted. That lag is normal.
+- **Read-only chain, raw local RPC.** There are no sequencer keys. Local `:9545` is stock op-geth (including `debug` / `txpool`), not the Render allowlist — `eth_sendRawTransaction` is not rejected here, but this node does not sequence (`--sequencer.enabled=false`).
+- **No secrets to share.** `L1_RPC_URL` is the only sensitive value if it has a token. `.env` and `jwt.txt` are gitignored. Make your own; do not reuse someone else's.
+- **Stop/reset:** `docker compose down` to stop; `docker compose down -v` to wipe the chain datadir (needed if `config/genesis.json` or `config/rollup.json` changes after a ForteL2 redeploy — see `README.md`).
 
-## Before you share
+## Before you share this repo
 
-The config in `config/` must match the current ForteL2 deployment. If ForteL2 has been redeployed on Sepolia since you last pushed, refresh `config/genesis.json` and `config/rollup.json` before sharing, or your friend's node will derive against stale L1 history.
+`config/` must match the current ForteL2 deployment. If ForteL2 has been redeployed on Sepolia since you last pushed, refresh `config/genesis.json` and `config/rollup.json` before someone else clones, or their node will derive against stale L1 history.

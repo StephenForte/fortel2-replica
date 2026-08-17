@@ -1,7 +1,10 @@
 # Local / VPS smoke: stock verifier for ForteL2 chain 852.
-#   cp .env.example .env   # set L1_RPC_URL
+#   cp .env.example .env          # L1_RPC_URL already set to publicnode
+#   openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 #   docker compose up -d
 # EL http://127.0.0.1:9545  op-node http://127.0.0.1:9547
+# Compose reads L1_RPC_URL (required), L1_BLOCK_TIME, L1_HTTP_POLL_INTERVAL,
+# L1_RPC_RATE_LIMIT, GETH_CACHE_MB. Schedule / JWT_SECRET / GOMEMLIMIT are Render-only.
 
 services:
   op-geth:
