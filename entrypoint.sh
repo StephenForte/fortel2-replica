@@ -20,10 +20,17 @@ L1_BLOCK_TIME="${L1_BLOCK_TIME:-12}"
 GETH_READY_TIMEOUT_SECS="${GETH_READY_TIMEOUT_SECS:-0}"
 # geth default --cache is 1024MB and will OOM Render Starter (512MB). Keep low on small plans.
 GETH_CACHE_MB="${GETH_CACHE_MB:-256}"
+# Pebble will take the process nofile rlimit (often 524288 in containers). Cap it.
+GETH_FDLIMIT="${GETH_FDLIMIT:-4096}"
 # Optional Go soft memory caps (Go 1.19+). Set on Render Standard so op-geth + op-node +
 # the L1 router stay under the cgroup limit during L1 derivation bursts. Unset on ≥4GB hosts.
 GETH_GOMEMLIMIT="${GETH_GOMEMLIMIT:-}"
 OP_NODE_GOMEMLIMIT="${OP_NODE_GOMEMLIMIT:-}"
+# op-node default --l1.cache-size is 900 L1 blocks of receipts/txs — too big for 2 GB
+# during catch-up. 0 is worse (expands to ~2400). Keep a small positive cache.
+L1_CACHE_SIZE="${L1_CACHE_SIZE:-128}"
+L1_MAX_CONCURRENCY="${L1_MAX_CONCURRENCY:-2}"
+L1_RPC_MAX_BATCH_SIZE="${L1_RPC_MAX_BATCH_SIZE:-5}"
 # How often to check that both long-running processes are alive.
 PROCESS_POLL_INTERVAL_SECS="${PROCESS_POLL_INTERVAL_SECS:-1}"
 # Marker for Docker HEALTHCHECK: absent → probe fails (health=starting during
@@ -43,6 +50,34 @@ esac
 case "$GETH_CACHE_MB" in
   ''|*[!0-9]*)
     echo "ERROR: GETH_CACHE_MB must be a non-negative integer (got: $GETH_CACHE_MB)" >&2
+    exit 1
+    ;;
+esac
+
+case "$GETH_FDLIMIT" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: GETH_FDLIMIT must be a positive integer (got: $GETH_FDLIMIT)" >&2
+    exit 1
+    ;;
+esac
+
+case "$L1_CACHE_SIZE" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: L1_CACHE_SIZE must be a positive integer (got: $L1_CACHE_SIZE); 0 expands op-node's cache to ~2400 L1 blocks" >&2
+    exit 1
+    ;;
+esac
+
+case "$L1_MAX_CONCURRENCY" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: L1_MAX_CONCURRENCY must be a positive integer (got: $L1_MAX_CONCURRENCY)" >&2
+    exit 1
+    ;;
+esac
+
+case "$L1_RPC_MAX_BATCH_SIZE" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: L1_RPC_MAX_BATCH_SIZE must be a positive integer (got: $L1_RPC_MAX_BATCH_SIZE)" >&2
     exit 1
     ;;
 esac
@@ -165,7 +200,7 @@ fi
 
 GETH_MEM_LOG=""
 [ -n "$GETH_GOMEMLIMIT" ] && GETH_MEM_LOG=", gomemlimit=${GETH_GOMEMLIMIT}"
-echo "Starting op-geth (verifier EL) loopback :$L2_GETH_HTTP_PORT (cache=${GETH_CACHE_MB}MB, gcmode=full${GETH_MEM_LOG}; public filter :$L2_HTTP_PORT)"
+echo "Starting op-geth (verifier EL) loopback :$L2_GETH_HTTP_PORT (cache=${GETH_CACHE_MB}MB, fdlimit=${GETH_FDLIMIT}, noprefetch, gcmode=full${GETH_MEM_LOG}; public filter :$L2_HTTP_PORT)"
 env ${GETH_GOMEMLIMIT:+GOMEMLIMIT=$GETH_GOMEMLIMIT} geth \
   --datadir="$DATA_DIR" \
   --http --http.addr=127.0.0.1 --http.port="$L2_GETH_HTTP_PORT" \
@@ -176,6 +211,8 @@ env ${GETH_GOMEMLIMIT:+GOMEMLIMIT=$GETH_GOMEMLIMIT} geth \
   --syncmode=full --gcmode=full \
   --cache="$GETH_CACHE_MB" \
   --cache.preimages=false \
+  --cache.noprefetch \
+  --fdlimit="$GETH_FDLIMIT" \
   --rollup.disabletxpoolgossip=true \
   --nodiscover --maxpeers=0 \
   --verbosity=3 &
@@ -312,13 +349,16 @@ fi
 
 NODE_MEM_LOG=""
 [ -n "$OP_NODE_GOMEMLIMIT" ] && NODE_MEM_LOG=" gomemlimit=${OP_NODE_GOMEMLIMIT}"
-echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT}${NODE_MEM_LOG})"
+echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT} l1-cache=${L1_CACHE_SIZE} max-concurrency=${L1_MAX_CONCURRENCY} rpc-max-batch=${L1_RPC_MAX_BATCH_SIZE}${NODE_MEM_LOG})"
 env ${OP_NODE_GOMEMLIMIT:+GOMEMLIMIT=$OP_NODE_GOMEMLIMIT} op-node \
   --l1="$L1_RPC_URL" \
   --l1.rpckind=standard \
   --l1.trustrpc=true \
   --l1.http-poll-interval="$L1_HTTP_POLL" \
   --l1.rpc-rate-limit="$L1_RPC_RATE_LIMIT" \
+  --l1.cache-size="$L1_CACHE_SIZE" \
+  --l1.max-concurrency="$L1_MAX_CONCURRENCY" \
+  --l1.rpc-max-batch-size="$L1_RPC_MAX_BATCH_SIZE" \
   --l1.beacon.ignore=true \
   --l1.beacon.slot-duration-override="$L1_BLOCK_TIME" \
   --l2="http://127.0.0.1:${L2_ENGINE_PORT}" \

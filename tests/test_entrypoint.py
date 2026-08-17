@@ -273,6 +273,12 @@ printf '%064d\n' 0
         for name, value, message in (
             ("GETH_READY_TIMEOUT_SECS", "soon", "non-negative integer"),
             ("GETH_CACHE_MB", "many", "non-negative integer"),
+            ("GETH_FDLIMIT", "0", "positive integer"),
+            ("GETH_FDLIMIT", "lots", "positive integer"),
+            ("L1_CACHE_SIZE", "0", "positive integer"),
+            ("L1_CACHE_SIZE", "big", "positive integer"),
+            ("L1_MAX_CONCURRENCY", "0", "positive integer"),
+            ("L1_RPC_MAX_BATCH_SIZE", "nope", "positive integer"),
             ("PROCESS_POLL_INTERVAL_SECS", "0", "positive integer"),
             ("PROCESS_POLL_INTERVAL_SECS", "nope", "positive integer"),
         ):
@@ -298,6 +304,8 @@ printf '%064d\n' 0
         self.assertIn("geth init --datadir=", log)
         self.assertIn("--cache=256", log)
         self.assertIn("--cache.preimages=false", log)
+        self.assertIn("--cache.noprefetch", log)
+        self.assertIn("--fdlimit=4096", log)
         # MR-2: geth is loopback-only with a narrow namespace; filter is public.
         self.assertIn("--http.addr=127.0.0.1", log)
         self.assertIn("--http.port=8546", log)
@@ -315,6 +323,9 @@ printf '%064d\n' 0
         self.assertIn("--rpc.addr=127.0.0.1", log)
         self.assertIn("--l1.http-poll-interval=24s", log)
         self.assertIn("--l1.rpc-rate-limit=5", log)
+        self.assertIn("--l1.cache-size=128", log)
+        self.assertIn("--l1.max-concurrency=2", log)
+        self.assertIn("--l1.rpc-max-batch-size=5", log)
         self.assertIn("--sequencer.enabled=false", log)
         self.assertIn("mode=metered", result.stdout)
         self.assertFalse(data_dir.exists())  # temporary workspace was cleaned up
@@ -395,6 +406,10 @@ printf '%064d\n' 0
                 "L1_RPC_RATE_LIMIT": "5",
                 "L1_BLOCK_TIME": "6",
                 "GETH_CACHE_MB": "128",
+                "GETH_FDLIMIT": "2048",
+                "L1_CACHE_SIZE": "64",
+                "L1_MAX_CONCURRENCY": "3",
+                "L1_RPC_MAX_BATCH_SIZE": "8",
                 "PORT": "10000",
                 "L2_HTTP_PORT": "9999",  # PORT must win for the public filter
                 "L2_GETH_HTTP_PORT": "8546",
@@ -411,9 +426,13 @@ printf '%064d\n' 0
         self.assertIn("--http.port=8546", log)
         self.assertIn("--http.addr=127.0.0.1", log)
         self.assertIn("--cache=128", log)
+        self.assertIn("--fdlimit=2048", log)
         self.assertIn("--authrpc.port=8559", log)
         self.assertIn("--l1.http-poll-interval=30s", log)
         self.assertIn("--l1.rpc-rate-limit=5", log)
+        self.assertIn("--l1.cache-size=64", log)
+        self.assertIn("--l1.max-concurrency=3", log)
+        self.assertIn("--l1.rpc-max-batch-size=8", log)
         self.assertIn("--l1.beacon.slot-duration-override=6", log)
         self.assertIn("--l2=http://127.0.0.1:8559", log)
         self.assertIn("--rpc.port=9549", log)

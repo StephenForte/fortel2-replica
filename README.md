@@ -199,7 +199,7 @@ Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on 
 
 **RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node (+ optional L1 router) in one container. Do not leave geth’s 1024MB default cache.
 
-**OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. If Render kills the service with exit 137 / “Ran out of memory”, confirm the plan is **Standard or Pro** (not Starter), set the memory env vars below, or bump to **Pro (4GB)** if spikes persist.
+**OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. If Render kills the service with exit 137 / “Ran out of memory”, confirm the plan is **Standard or Pro** (not Starter), set the memory env vars below (especially `L1_CACHE_SIZE=128` — the upstream default of 900 L1 receipt blocks is the usual 2 GB killer), or bump to **Pro (4GB)** if spikes persist.
 
 ### Blueprint vs dashboard-created services
 
@@ -234,8 +234,12 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 |---|---|
 | `L1_BLOCK_TIME` | `12` |
 | `GETH_CACHE_MB` | `128` |
+| `GETH_FDLIMIT` | `4096` |
 | `GETH_GOMEMLIMIT` | `700MiB` |
 | `OP_NODE_GOMEMLIMIT` | `768MiB` |
+| `L1_CACHE_SIZE` | `128` |
+| `L1_MAX_CONCURRENCY` | `2` |
+| `L1_RPC_MAX_BATCH_SIZE` | `5` |
 | `TZ` | `America/Los_Angeles` |
 | `L1_RPC_SCHEDULE` | `business` |
 | `L1_USE_PUBLIC_RPC` | `0` |
@@ -247,7 +251,7 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 
 **What they do:**
 
-- **Memory (`GETH_*`, `OP_NODE_GOMEMLIMIT`):** keep op-geth + op-node under the 2 GB cgroup during L1 derivation bursts.
+- **Memory (`GETH_*`, `OP_NODE_GOMEMLIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`):** keep op-geth + op-node under the 2 GB cgroup during L1 derivation bursts. `L1_CACHE_SIZE` must stay a positive integer — `0` expands op-node’s cache to ~2400 L1 blocks and will OOM Standard.
 - **L1 schedule (`L1_RPC_SCHEDULE`, `TZ`, `L1_RPC_*`):** QuickNode **09:00–17:00** Pacific, publicnode overnight via in-container router (no op-node restart at cutover).
 - **Credit throttle (`L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`):** slow L1 polling to limit QuickNode burn.
 

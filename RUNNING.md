@@ -24,7 +24,7 @@ openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 docker compose up -d
 ```
 
-`docker compose up` pulls the pinned images, `geth init`s the datadir from `config/genesis.json` on first run, then starts op-geth + op-node. Host ports are `9545` (L2 execution RPC) and `9547` (op-node RPC). Compose only reads `L1_RPC_URL` (required), plus optional `L1_BLOCK_TIME`, `L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`, and `GETH_CACHE_MB`. Everything else in `.env.example` is Render-only and ignored here.
+`docker compose up` pulls the pinned images, `geth init`s the datadir from `config/genesis.json` on first run, then starts op-geth + op-node. Host ports are `9545` (L2 execution RPC) and `9547` (op-node RPC). Compose only reads `L1_RPC_URL` (required), plus optional `L1_BLOCK_TIME`, `L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`, `GETH_CACHE_MB`, and `GETH_FDLIMIT`. Everything else in `.env.example` is Render-only and ignored here.
 
 ## Confirm it works
 
