@@ -227,13 +227,14 @@ with the same client.
 
 *2026-08-17 · corrects R-0004's implicit assumption, supersedes the reverted G-2 (PR #32)*
 
-`fortel2-replica-rpc`'s nginx re-resolves `REPLICA_UPSTREAM` per request via a variable
-`proxy_pass` + `resolver <nameservers from /etc/resolv.conf>`, instead of the original literal
-`proxy_pass` (resolved once at config load, cached for the process lifetime). A bare host with
-no dot is qualified with the first token of `/etc/resolv.conf`'s `search` line before nginx
-resolves it; a host that already contains a dot is left unchanged. Both the nameserver list and
-the search domain are read from the container's own `/etc/resolv.conf` at startup — never
-hardcoded.
+`fortel2-replica-rpc`'s nginx uses a variable `proxy_pass` + `resolver <nameservers from
+/etc/resolv.conf>` so it *can* re-query after the cached DNS TTL expires, instead of the
+original literal `proxy_pass` (resolved once at config load, cached for the process lifetime).
+That is not an immediate lookup on every request — nginx still caches the answer for the
+response TTL (no `valid=` override). A bare host with no dot is qualified with the first token
+of `/etc/resolv.conf`'s `search` line before nginx resolves it; a host that already contains a
+dot is left unchanged. Both the nameserver list and the search domain are read from the
+container's own `/etc/resolv.conf` at startup — never hardcoded.
 
 **Why — two incidents, in order:**
 
@@ -250,9 +251,8 @@ hardcoded.
    redeploy — worse than incident 1. Reverted (PR #34) back to the literal-`proxy_pass` state
    (incident 1's known, lesser bug) while a real fix was built.
 
-**Confirmed live**, not just unit-tested (PR #35, deployed `dep-da15458u01pc73fk147g`,
-2026-08-17T00:13Z): the container's actual `/etc/resolv.conf` on Render is Kubernetes-style
-cluster DNS —
+**Confirmed live** (PR #35, deployed `dep-da15458u01pc73fk147g`, 2026-08-17T00:13Z): the
+container's actual `/etc/resolv.conf` on Render is Kubernetes-style cluster DNS —
 
 ```
 resolver=169.254.20.10 10.12.0.10 search=own-d98533l7vvec738vva9g.svc.cluster.local
@@ -260,14 +260,16 @@ upstream=http://fortel2-replica.own-d98533l7vvec738vva9g.svc.cluster.local:10000
 ```
 
 — and a live `eth_chainId` request through the public gateway returned `result: "0x354"`,
-HTTP 200, immediately after deploy.
+HTTP 200, immediately after deploy. That is initial search-qualified resolution against real
+Render DNS, not a replica-address change.
 
 **Not yet reproduced live:** incident 1's original scenario — redeploying `fortel2-replica`
-alone, without touching the gateway, to confirm per-request re-resolution survives a real
-replica redeploy rather than only resolving correctly at the gateway's own startup. The
-mechanism is unit-tested for this and logically sound (that's what "per-request" means), but
-untested against Render specifically. Confirm on the next natural replica redeploy rather than
-forcing one.
+alone, without touching the gateway, so the gateway must pick up a new replica address.
+`tests/test_gateway_config.py` does **not** simulate a DNS-address change without restart
+(Docker embedded-DNS TTLs would make a same-name container swap a false failure). Coverage
+stops at configuration plus initial search-qualified resolution. Do not treat failover as
+tested — confirm on the next natural replica redeploy rather than forcing one, or add a real
+DNS-address-change test. Until then this is open.
 
 **Consequences.** No `valid=` TTL override — resolution respects whatever TTL Render's cluster
 DNS returns. Do not hardcode `169.254.20.10` / `10.12.0.10` / the `.svc.cluster.local` suffix
