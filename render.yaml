@@ -7,7 +7,8 @@
 # LIVE (Oregon): Private Service `fortel2-replica` with a 50 GB disk at /data.
 # JSON-RPC reads go through the method filter on PORT (default 10000).
 # op-geth and op-node bind loopback only; only the filter is reachable
-# (private network today; public traffic must hit a *diskless* gateway).
+# on the private network. Public traffic hits diskless Web Services
+# `fortel2-replica-rpc` and `fortel2-sequencer-rpc` (not this Blueprint).
 #
 # Do NOT apply this file as a **new** Blueprint onto the live Oregon pserv.
 # Render cannot reattach the live 50 GB disk. A new apply of this Blueprint
@@ -20,12 +21,13 @@
 # "fix" live to 20. Raising 20→50 on a *new* apply still creates an empty
 # 50 GB volume.
 #
-# Public URL: New → Web Service named `fortel2-replica-rpc` (no disk),
+# Public URL (live): Dashboard Web Service `fortel2-replica-rpc` (no disk),
 # Dockerfile `./gateway/Dockerfile`, context `./gateway`, same Oregon env,
-# upstream http://fortel2-replica:10000. Do not point a Web Service at
-# ./Dockerfile. Do not add that gateway to this file — a Blueprint apply
-# cannot attach it to the live unattached pserv; it would create its own
-# replica instead (R-0008).
+# upstream http://fortel2-replica:10000. Sequencer tip: `fortel2-sequencer-rpc`
+# (`sequencer-read/start.sh`). Do not point a Web Service at ./Dockerfile.
+# Do not add those services to this file — a Blueprint apply cannot attach
+# them to the live unattached pserv; it would create its own replica
+# instead (R-0008).
 #
 # Greenfield replica only: New → Blueprint → this repo (then the service
 # stays Blueprint-managed). Live services are Dashboard-created and

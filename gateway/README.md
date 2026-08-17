@@ -29,8 +29,7 @@ Upstream is `$REPLICA_UPSTREAM` (default `http://fortel2-replica:10000`).
 | `RPC_MAX_BODY` | `1m` | `client_max_body_size` — matches the filter's 1 MiB cap |
 
 Do not rename these. The default for `RPC_REAL_IP_HEADER` is
-`CF-Connecting-IP` because Render's edge is always Cloudflare; older
-root docs that treat that header as an optional override are stale.
+`CF-Connecting-IP` because Render's edge is always Cloudflare (R-0010).
 
 `NGINX_LOCAL_RESOLVERS`, `NGINX_SEARCH_DOMAIN`, and
 `NGINX_REPLICA_UPSTREAM` are **not** operator keys. A startup script

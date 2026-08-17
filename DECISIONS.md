@@ -84,13 +84,16 @@ decision, not an implementation detail — supersede this entry rather than edit
 Dashboard as a checklist rather than synced from `render.yaml` — the gateway is not declared
 there. `README.md` §"Going public" is the authoritative copy of this table.
 
+**Amended 2026-08-16 by R-0010:** `RPC_REAL_IP_HEADER` default is `CF-Connecting-IP`, not
+`X-Forwarded-For`. Render's edge is always Cloudflare.
+
 | Key | Default | Meaning |
 |---|---|---|
 | `PORT` | Render-injected | nginx listen port (not declared in `render.yaml`) |
 | `REPLICA_UPSTREAM` | `http://fortel2-replica:10000` | upstream origin, scheme included (R-0004) |
 | `RPC_RATE` | `20r/s` | `limit_req_zone` rate |
 | `RPC_BURST` | `40` | `limit_req` burst |
-| `RPC_REAL_IP_HEADER` | `X-Forwarded-For` | header carrying the client IP; `CF-Connecting-IP` when Cloudflare fronts it (R-0006) |
+| `RPC_REAL_IP_HEADER` | `CF-Connecting-IP` | header carrying the client IP; `X-Forwarded-For` only if you need the chain (R-0006 / R-0010) |
 | `RPC_MAX_BODY` | `1m` | `client_max_body_size`, matched to the filter's `MAX_BODY_BYTES` (1 MiB) |
 
 Build: Dockerfile path `./gateway/Dockerfile`, context `./gateway`, no disk, region `oregon`,
@@ -201,3 +204,21 @@ change to `main` will rebuild `fortel2-replica` (auto-deploy on checks). That re
 a catch-up lag event; do not merge until that bounce is acceptable.
 
 See `README.md` §"Public sequencer reads".
+
+## R-0010 — Gateway real-IP default is `CF-Connecting-IP`
+
+*2026-08-16 · amends R-0005*
+
+`RPC_REAL_IP_HEADER` defaults to `CF-Connecting-IP`, matching `gateway/Dockerfile`.
+`X-Forwarded-For` is an override for when you need the chain, not the Render default.
+
+**Why.** Every Render Web Service terminates through Cloudflare first (platform edge,
+not optional orange-cloud). XFF's rightmost hop is therefore a CF PoP. The original
+R-0005 default of `X-Forwarded-For` plus a private-only trust list keys every client
+at that PoP into one 20 r/s bucket. `gateway/` already shipped the CF default and
+trusts Cloudflare CIDRs; root docs had not caught up.
+
+**Consequences.** `README.md` §"Going public" and this file's R-0005 table match
+`gateway/README.md`. Operator orange-cloud in front of the `onrender.com` hostname
+is a second CF hop — leave the default; their edge overwrites `CF-Connecting-IP`
+with the same client.

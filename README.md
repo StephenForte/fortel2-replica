@@ -37,13 +37,13 @@ cast rpc optimism_syncStatus --rpc-url http://127.0.0.1:9547 | jq '{safe:.safe_l
 
 ## Read RPC (live: Private Service)
 
-The live Render deploy is a **Private Service** (`fortel2-replica`, `srv-d9fsgi3rjlhs73ceh6tg`, Oregon env `evm-d9h424715fvs73cq2gl0`). There is **no** public `onrender.com` URL today (ForteL2 D-0031). SettlementOS reads at `http://fortel2-replica:10000` on the same private network (D-0032).
+The live Render deploy is a **Private Service** (`fortel2-replica`, `srv-d9fsgi3rjlhs73ceh6tg`, Oregon env `evm-d9h424715fvs73cq2gl0`). Public reads are two diskless Web Services on that same network (ForteL2 D-0031): `https://fortel2-replica-rpc.onrender.com` (L1-derived) and `https://fortel2-sequencer-rpc.onrender.com` (sequencer tip). SettlementOS still reads at `http://fortel2-replica:10000` (D-0032).
 
 Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). op-geth listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed.
 
 | Fact | Detail |
 |---|---|
-| URL | Private: `http://fortel2-replica:10000`. Public hostname only via a **diskless** reverse-proxy Web Service (see [Going public](#going-public)) — not by converting this replica. |
+| URL | Private: `http://fortel2-replica:10000`. Public replica: `https://fortel2-replica-rpc.onrender.com` (diskless gateway — see [Going public](#going-public)). Do not convert this replica. |
 | Surface | Read-only JSON-RPC allowlist (`eth` / `net` / `web3` reads + log/block filters) |
 | Writes | `eth_sendRawTransaction` is **rejected** (`-32601 method not allowed`) |
 | Lag | ~3 minutes behind the sequencer is **normal** — the replica derives from L1 batches, not P2P tip-follow |
@@ -65,7 +65,7 @@ If a mistaken public replica (Web Service + its own disk) is created: delete tha
 
 ## Going public
 
-Keep the live Private Service and its 50 GB disk. Publish read-only JSON-RPC through a **new diskless Web Service** that reverse-proxies to `http://fortel2-replica:10000` and rate-limits. SettlementOS stays on the private URL.
+Keep the live Private Service and its 50 GB disk. Public replica reads go through the diskless Web Service `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`), which reverse-proxies to `http://fortel2-replica:10000` and rate-limits. SettlementOS stays on the private URL. The table below is that service's config — recreate from it only in a new environment.
 
 **Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). The replica image is still `./Dockerfile` (op-geth + op-node). Pointing a Web Service at that replica path would boot a **second public verifier**.
 
@@ -73,7 +73,7 @@ This section is the operator's entire configuration path. Gateway env is **not s
 
 ### Dashboard
 
-Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`. Create it from the Dashboard. The replica is already unattached; the gateway is **not created yet** and must be unattached the same way — do not attach either to this Blueprint.
+Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`. Live as `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`). Dashboard-created and unattached — do not attach it (or the replica) to this Blueprint.
 
 | Field | Value |
 |---|---|
@@ -98,7 +98,7 @@ Gateway env (R-0005). This table is the authoritative operator copy — paste in
 | `REPLICA_UPSTREAM` | `http://fortel2-replica:10000` | upstream origin, scheme included (R-0004) |
 | `RPC_RATE` | `20r/s` | `limit_req_zone` rate |
 | `RPC_BURST` | `40` | `limit_req` burst |
-| `RPC_REAL_IP_HEADER` | `X-Forwarded-For` | header carrying the client IP; `CF-Connecting-IP` when Cloudflare fronts it (R-0006) |
+| `RPC_REAL_IP_HEADER` | `CF-Connecting-IP` | header carrying the client IP. Render's edge is always Cloudflare; this is the default, not an optional override (R-0006 / R-0010). Set `X-Forwarded-For` only if you need the chain. |
 | `RPC_MAX_BODY` | `1m` | `client_max_body_size`, matched to the filter's `MAX_BODY_BYTES` (1 MiB) |
 
 After deploy, verify that rate limiting keys on the real client IP — see [`gateway/README.md`](./gateway/README.md). Do not skip that check; a wrong key puts every client in one bucket.
@@ -120,12 +120,12 @@ First version limits HTTP requests per IP only (R-0007). There is no method-leve
 
 ```bash
 # health check
-curl -sS https://<gateway-host>/healthz
+curl -sS https://fortel2-replica-rpc.onrender.com/healthz
 # chain id 852
-curl -s https://<gateway-host> -H 'content-type: application/json' \
+curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
 # writes still rejected
-curl -s https://<gateway-host> -H 'content-type: application/json' \
+curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x"]}'
 # private path unchanged
 curl -s http://fortel2-replica:10000 -H 'content-type: application/json' \
@@ -138,11 +138,11 @@ Expect a healthy `/healthz`, `result: "0x354"` on reads, `-32601 method not allo
 
 The replica gateway above is L1-derived (~3 minutes behind the sequencer tip). SettlementOS Explorer needs a just-settled escrow hash in **seconds**, not minutes. Do **not** point the browser at `https://fortel2-write.ente.ltd` (Cloudflare Access 403; it accepts writes). Do **not** retarget `fortel2-replica-rpc` at the sequencer (R-0009).
 
-A third diskless Web Service runs the same method filter against the Access-gated sequencer. Browsers talk to this URL; Access headers stay on the server.
+A third diskless Web Service (`fortel2-sequencer-rpc`, `https://fortel2-sequencer-rpc.onrender.com`) runs the same method filter against the Access-gated sequencer. Browsers talk to this URL; Access headers stay on the server. The table below is that service's config.
 
 ### Dashboard
 
-Same GitHub repo, **third** service, same Oregon env. Create from the Dashboard — **New → Web Service**, unattached (R-0008). Python native, not Docker (the replica `Dockerfile` would boot a second verifier).
+Same GitHub repo, **third** service, same Oregon env. Live as `fortel2-sequencer-rpc`. Dashboard-created — **New → Web Service**, unattached (R-0008). Python native, not Docker (the replica `Dockerfile` would boot a second verifier).
 
 | Field | Value |
 |---|---|
@@ -173,12 +173,12 @@ SettlementOS **writes** stay on `fortel2-write.ente.ltd` + Access. SettlementOS 
 
 ```bash
 # health (does not hit the sequencer)
-curl -sS https://<sequencer-rpc-host>/
+curl -sS https://fortel2-sequencer-rpc.onrender.com/
 # chain id 852
-curl -s https://<sequencer-rpc-host> -H 'content-type: application/json' \
+curl -s https://fortel2-sequencer-rpc.onrender.com -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
 # writes still rejected here — never forwarded
-curl -s https://<sequencer-rpc-host> -H 'content-type: application/json' \
+curl -s https://fortel2-sequencer-rpc.onrender.com -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x"]}'
 ```
 
@@ -194,7 +194,7 @@ Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on 
 
 ### Blueprint vs dashboard-created services
 
-`render.yaml` is the canonical copy of the **replica's** env values and a reference for a **greenfield** replica. It is **not** the deployment mechanism for anything that currently exists. Live `fortel2-replica` is Dashboard-created and **unattached** to any Blueprint. The public gateway `fortel2-replica-rpc` does **not** exist yet (no public URL; ForteL2 D-0031); when you create it, it must be Dashboard-created and unattached the same way, permanently and by design (R-0008). Do not apply this file as a new Blueprint onto the live Oregon environment — that creates a second replica with an empty disk, not a gateway in front of the live node.
+`render.yaml` is the canonical copy of the **replica's** env values and a reference for a **greenfield** replica. It is **not** the deployment mechanism for anything that currently exists. Live `fortel2-replica`, `fortel2-replica-rpc`, and `fortel2-sequencer-rpc` are Dashboard-created and **unattached** to any Blueprint, permanently and by design (R-0008). Do not apply this file as a new Blueprint onto the live Oregon environment — that creates a second replica with an empty disk, not a gateway in front of the live node.
 
 The `sync: false` / Blueprint-sync mechanics below stay accurate, but they describe a path nobody live is on. They matter only if you ever stand up a *new* private replica from **New → Blueprint** (not this live one, and not as a way to add the gateway).
 
@@ -204,7 +204,7 @@ The `sync: false` / Blueprint-sync mechanics below stay accurate, but they descr
 - Keys with `sync: false` (`L1_RPC_URL`, `JWT_SECRET`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
 - Dashboard edits that conflict with Blueprint `value:` fields are overwritten on the next sync.
 
-**Dashboard-created (unattached):** the live replica, and the gateway once you create it. **New → Private Service** (replica) or **New → Web Service** (gateway, [Going public](#going-public)) without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the replica tables below into **Environment**, then redeploy. Gateway env is the table in [Going public](#going-public), not the replica tables here.
+**Dashboard-created (unattached):** the live replica, the replica gateway, and the sequencer-read door. **New → Private Service** (replica) or **New → Web Service** (gateway / sequencer-read) without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the replica tables below into **Environment**, then redeploy. Gateway env is the table in [Going public](#going-public); sequencer-read env is the table in [Public sequencer reads](#public-sequencer-reads).
 
 Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
