@@ -4,7 +4,8 @@
 #   docker compose up -d
 # EL http://127.0.0.1:9545  op-node http://127.0.0.1:9547
 # Compose reads L1_RPC_URL (required), L1_BLOCK_TIME, L1_HTTP_POLL_INTERVAL,
-# L1_RPC_RATE_LIMIT, GETH_CACHE_MB. Schedule / JWT_SECRET / GOMEMLIMIT are Render-only.
+# L1_RPC_RATE_LIMIT, L1_CACHE_SIZE, L1_MAX_CONCURRENCY, L1_RPC_MAX_BATCH_SIZE,
+# GETH_CACHE_MB, GETH_FDLIMIT. Schedule / JWT_SECRET / GOMEMLIMIT are Render-only.
 
 services:
   op-geth:
@@ -36,6 +37,8 @@ services:
           --syncmode=full --gcmode=full \
           --cache=${GETH_CACHE_MB:-256} \
           --cache.preimages=false \
+          --cache.noprefetch \
+          --fdlimit=${GETH_FDLIMIT:-4096} \
           --rollup.disabletxpoolgossip=true \
           --nodiscover --maxpeers=0
     ports:
@@ -53,6 +56,9 @@ services:
       L1_BLOCK_TIME: ${L1_BLOCK_TIME:-12}
       L1_HTTP_POLL_INTERVAL: ${L1_HTTP_POLL_INTERVAL:-24s}
       L1_RPC_RATE_LIMIT: ${L1_RPC_RATE_LIMIT:-5}
+      L1_CACHE_SIZE: ${L1_CACHE_SIZE:-128}
+      L1_MAX_CONCURRENCY: ${L1_MAX_CONCURRENCY:-2}
+      L1_RPC_MAX_BATCH_SIZE: ${L1_RPC_MAX_BATCH_SIZE:-5}
     command:
       - op-node
       - --l1=${L1_RPC_URL}
@@ -60,6 +66,9 @@ services:
       - --l1.trustrpc=true
       - --l1.http-poll-interval=${L1_HTTP_POLL_INTERVAL:-24s}
       - --l1.rpc-rate-limit=${L1_RPC_RATE_LIMIT:-5}
+      - --l1.cache-size=${L1_CACHE_SIZE:-128}
+      - --l1.max-concurrency=${L1_MAX_CONCURRENCY:-2}
+      - --l1.rpc-max-batch-size=${L1_RPC_MAX_BATCH_SIZE:-5}
       - --l1.beacon.ignore=true
       - --l1.beacon.slot-duration-override=${L1_BLOCK_TIME:-12}
       - --l2=http://op-geth:8551

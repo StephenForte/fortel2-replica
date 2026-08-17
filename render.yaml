@@ -69,11 +69,20 @@ services:
         value: "12"
       - key: GETH_CACHE_MB
         value: "128"
+      - key: GETH_FDLIMIT
+        value: "4096"
       # Go soft caps — keep geth + op-node under Standard (2GB) during derivation bursts
       - key: GETH_GOMEMLIMIT
         value: 700MiB
       - key: OP_NODE_GOMEMLIMIT
         value: 768MiB
+      # Shrink op-node L1 receipt cache (upstream default 900 OOMs 2GB during catch-up)
+      - key: L1_CACHE_SIZE
+        value: "128"
+      - key: L1_MAX_CONCURRENCY
+        value: "2"
+      - key: L1_RPC_MAX_BATCH_SIZE
+        value: "5"
       - key: TZ
         value: America/Los_Angeles
       # business = 09:00–17:00 QuickNode (L1_RPC_URL), else public overnight
