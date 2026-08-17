@@ -222,3 +222,54 @@ trusts Cloudflare CIDRs; root docs had not caught up.
 `gateway/README.md`. Operator orange-cloud in front of the `onrender.com` hostname
 is a second CF hop — leave the default; their edge overwrites `CF-Connecting-IP`
 with the same client.
+
+## R-0011 — Gateway upstream DNS is per-request and search-qualified, confirmed live
+
+*2026-08-17 · corrects R-0004's implicit assumption, supersedes the reverted G-2 (PR #32)*
+
+`fortel2-replica-rpc`'s nginx re-resolves `REPLICA_UPSTREAM` per request via a variable
+`proxy_pass` + `resolver <nameservers from /etc/resolv.conf>`, instead of the original literal
+`proxy_pass` (resolved once at config load, cached for the process lifetime). A bare host with
+no dot is qualified with the first token of `/etc/resolv.conf`'s `search` line before nginx
+resolves it; a host that already contains a dot is left unchanged. Both the nameserver list and
+the search domain are read from the container's own `/etc/resolv.conf` at startup — never
+hardcoded.
+
+**Why — two incidents, in order:**
+
+1. **2026-08-16, ~20:00 UTC.** Literal `proxy_pass` cached `fortel2-replica`'s IP at container
+   start. After a replica redeploy, the gateway kept dialing the dead address —
+   `upstream timed out (110: Operation timed out)` on every request for seven minutes, until the
+   gateway was manually restarted. Root cause: nginx only re-resolves a `proxy_pass` address when
+   it is a variable *and* a `resolver` directive is configured.
+2. **2026-08-16, 20:36–21:37 UTC.** The first fix (PR #32) added a variable `proxy_pass` +
+   `resolver` sourced from `/etc/resolv.conf` `nameserver` lines — correct nginx, but nginx's
+   `resolver` directive does not apply `/etc/resolv.conf`'s `search` domain list the way the OS
+   resolver (`getaddrinfo`, used by the literal form) does. Every request failed immediately:
+   `fortel2-replica could not be resolved (3: Host not found)`, continuously, not just after a
+   redeploy — worse than incident 1. Reverted (PR #34) back to the literal-`proxy_pass` state
+   (incident 1's known, lesser bug) while a real fix was built.
+
+**Confirmed live**, not just unit-tested (PR #35, deployed `dep-da15458u01pc73fk147g`,
+2026-08-17T00:13Z): the container's actual `/etc/resolv.conf` on Render is Kubernetes-style
+cluster DNS —
+
+```
+resolver=169.254.20.10 10.12.0.10 search=own-d98533l7vvec738vva9g.svc.cluster.local
+upstream=http://fortel2-replica.own-d98533l7vvec738vva9g.svc.cluster.local:10000
+```
+
+— and a live `eth_chainId` request through the public gateway returned `result: "0x354"`,
+HTTP 200, immediately after deploy.
+
+**Not yet reproduced live:** incident 1's original scenario — redeploying `fortel2-replica`
+alone, without touching the gateway, to confirm per-request re-resolution survives a real
+replica redeploy rather than only resolving correctly at the gateway's own startup. The
+mechanism is unit-tested for this and logically sound (that's what "per-request" means), but
+untested against Render specifically. Confirm on the next natural replica redeploy rather than
+forcing one.
+
+**Consequences.** No `valid=` TTL override — resolution respects whatever TTL Render's cluster
+DNS returns. Do not hardcode `169.254.20.10` / `10.12.0.10` / the `.svc.cluster.local` suffix
+anywhere — they are read fresh from `/etc/resolv.conf` on every container start and are not
+guaranteed stable across regions, plans, or Render infrastructure changes.
