@@ -17,10 +17,13 @@ ENV PORT=10000 \
     RPC_BURST=40 \
     RPC_REAL_IP_HEADER=CF-Connecting-IP \
     RPC_MAX_BODY=1m \
-    NGINX_ENVSUBST_FILTER="^(PORT|REPLICA_UPSTREAM|RPC_RATE|RPC_BURST|RPC_REAL_IP_HEADER|RPC_MAX_BODY)$"
+    NGINX_ENVSUBST_FILTER="^(PORT|REPLICA_UPSTREAM|RPC_RATE|RPC_BURST|RPC_REAL_IP_HEADER|RPC_MAX_BODY|NGINX_LOCAL_RESOLVERS|NGINX_REPLICA_UPSTREAM)$"
 
 # Overwrites the image's stock default.conf at start via
 # /docker-entrypoint.d/20-envsubst-on-templates.sh.
+# 14-*.envsh is sourced (not executed) so NGINX_LOCAL_RESOLVERS and
+# NGINX_REPLICA_UPSTREAM are visible to 20-envsubst. Must sort before 20-.
+COPY --chmod=755 14-resolvers-from-resolv.conf.envsh /docker-entrypoint.d/14-resolvers-from-resolv.conf.envsh
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 
 EXPOSE 10000
