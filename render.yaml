@@ -42,6 +42,8 @@
 # Credit schedule (observe): L1_RPC_SCHEDULE=business → QuickNode 09:00–17:00
 # America/Los_Angeles, publicnode overnight. Overrides:
 #   L1_RPC_FORCE=public|metered  or  L1_USE_PUBLIC_RPC=1
+# Memory policy: Wave 1 on Standard (R-0012). Do not apply this file onto the
+# live pserv. Wave 2 is dashboard env only after a measured 1.6–1.9 GB peak.
 #
 # Dashboard replica: New → Private Service → Runtime Docker → root Dockerfile.
 # Attach a persistent disk at /data (≥20 GB; live is 50 GB).

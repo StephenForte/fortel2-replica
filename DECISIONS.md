@@ -275,3 +275,37 @@ DNS-address-change test. Until then this is open.
 DNS returns. Do not hardcode `169.254.20.10` / `10.12.0.10` / the `.svc.cluster.local` suffix
 anywhere — they are read fresh from `/etc/resolv.conf` on every container start and are not
 guaranteed stable across regions, plans, or Render infrastructure changes.
+
+## R-0012 — Replica memory is Wave 1 on Standard; Wave 2 is a measured fallback
+
+*2026-08-17*
+
+Live `fortel2-replica` stays **Standard (2 GB)**. Catch-up OOM (exit 137) was op-node's
+default `--l1.cache-size=900` (full L1 blocks + receipts) plus unbounded geth Pebble
+handles, not a Python filter leak. Wave 1 (PR #39) is the live policy, already in
+`entrypoint.sh` / `render.yaml` / the dashboard:
+
+- `L1_CACHE_SIZE=128`, `L1_MAX_CONCURRENCY=2`, `L1_RPC_MAX_BATCH_SIZE=5`
+- `GETH_FDLIMIT=4096`, `--cache.noprefetch`
+- existing `GETH_CACHE_MB=128`, `GETH_GOMEMLIMIT=700MiB`, `OP_NODE_GOMEMLIMIT=768MiB`
+
+**Measured 2026-08-17:** after the Wave 1 env restart, catch-up RSS sawtoothed **256–478 MB**
+for 12+ hours of batch decode (Wave 0 peak was **2,125 MB**, then cgroup kill). Wave 2 is
+**not** indicated.
+
+**Wave 2** (dashboard env only — do not apply `render.yaml` as a new Blueprint, R-0008):
+`GETH_CACHE_MB=64`, both `GOMEMLIMIT=512MiB`, `GOGC=50`. Use only if a later catch-up
+window peaks **1,600–1,900 MB** with CPU under 70%. Revert if CPU pegs. Skip Wave 2 and
+go **Pro 4 GB** if peak ≥2,000 MB or exit 137 after Wave 1.
+
+Do not set `L1_CACHE_SIZE=0` (op-node treats 0 as ~2400). Do not tighten `GOMEMLIMIT`
+while the L1 cache is still 900.
+
+**Daily check:** Cursor Automation **Daily replica health** at 04:00. Scores last-24h
+replica RSS against the Wave 2 table and QuickNode credits on **L2_Render** (replica)
+vs **L2_mini** (sequencer / Mac mini). Warn if either endpoint or combined credits
+exceed ~3M/day. Delivery is Slack; the full transcript is the automation's Runs /
+Cloud Agent conversation. The automation **suggests** Wave 2 — it does not change env
+or deploy.
+
+See `README.md` §"Render".
