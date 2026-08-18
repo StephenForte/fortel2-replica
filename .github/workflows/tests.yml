@@ -1,0 +1,47 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-and-integration:
+    name: Python and Docker tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+
+      - name: Check shell syntax
+        run: |
+          sh -n entrypoint.sh
+          sh -n healthcheck.sh
+          sh -n sequencer-read/start.sh
+          sh -n gateway/14-resolvers-from-resolv.conf.envsh
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile \
+            rpc-method-filter.py \
+            l1_rpc_router.py \
+            tests/*.py
+
+      - name: Run test suite
+        run: python -m unittest discover -s tests -v
