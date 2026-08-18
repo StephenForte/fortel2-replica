@@ -210,7 +210,7 @@ class _DummyFilter(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         n = int(self.headers.get("Content-Length", "0") or 0)
-        self.last_body = self.rfile.read(n)
+        type(self).last_body = self.rfile.read(n)
         self.hits.append(f"POST {self.path}")
         self._write(200, CHAIN_ID_BODY, "application/json")
 
