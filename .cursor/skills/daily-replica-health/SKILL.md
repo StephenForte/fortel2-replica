@@ -24,13 +24,13 @@ Service: `fortel2-replica` (`srv-d9fsgi3rjlhs73ceh6tg`) in workspace `tea-d98533
 - Note the live instance and whether L2 is still catching up (`Imported new potential chain segment age=`).
 - Score only the current instance after the latest restart. Ignore older instances in the same 24h window unless they OOM'd after Wave 1 knobs were on.
 
-Wave 2 decision (suggest only, do not implement):
+Wave 2 decision (suggest only, do not implement). Match R-0012: measured catch-up **peak** only. A projected linear climb to 2 GB is not a GO.
 
-- **NO-GO:** peak RSS under 1,500 MB and flattening or sawtooth, L2 still advancing, no kill, CPU not pegged.
-- **GO Wave 2:** sustained 1,600–1,900 MB, or a linear climb that will hit 2 GB in under 2 hours, CPU under 70%. Suggested env only: `GETH_CACHE_MB=64`, `GETH_GOMEMLIMIT=512MiB`, `OP_NODE_GOMEMLIMIT=512MiB`, `GOGC=50`. Revert if CPU pegs.
+- **NO-GO:** peak RSS under 1,600 MB, L2 still advancing, no kill, CPU not pegged.
+- **GO Wave 2:** sustained 1,600–1,900 MB, CPU under 70%. Suggested env only: `GETH_CACHE_MB=64`, `GETH_GOMEMLIMIT=512MiB`, `OP_NODE_GOMEMLIMIT=512MiB`, `GOGC=50`. Revert if CPU pegs.
 - **Skip Wave 2 → Pro 4 GB:** peak ≥2,000 MB or another OOM after Wave 1.
 
-Wave 1 is already live (`L1_CACHE_SIZE=128`, `GETH_FDLIMIT=4096`, noprefetch, `GOMEMLIMIT` 700/768). Do not reopen Wave 2 unless today's catch-up peak crosses 1,500 MB.
+Wave 1 is already live (`L1_CACHE_SIZE=128`, `GETH_FDLIMIT=4096`, noprefetch, `GOMEMLIMIT` 700/768). Do not reopen Wave 2 unless today's catch-up peak is 1,600–1,900 MB.
 
 ## 2. QuickNode usage (two endpoints)
 

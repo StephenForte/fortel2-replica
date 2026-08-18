@@ -295,8 +295,9 @@ for 12+ hours of batch decode (Wave 0 peak was **2,125 MB**, then cgroup kill). 
 
 **Wave 2** (dashboard env only — do not apply `render.yaml` as a new Blueprint, R-0008):
 `GETH_CACHE_MB=64`, both `GOMEMLIMIT=512MiB`, `GOGC=50`. Use only if a later catch-up
-window peaks **1,600–1,900 MB** with CPU under 70%. Revert if CPU pegs. Skip Wave 2 and
-go **Pro 4 GB** if peak ≥2,000 MB or exit 137 after Wave 1.
+window peaks **1,600–1,900 MB** with CPU under 70%. Revert if CPU pegs. A projected
+climb toward 2 GB is not Wave 2 by itself — the daily scorer uses this peak band
+only. Skip Wave 2 and go **Pro 4 GB** if peak ≥2,000 MB or exit 137 after Wave 1.
 
 Do not set `L1_CACHE_SIZE=0` (op-node treats 0 as ~2400). Do not tighten `GOMEMLIMIT`
 while the L1 cache is still 900.
