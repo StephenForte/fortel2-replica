@@ -205,13 +205,13 @@ If it OOMs again (exit 137 / “Ran out of memory”), confirm the plan is Stand
 
 | Peak RSS while catching up | Do |
 |---|---|
-| Under 1,500 MB, flattening / sawtooth | Nothing. Wave 1 is holding. |
+| Under 1,600 MB | Nothing. Wave 1 is holding. |
 | Sustained 1,600–1,900 MB, CPU &lt; 70% | **Wave 2** env only: `GETH_CACHE_MB=64`, `GETH_GOMEMLIMIT=512MiB`, `OP_NODE_GOMEMLIMIT=512MiB`, `GOGC=50`. Revert if CPU pegs. |
 | ≥2,000 MB or another 137 after Wave 1 | Skip Wave 2 → **Pro (4 GB)**. |
 
 Never set `L1_CACHE_SIZE=0` (op-node expands that to ~2400). Do not tighten `GOMEMLIMIT` until the L1 cache is already 128.
 
-**Daily check:** Cursor Automation **Daily replica health** (04:00) reads last-24h replica RSS and QuickNode credits on **L2_Render** (this replica) vs **L2_mini** (sequencer). Warn if either endpoint or combined credits exceed ~3M/day. Verdict goes to **Slack**; the full transcript is the automation's Runs / [cursor.com/agents](https://cursor.com/agents). It suggests Wave 2 — it does not change env or deploy.
+**Daily check:** Local agent **Daily replica health** (04:00) reads last-24h replica RSS and QuickNode credits on **L2_Render** (this replica) vs **L2_mini** (sequencer). Warn if either endpoint or combined credits exceed ~3M/day. It runs in a local Agents Window chat on this machine (skill `.cursor/skills/daily-replica-health`) because cloud automations cannot see Render MCP. Cursor and that chat must stay open overnight. The verdict lands in the chat (Slack only if that integration is connected). It suggests Wave 2 — it does not change env or deploy.
 
 ### Blueprint vs dashboard-created services
 
