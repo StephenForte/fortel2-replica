@@ -197,9 +197,21 @@ Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on 
 
 ## Render
 
-**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node (+ optional L1 router) in one container. Do not leave geth’s 1024MB default cache.
+**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node (+ optional L1 router) in one container. Do not leave geth’s 1024MB default cache. Live policy is **Wave 1 on Standard** (R-0012) — do not jump to Pro or tighten heaps without a measured catch-up peak.
 
-**OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. If Render kills the service with exit 137 / “Ran out of memory”, confirm the plan is **Standard or Pro** (not Starter), set the memory env vars below (especially `L1_CACHE_SIZE=128` — the upstream default of 900 L1 receipt blocks is the usual 2 GB killer), or bump to **Pro (4GB)** if spikes persist.
+**OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. The usual 2 GB killer is op-node’s upstream `--l1.cache-size=900` (full L1 receipts), not the Python filter. Wave 1 (PR #39) is already in the tables below: `L1_CACHE_SIZE=128`, `L1_MAX_CONCURRENCY=2`, `L1_RPC_MAX_BATCH_SIZE=5`, `GETH_FDLIMIT=4096`, `--cache.noprefetch`. Measured 2026-08-17: catch-up RSS stayed **256–478 MB** for 12h after Wave 1 (Wave 0 peak was 2,125 MB, then exit 137).
+
+If it OOMs again (exit 137 / “Ran out of memory”), confirm the plan is Standard (not Starter) and Wave 1 knobs are actually on the **dashboard** (this service is unattached — `render.yaml` does not sync). Then score a catch-up window (L2 `age` still hours/days, ignore the first 10 minutes after a deploy):
+
+| Peak RSS while catching up | Do |
+|---|---|
+| Under 1,500 MB, flattening / sawtooth | Nothing. Wave 1 is holding. |
+| Sustained 1,600–1,900 MB, CPU &lt; 70% | **Wave 2** env only: `GETH_CACHE_MB=64`, `GETH_GOMEMLIMIT=512MiB`, `OP_NODE_GOMEMLIMIT=512MiB`, `GOGC=50`. Revert if CPU pegs. |
+| ≥2,000 MB or another 137 after Wave 1 | Skip Wave 2 → **Pro (4 GB)**. |
+
+Never set `L1_CACHE_SIZE=0` (op-node expands that to ~2400). Do not tighten `GOMEMLIMIT` until the L1 cache is already 128.
+
+**Daily check:** Cursor Automation **Daily replica health** (04:00) reads last-24h replica RSS and QuickNode credits on **L2_Render** (this replica) vs **L2_mini** (sequencer). Warn if either endpoint or combined credits exceed ~3M/day. Verdict goes to **Slack**; the full transcript is the automation's Runs / [cursor.com/agents](https://cursor.com/agents). It suggests Wave 2 — it does not change env or deploy.
 
 ### Blueprint vs dashboard-created services
 
@@ -251,7 +263,7 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 
 **What they do:**
 
-- **Memory (`GETH_*`, `OP_NODE_GOMEMLIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`):** keep op-geth + op-node under the 2 GB cgroup during L1 derivation bursts. `L1_CACHE_SIZE` must stay a positive integer — `0` expands op-node’s cache to ~2400 L1 blocks and will OOM Standard.
+- **Memory (`GETH_*`, `OP_NODE_GOMEMLIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`):** Wave 1 on Standard (R-0012). Keep op-geth + op-node under the 2 GB cgroup during L1 derivation bursts. `L1_CACHE_SIZE` must stay a positive integer — `0` expands op-node’s cache to ~2400 L1 blocks and will OOM Standard.
 - **L1 schedule (`L1_RPC_SCHEDULE`, `TZ`, `L1_RPC_*`):** QuickNode **09:00–17:00** Pacific, publicnode overnight via in-container router (no op-node restart at cutover).
 - **Credit throttle (`L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`):** slow L1 polling to limit QuickNode burn.
 
@@ -277,7 +289,7 @@ For a **new** replica somewhere else — not the live Oregon node, and not a sub
 
 **Health check / long recovery:** until `entrypoint.sh` marks op-geth IPC ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful `geth attach`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot. Render’s HTTP `healthCheckPath: /` hits the method filter once it is up.
 
-**QuickNode:** Prefer a dedicated endpoint token for this replica. Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — rotate the URL if leaked. Daytime schedule uses that endpoint; overnight / `L1_RPC_FORCE=public` / `L1_USE_PUBLIC_RPC=1` use publicnode.
+**QuickNode:** Prefer a dedicated endpoint token for this replica (**L2_Render**, not **L2_mini** / the Mac mini sequencer URL). Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — rotate the URL if leaked. Daytime schedule uses that endpoint; overnight / `L1_RPC_FORCE=public` / `L1_USE_PUBLIC_RPC=1` use publicnode. Treat ~**3 million credits/day** (per endpoint or combined) as the warn line — the daily automation flags it. L2_mini is usually the burner (`eth_getBlockByNumber`, `eth_blobBaseFee`, `eth_maxPriorityFeePerGas`); replica derivation on L2_Render should stay well under.
 
 If you change genesis/rollup (ForteL2 Phase 2b redeploy), **wipe `/data`** (or recreate the disk) after deploying the new image so the replica does not keep the old L1 history.
 
