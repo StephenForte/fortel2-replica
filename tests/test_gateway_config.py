@@ -170,13 +170,26 @@ def _script_exports(got: subprocess.CompletedProcess) -> dict[str, str]:
     return out
 
 
-def _http(method: str, url: str, body: bytes | None = None, timeout: float = 5.0):
+def _http(
+    method: str,
+    url: str,
+    body: bytes | None = None,
+    timeout: float = 5.0,
+    extra_headers: dict[str, str] | None = None,
+):
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or parsed.hostname is None:
         raise ValueError(f"test helper only fetches http(s) URLs (got {url!r})")
     req = urllib.request.Request(url, data=body, method=method)
     if body is not None:
         req.add_header("Content-Type", "application/json")
+    for name, value in (extra_headers or {}).items():
+        # Host is computed from the URL unless forced; unredirected keeps
+        # the spoofed value on the wire for the Host-header regression.
+        if name.lower() == "host":
+            req.add_unredirected_header("Host", value)
+        else:
+            req.add_header(name, value)
     try:
         # Callers pass http://127.0.0.1:<ephemeral>; scheme-checked above.
         # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
@@ -191,16 +204,19 @@ class _DummyFilter(BaseHTTPRequestHandler):
 
     hits: list[str]
     last_body: bytes
+    last_host: str
 
     def log_message(self, *_args) -> None:  # noqa: A003
         return
 
     def do_GET(self) -> None:  # noqa: N802
+        type(self).last_host = self.headers.get("Host", "")
         self.hits.append(f"GET {self.path}")
         payload = b'{"ok":true,"upstream":"dummy","allowed":1}\n'
         self._write(200, payload, "application/json")
 
     def do_OPTIONS(self) -> None:  # noqa: N802
+        type(self).last_host = self.headers.get("Host", "")
         self.hits.append(f"OPTIONS {self.path}")
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -209,6 +225,7 @@ class _DummyFilter(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:  # noqa: N802
+        type(self).last_host = self.headers.get("Host", "")
         n = int(self.headers.get("Content-Length", "0") or 0)
         type(self).last_body = self.rfile.read(n)
         self.hits.append(f"POST {self.path}")
@@ -279,6 +296,9 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertIn("proxy_pass", proxied)
         self.assertNotIn("proxy_hide_header Access-Control", proxied)
         self.assertNotIn("add_header Access-Control", proxied)
+        self.assertIn("proxy_set_header Host $proxy_host;", proxied)
+        self.assertNotRegex(proxied, r"proxy_set_header\s+Host\s+\$host\s*;")
+        self.assertNotRegex(proxied, r"proxy_set_header\s+Host\s+\$http_host\s*;")
 
     def test_env_overrides_flow_into_rendered_config(self):
         conf = render_gateway_conf(
@@ -374,6 +394,9 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertNotIn("proxy_pass ${NGINX_REPLICA_UPSTREAM};", raw)
         self.assertIn("set $replica_upstream ${NGINX_REPLICA_UPSTREAM};", raw)
         self.assertIn("proxy_pass $replica_upstream$request_uri;", raw)
+        self.assertIn("proxy_set_header Host $proxy_host;", raw)
+        self.assertNotRegex(raw, r"proxy_set_header\s+Host\s+\$host\s*;")
+        self.assertNotRegex(raw, r"proxy_set_header\s+Host\s+\$http_host\s*;")
 
         conf = render_gateway_conf()
         self.assertNotIn("proxy_pass http://fortel2-replica:10000;", conf)
@@ -535,6 +558,7 @@ class GatewayDockerTests(unittest.TestCase):
         handler = _DummyFilter
         handler.hits = []
         handler.last_body = b""
+        handler.last_host = ""
         server = ThreadingHTTPServer(("0.0.0.0", 0), handler)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
@@ -655,6 +679,32 @@ class GatewayDockerTests(unittest.TestCase):
             status, _body, _hdrs = _http("POST", f"{url}/rpc?foo=bar", CHAIN_ID_REQ)
             self.assertEqual(200, status)
             self.assertIn("POST /rpc?foo=bar", _DummyFilter.hits)
+        finally:
+            if cid:
+                self._stop(cid)
+            upstream.shutdown()
+
+    def test_spoofed_host_is_not_forwarded_upstream(self):
+        """CWE-290: client Host must not become the replica's Host header.
+
+        proxy_set_header Host $host would pass evil.example through.
+        $proxy_host is the configured REPLICA_UPSTREAM host:port.
+        """
+        upstream, up_port = self._start_upstream()
+        cid = None
+        try:
+            cid, url = self._run_gateway(up_port)
+            status, body, _hdrs = _http(
+                "POST",
+                url,
+                CHAIN_ID_REQ,
+                extra_headers={"Host": "evil.example"},
+            )
+            self.assertEqual(200, status, body)
+            self.assertEqual(CHAIN_ID_BODY, body)
+            expected = f"{self.host_ip}:{up_port}"
+            self.assertEqual(expected, _DummyFilter.last_host)
+            self.assertNotIn("evil.example", _DummyFilter.last_host)
         finally:
             if cid:
                 self._stop(cid)

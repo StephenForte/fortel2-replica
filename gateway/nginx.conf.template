@@ -137,7 +137,13 @@ server {
         set $replica_upstream ${NGINX_REPLICA_UPSTREAM};
         proxy_pass $replica_upstream$request_uri;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        # Host must not come from the request. $host / $http_host are the
+        # client Host header (CWE-290): a spoofed value would be forwarded
+        # to the replica. $proxy_host is the host:port from proxy_pass,
+        # which is NGINX_REPLICA_UPSTREAM — operator-configured, not the
+        # visitor. Connection below is also a proxy_set_header, so nginx
+        # would otherwise pass the request Host through; set this explicitly.
+        proxy_set_header Host $proxy_host;
         proxy_set_header Connection "";
         proxy_connect_timeout 10s;
         proxy_send_timeout 60s;
