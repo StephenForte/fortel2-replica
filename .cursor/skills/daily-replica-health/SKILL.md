@@ -3,17 +3,16 @@ name: daily-replica-health
 description: >-
   Read-only ForteL2 replica health check: last-24h Render RSS/CPU/OOM and
   QuickNode credits on L2_Render vs L2_mini. Use when running Daily replica
-  health, the 04:00 local loop, Wave 2 scoring, or replica memory/credit warn.
+  health, Wave 2 scoring, or replica memory/credit warn. The scheduled run is
+  the Cloud Agent automation, not a local overnight loop.
 disable-model-invocation: true
-disabled-environments:
-  - cloud
 ---
 
 # Daily replica health
 
 Run this as a **read-only** report. Do not implement Wave 2, do not change Render env vars, do not deploy, and do not print QuickNode RPC URLs or tokens.
 
-This check must run in a **local** agent (this machine). Cloud automations cannot see the Render plugin. Use Render and QuickNode from the local catalog.
+The scheduled check is the Cursor Cloud Agent **Daily replica health** (04:00 Pacific). It uses Cloud Render (`https://mcp.render.com/mcp`) and QuickNode. Do not arm a local overnight loop or keep this chat open for the cron.
 
 ## 1. Render memory (replica)
 
@@ -43,4 +42,4 @@ Warn if either endpoint **or** combined credits exceed ~3,000,000 in that 24h wi
 
 ## Output
 
-Short verdict in chat, plus a canvas: Wave 2 call, peak RSS, L2 age, each endpoint's credits vs 3M, and any warning. No secrets. Slack is optional and only if that integration is connected in this local session.
+Short verdict in the Cloud Agent run transcript: Wave 2 call, peak RSS, L2 age, each endpoint's credits vs 3M, and any warning. No secrets.

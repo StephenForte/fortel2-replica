@@ -302,13 +302,12 @@ only. Skip Wave 2 and go **Pro 4 GB** if peak ≥2,000 MB or exit 137 after Wave
 Do not set `L1_CACHE_SIZE=0` (op-node treats 0 as ~2400). Do not tighten `GOMEMLIMIT`
 while the L1 cache is still 900.
 
-**Daily check:** Local agent **Daily replica health** at 04:00 (skill
+**Daily check:** Cloud Agent **Daily replica health** at 04:00 Pacific (skill
 `.cursor/skills/daily-replica-health`). Scores last-24h replica RSS against the
 Wave 2 table and QuickNode credits on **L2_Render** (replica) vs **L2_mini**
 (sequencer / Mac mini). Warn if either endpoint or combined credits exceed
-~3M/day. Cloud automations cannot see Render MCP, so this runs in a local
-Agents Window chat on this machine (Cursor + that chat must stay open
-overnight). Delivery is that chat; Slack only if connected. The agent
-**suggests** Wave 2 — it does not change env or deploy.
+~3M/day. Uses Cloud Render plus QuickNode. Verdict is the automation run
+transcript. Do not run a local overnight loop. The agent **suggests** Wave 2 —
+it does not change env or deploy.
 
 See `README.md` §"Render".
