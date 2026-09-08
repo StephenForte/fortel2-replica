@@ -203,7 +203,7 @@ printf '%064d\n' 0
             env.setdefault("L2_GETH_HTTP_PORT", str(http_port))
             started = time.monotonic()
             result = subprocess.run(
-                ["/bin/sh", str(ROOT / "entrypoint.sh")],
+                ["/bin/sh", str(ROOT / "entrypoint-reth.sh")],
                 env=env,
                 text=True,
                 capture_output=True,
@@ -649,7 +649,7 @@ printf '%064d\n' 0
 class HealthcheckTests(unittest.TestCase):
     def run_healthcheck(self, env):
         return subprocess.run(
-            ["/bin/sh", str(ROOT / "healthcheck.sh")],
+            ["/bin/sh", str(ROOT / "healthcheck-reth.sh")],
             env={**os.environ, **env},
             text=True,
             capture_output=True,

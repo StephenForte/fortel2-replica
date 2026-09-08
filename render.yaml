@@ -110,7 +110,7 @@ services:
     name: fortel2-replica-reth
     runtime: docker
     plan: standard
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.reth
     dockerContext: .
     region: oregon
     # Filter answers GET / with {"ok":true,...} for Render's private-network probe.

@@ -323,7 +323,7 @@ The operated Render replica moves to **op-reth** on a **new** Private Service an
 - `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c`
 - `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a`
 
-The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`.
+The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint-reth.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`.
 
 **Role.** Verifier only: `op-reth --full` (prune mode — without it this is an archive on a 20 GB disk), `--rollup.disable-tx-pool-gossip`, no `--proofs-history`. op-node `--l2.enginekind=reth`, `--sequencer.enabled=false`, `--p2p.disable=true`. `--l1.rpckind` from `L1_RPC_KIND` (default `quicknode`).
 
@@ -341,7 +341,7 @@ Existing `fortel2-replica`, its disk, and `fortel2-replica-rpc` stay as they are
 
 **Do not re-apply the live Blueprint entry.** That first `services:` block is a frozen snapshot (R-0008). A new apply creates a second empty-disk replica named `fortel2-replica`. Add objects; never rewrite that entry.
 
-**Merge gate.** The root `Dockerfile` is now op-reth-only. **Disable auto-deploy on live `fortel2-replica` before this merges to main.** A post-merge deploy of that service would start op-reth against the geth 50 GB disk. Phase C is a routing flip + rename-swap, not a redeploy onto the old disk.
+**Two Dockerfiles (why `./Dockerfile` stays geth).** Live `fortel2-replica` is Dashboard-created and auto-deploys `./Dockerfile`. Replacing that file with an op-reth image would start reth against the 50 GB geth disk on the next main deploy — the R-0008 / empty-disk class of accident, reached through an image swap rather than a new Blueprint apply. `./Dockerfile` therefore stays **byte-identical to main's op-geth v1.101702.2 image**. The Task 7 image is `Dockerfile.reth` (digest-pinned op-reth + op-node); only `fortel2-replica-reth` points at it. Phase C is a routing flip + rename-swap, not a redeploy onto the old disk.
 
 **Initial L1.** `L1_RPC_FORCE=metered` (D-0105: publicnode can return 0 receipts and stall derivation silently). The business-hours schedule is re-enabled only after catch-up, and only if a 60-min overnight-leg observation shows derivation advancing. A stall on the public leg is a finding, not a Phase B failure.
 

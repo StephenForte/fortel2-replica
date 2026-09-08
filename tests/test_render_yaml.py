@@ -46,7 +46,23 @@ class RenderYamlTests(unittest.TestCase):
         live = _service_blocks(self.text)[0]
         self.assertIn("name: fortel2-replica\n", live)
         self.assertIn("name: fortel2-replica-data\n", live)
+        self.assertIn("dockerfilePath: ./Dockerfile\n", live)
+        self.assertNotIn("Dockerfile.reth", live)
         self.assertNotIn("fortel2-replica-reth", live)
+
+    def test_live_dockerfile_is_main_geth_pin(self):
+        # Live auto-deploys ./Dockerfile. That file must stay main's geth
+        # image so a merge cannot start reth on the 50 GB disk (R-0013).
+        docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "us-docker.pkg.dev/oplabs-tools-artifacts/images/op-geth:v1.101702.2",
+            docker,
+        )
+        self.assertIn("COPY --from=geth", docker)
+        self.assertNotIn("images/op-reth", docker)
+        self.assertNotIn("COPY --from=reth", docker)
+        live = _service_blocks(self.text)[0]
+        self.assertIn("dockerfilePath: ./Dockerfile\n", live)
 
     def test_task7_objects_are_additive(self):
         self.assertIn("name: fortel2-replica-reth\n", self.text)
@@ -63,11 +79,12 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("L1_RPC_FORCE", reth)
         self.assertIn("value: metered", reth)
         self.assertIn("RETH_CROSS_BLOCK_CACHE_MB", reth)
+        self.assertIn("dockerfilePath: ./Dockerfile.reth\n", reth)
         self.assertNotIn("key: GETH_CACHE_MB", reth)
         self.assertNotIn("key: JWT_SECRET", reth)
 
-    def test_dockerfile_pins_reth_by_digest(self):
-        docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    def test_reth_dockerfile_pins_by_digest(self):
+        docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
             "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             docker,
@@ -79,6 +96,18 @@ class RenderYamlTests(unittest.TestCase):
         self.assertNotIn("images/op-geth", docker)
         self.assertNotIn("COPY --from=geth", docker)
         self.assertIn("COPY --from=reth", docker)
+        self.assertIn("COPY entrypoint-reth.sh", docker)
+        reth = next(
+            block
+            for block in _service_blocks(self.text)
+            if "name: fortel2-replica-reth\n" in block
+            and "fortel2-replica-reth-rpc" not in block.split("name:", 1)[-1][:40]
+        )
+        self.assertIn("dockerfilePath: ./Dockerfile.reth\n", reth)
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("dockerfile: Dockerfile.reth", compose)
+        ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
+        self.assertIn("entrypoint-reth.sh", ci)
 
 
 if __name__ == "__main__":

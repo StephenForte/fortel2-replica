@@ -10,8 +10,16 @@
 #
 # Official op-reth / op-node images are distroless (no /bin/sh). Init + start
 # stay in the command list so we do not need a shell on the EL image.
+# Render reth image (do not use ./Dockerfile — that stays the live geth pin):
+#   docker compose --profile render build replica-reth
 
 services:
+  replica-reth:
+    profiles: ["render"]
+    build:
+      context: .
+      dockerfile: Dockerfile.reth
+
   op-reth:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c
     volumes:

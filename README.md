@@ -9,9 +9,9 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 | op-reth | L2 execution (verifier `--full`, not archive, no proofs store) |
 | op-node | Verifier — derives L2 from L1 batches (`--l2.enginekind=reth`) |
 
-Pinned images (immutable digest, D-0109 / R-0013): `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. Entrypoint fails closed if the binary is not that pin.
+Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. Live `./Dockerfile` stays main's `op-geth:v1.101702.2` image (R-0013) so a main deploy cannot swap the live EL.
 
-**Task 7 (in progress):** a **new** Render pserv `fortel2-replica-reth` + 20 GB disk + staging gateway `fortel2-replica-reth-rpc`. The live geth pserv `fortel2-replica` and its 50 GB disk stay up until Phase C (routing flip + rename-swap). **Disable auto-deploy on live `fortel2-replica` before this image reaches main** — a deploy there would start op-reth on the geth disk.
+**Task 7 (in progress):** a **new** Render pserv `fortel2-replica-reth` (`Dockerfile.reth`) + 20 GB disk + staging gateway `fortel2-replica-reth-rpc`. The live geth pserv `fortel2-replica` and its 50 GB disk stay up until Phase C (routing flip + rename-swap).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
@@ -80,8 +80,8 @@ Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-repl
 
 | Service | Type | Disk | Role |
 |---|---|---|---|
-| `fortel2-replica` | pserv (live, frozen) | `fortel2-replica-data` 50 GB | geth until Phase C. Auto-deploy **off** before this image merges. |
-| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | op-reth `--full` verifier. Initial `L1_RPC_FORCE=metered`. |
+| `fortel2-replica` | pserv (live, frozen) | `fortel2-replica-data` 50 GB | `./Dockerfile` (op-geth v1.101702.2). Do not point this service at `Dockerfile.reth`. |
+| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | `Dockerfile.reth`. op-reth `--full` verifier. Initial `L1_RPC_FORCE=metered`. |
 | `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Pre-repoint verification only. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
 | `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname — unchanged until Phase C env flip. |
 
@@ -91,7 +91,7 @@ Phase C (Steve-approved window): flip live gateway `REPLICA_UPSTREAM` → rename
 
 Keep the live Private Service and its 50 GB disk. Public replica reads go through the diskless Web Service `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`), which reverse-proxies to `http://fortel2-replica:10000` and rate-limits. SettlementOS stays on the private URL. The table below is that service's config — recreate from it only in a new environment.
 
-**Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). The replica image is `./Dockerfile` (op-reth + op-node). Pointing a Web Service at that replica path would boot a **second public verifier**. The Task 7 staging gateway is declared as `fortel2-replica-reth-rpc` in `render.yaml` (R-0013); live `fortel2-replica-rpc` stays Dashboard-created.
+**Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). Live replica image is `./Dockerfile` (op-geth, unchanged). Task 7 image is `Dockerfile.reth` (op-reth + op-node). Pointing a Web Service at either replica path would boot a **second public verifier**. The Task 7 staging gateway is declared as `fortel2-replica-reth-rpc` in `render.yaml` (R-0013); live `fortel2-replica-rpc` stays Dashboard-created.
 
 This section is the operator's entire configuration path. Gateway env is **not synced from `render.yaml`** — the gateway is not declared there (R-0008). Changing a key in the Dashboard means editing the table below too; nothing will catch the drift.
 
