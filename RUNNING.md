@@ -4,14 +4,14 @@ How to clone this repo and run a read-only ForteL2 verifier on a laptop or VPS.
 
 The only external thing you must supply is an Ethereum **Sepolia L1 RPC URL** — chain config and pinned images are already in the repo. No sequencer, batcher, or proposer keys.
 
-This is **not** the hosted Render node. Local compose publishes raw op-geth / op-node. The method filter, public URLs, and L1 schedule router are the single-container Render image — see `README.md` if you meant to call those instead.
+This is **not** the hosted Render node. Local compose publishes raw op-reth / op-node. The method filter, public URLs, and L1 schedule router are the single-container Render image — see `README.md` if you meant to call those instead.
 
 ## What you need
 
 - Docker + the Compose plugin (`docker compose`). Nothing else — no Go/Node, no Foundry.
 - ~2 GB RAM. A 512 MB box will OOM (same warning as the Render note in `README.md`).
-- Disk for the `geth-data` volume. Derivation starts at L1 block `11323401` and the volume grows as it catches up.
-- A **Sepolia HTTPS** endpoint in `L1_RPC_URL`. `.env.example` already has `https://ethereum-sepolia-rpc.publicnode.com` for a smoke test. Use a dedicated provider for anything you leave running. Compose does **not** run `L1_RPC_SCHEDULE` / the in-container router — those are Render-only.
+- Disk for the `reth-data` volume. Derivation starts at L1 block `11323401` and the volume grows as it catches up. `--full` is a prune mode: without it you build an archive. D-0122 sizing for `--full` state is ≈1–2 GB (no proofs store).
+- A **Sepolia HTTPS** endpoint in `L1_RPC_URL`. `.env.example` already has `https://ethereum-sepolia-rpc.publicnode.com` for a **smoke test only**. PublicNode can return 0 receipts and stall derivation (ForteL2 D-0105). Use a receipts-capable provider (QuickNode) for anything you leave running. Compose does **not** run `L1_RPC_SCHEDULE` / the in-container router — those are Render-only. Render's new replica starts with `L1_RPC_FORCE=metered`.
 
 ## Steps
 
@@ -24,7 +24,9 @@ openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 docker compose up -d
 ```
 
-`docker compose up` pulls the pinned images, `geth init`s the datadir from `config/genesis.json` on first run, then starts op-geth + op-node. Host ports are `9545` (L2 execution RPC) and `9547` (op-node RPC). Compose only reads `L1_RPC_URL` (required), plus optional `L1_BLOCK_TIME`, `L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`, `GETH_CACHE_MB`, and `GETH_FDLIMIT`. Everything else in `.env.example` is Render-only and ignored here.
+`docker compose up` pulls the pinned images (op-reth + op-node by digest), `op-reth init`s the datadir from `config/genesis.json` on first run (refuses chain 901), then starts op-reth `--full` + op-node `--l2.enginekind=reth`. Host ports are `9545` (L2 execution RPC) and `9547` (op-node RPC). Compose only reads `L1_RPC_URL` (required), plus optional `L1_BLOCK_TIME`, `L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`, `L1_RPC_KIND`, `RETH_CROSS_BLOCK_CACHE_MB`, and `RETH_RPC_CACHE_MAX_BLOCKS`. Everything else in `.env.example` is Render-only and ignored here.
+
+The container's op-reth must report `Reth Version: 2.3.0-dev` commit `9384bc53…` (same binary lineage as the Mini pin). The single-container image asserts that at start.
 
 ## Confirm it works
 
@@ -42,9 +44,9 @@ curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
 ## What to expect
 
 - **Give it time.** op-node replays Sepolia from the rollup genesis L1 block forward. `current_l1` climbs right away; `safe_l2` / `unsafe_l2` stay `0` until derivation reaches the L1 blocks where batches were posted. That lag is normal.
-- **Read-only chain, raw local RPC.** There are no sequencer keys. Local `:9545` is stock op-geth (including `debug` / `txpool`), not the Render allowlist — `eth_sendRawTransaction` is not rejected here, but this node does not sequence (`--sequencer.enabled=false`).
-- **No secrets to share.** `L1_RPC_URL` is the only sensitive value if it has a token. `.env` and `jwt.txt` are gitignored. Make your own; do not reuse someone else's.
-- **Stop/reset:** `docker compose down` to stop; `docker compose down -v` to wipe the chain datadir (needed if `config/genesis.json` or `config/rollup.json` changes after a ForteL2 redeploy — see `README.md`).
+- **Read-only chain, raw local RPC.** There are no sequencer keys. Local `:9545` is stock op-reth (HTTP `eth,net,web3` in the Render image; compose is similarly read-oriented), not the Render allowlist — `eth_sendRawTransaction` is not rejected here, but this node does not sequence (`--sequencer.enabled=false`).
+- **No secrets to share.** `L1_RPC_URL` is the only sensitive value if it has a token. `.env` and `jwt.txt` are gitignored. Make your own; do not reuse someone else's. Never print L1 URLs or JWTs.
+- **Stop/reset:** `docker compose down` to stop; `docker compose down -v` to wipe the chain datadir (needed if `config/genesis.json` or `config/rollup.json` changes after a ForteL2 redeploy — see `README.md`). Mid-chain rewind is wipe + re-derive — never `debug_setHead`.
 
 ## Before you share this repo
 

@@ -12,6 +12,70 @@ FILTER = ROOT / "rpc-method-filter.py"
 
 
 class RpcMethodFilterTests(unittest.TestCase):
+    def test_allowlist_is_byte_identical_to_task7_pin(self):
+        """Public read allowlist must not change in the op-reth image swap."""
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("rpc_method_filter", FILTER)
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+        # Frozen 2026-09-08 (Task 7 Phase A). Update only with an explicit
+        # allowlist decision — not as a side effect of the EL swap.
+        self.assertEqual(
+            frozenset(
+                {
+                    "eth_blobBaseFee",
+                    "eth_blockNumber",
+                    "eth_call",
+                    "eth_chainId",
+                    "eth_createAccessList",
+                    "eth_estimateGas",
+                    "eth_feeHistory",
+                    "eth_gasPrice",
+                    "eth_getBalance",
+                    "eth_getBlockByHash",
+                    "eth_getBlockByNumber",
+                    "eth_getBlockReceipts",
+                    "eth_getBlockTransactionCountByHash",
+                    "eth_getBlockTransactionCountByNumber",
+                    "eth_getCode",
+                    "eth_getFilterChanges",
+                    "eth_getFilterLogs",
+                    "eth_getLogs",
+                    "eth_getProof",
+                    "eth_getRawTransactionByBlockHashAndIndex",
+                    "eth_getRawTransactionByBlockNumberAndIndex",
+                    "eth_getRawTransactionByHash",
+                    "eth_getStorageAt",
+                    "eth_getTransactionByBlockHashAndIndex",
+                    "eth_getTransactionByBlockNumberAndIndex",
+                    "eth_getTransactionByHash",
+                    "eth_getTransactionCount",
+                    "eth_getTransactionReceipt",
+                    "eth_getUncleByBlockHashAndIndex",
+                    "eth_getUncleByBlockNumberAndIndex",
+                    "eth_getUncleCountByBlockHash",
+                    "eth_getUncleCountByBlockNumber",
+                    "eth_maxPriorityFeePerGas",
+                    "eth_newBlockFilter",
+                    "eth_newFilter",
+                    "eth_protocolVersion",
+                    "eth_syncing",
+                    "eth_uninstallFilter",
+                    "net_listening",
+                    "net_peerCount",
+                    "net_version",
+                    "web3_clientVersion",
+                    "web3_sha3",
+                }
+            ),
+            mod.ALLOWED_METHODS,
+        )
+        self.assertNotIn("eth_sendRawTransaction", mod.ALLOWED_METHODS)
+        self.assertNotIn("admin_nodeInfo", mod.ALLOWED_METHODS)
+        self.assertNotIn("debug_traceTransaction", mod.ALLOWED_METHODS)
+
     def test_self_test_ok(self):
         result = subprocess.run(
             ["python3", str(FILTER), "--self-test"],

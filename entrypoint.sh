@@ -1,6 +1,7 @@
 #!/bin/sh
-# Stock ForteL2 verifier: op-geth + op-node (no sequencer / batcher / proposer).
+# Stock ForteL2 verifier: op-reth + op-node (no sequencer / batcher / proposer).
 # Includes Render-oriented readiness/shutdown fixes from ForteL2 PRs #23–#25.
+# Role is verifier: --full (prune, not archive), no --proofs-history.
 set -eu
 
 DATA_DIR="${DATA_DIR:-/data}"
@@ -9,22 +10,26 @@ GENESIS="${GENESIS:-/config/genesis.json}"
 ROLLUP="${ROLLUP:-/config/rollup.json}"
 # Published read RPC = method filter. Render Web Service injects PORT (often 10000).
 L2_HTTP_PORT="${PORT:-${L2_HTTP_PORT:-8545}}"
-# Loopback-only op-geth HTTP behind the filter (never the published port).
+# Loopback-only op-reth HTTP behind the filter (never the published port).
+# Name is historical (L2_GETH_HTTP_PORT); the EL is op-reth.
 L2_GETH_HTTP_PORT="${L2_GETH_HTTP_PORT:-8546}"
 L2_ENGINE_PORT="${L2_ENGINE_PORT:-8551}"
 L2_NODE_RPC_PORT="${L2_NODE_RPC_PORT:-9545}"
 RPC_FILTER_SCRIPT="${RPC_FILTER_SCRIPT:-/rpc-method-filter.py}"
 L1_BLOCK_TIME="${L1_BLOCK_TIME:-12}"
-# Seconds to wait for op-geth IPC after start. 0 = keep waiting while the PID is alive
+# Seconds to wait for op-reth HTTP after start. 0 = keep waiting while the PID is alive
 # (datadir open / crash recovery on constrained disks can exceed 60s).
-GETH_READY_TIMEOUT_SECS="${GETH_READY_TIMEOUT_SECS:-0}"
-# geth default --cache is 1024MB and will OOM Render Starter (512MB). Keep low on small plans.
-GETH_CACHE_MB="${GETH_CACHE_MB:-256}"
-# Pebble will take the process nofile rlimit (often 524288 in containers). Cap it.
-GETH_FDLIMIT="${GETH_FDLIMIT:-4096}"
-# Optional Go soft memory caps (Go 1.19+). Set on Render Standard so op-geth + op-node +
-# the L1 router stay under the cgroup limit during L1 derivation bursts. Unset on ≥4GB hosts.
-GETH_GOMEMLIMIT="${GETH_GOMEMLIMIT:-}"
+RETH_READY_TIMEOUT_SECS="${RETH_READY_TIMEOUT_SECS:-0}"
+# Replaces GETH_CACHE_MB. Pinned op-reth defaults --engine.cross-block-cache-size
+# to 4096 MB, which OOMs Render Standard (2 GB). 256 MB is the starting knob;
+# Phase B measures RSS before any plan change.
+RETH_CROSS_BLOCK_CACHE_MB="${RETH_CROSS_BLOCK_CACHE_MB:-256}"
+# Replaces the unbounded geth RPC/state cache. Default 5000 blocks is too large
+# for a 2 GB verifier; keep a small positive cache.
+RETH_RPC_CACHE_MAX_BLOCKS="${RETH_RPC_CACHE_MAX_BLOCKS:-256}"
+# Optional Go soft memory cap (Go 1.19+). op-reth is Rust — GETH_GOMEMLIMIT
+# does not apply. Keep this on Render Standard so op-node + the L1 router stay
+# under the cgroup limit during L1 derivation bursts. Unset on ≥4GB hosts.
 OP_NODE_GOMEMLIMIT="${OP_NODE_GOMEMLIMIT:-}"
 # op-node default --l1.cache-size is 900 L1 blocks of receipts/txs — too big for 2 GB
 # during catch-up. 0 is worse (expands to ~2400). Keep a small positive cache.
@@ -33,6 +38,10 @@ L1_MAX_CONCURRENCY="${L1_MAX_CONCURRENCY:-2}"
 L1_RPC_MAX_BATCH_SIZE="${L1_RPC_MAX_BATCH_SIZE:-5}"
 # How often to check that both long-running processes are alive.
 PROCESS_POLL_INTERVAL_SECS="${PROCESS_POLL_INTERVAL_SECS:-1}"
+# --l1.rpckind. Default quicknode when the router / FORCE=metered serves QuickNode.
+# The router's public-overnight leg is publicnode (D-0105: 0 receipts) — initial
+# sync must use L1_RPC_FORCE=metered; do not silently switch kind.
+L1_RPC_KIND="${L1_RPC_KIND:-quicknode}"
 # Marker for Docker HEALTHCHECK: absent → probe fails (health=starting during
 # --start-period). Keep off the persistent volume so a prior run cannot leave
 # a stale ready flag.
@@ -40,23 +49,29 @@ FORTEL2_EL_READY_FILE="${FORTEL2_EL_READY_FILE:-/tmp/fortel2-el-ready}"
 rm -f "$FORTEL2_EL_READY_FILE"
 FILTER_PID=""
 
-case "$GETH_READY_TIMEOUT_SECS" in
+# Task 1 pin (D-0109). Tag op-reth/v2.3.3 is not the --version string.
+PIN_RETH_VERSION='2.3.0-dev'
+PIN_RETH_COMMIT='9384bc53d8c0c77e59cac83fdaaf3b372c6d2216'
+EXPECTED_L2_CHAIN_ID='852'
+EXPECTED_GENESIS_HASH='0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d'
+
+case "$RETH_READY_TIMEOUT_SECS" in
   ''|*[!0-9]*)
-    echo "ERROR: GETH_READY_TIMEOUT_SECS must be a non-negative integer (got: $GETH_READY_TIMEOUT_SECS)" >&2
+    echo "ERROR: RETH_READY_TIMEOUT_SECS must be a non-negative integer (got: $RETH_READY_TIMEOUT_SECS)" >&2
     exit 1
     ;;
 esac
 
-case "$GETH_CACHE_MB" in
-  ''|*[!0-9]*)
-    echo "ERROR: GETH_CACHE_MB must be a non-negative integer (got: $GETH_CACHE_MB)" >&2
-    exit 1
-    ;;
-esac
-
-case "$GETH_FDLIMIT" in
+case "$RETH_CROSS_BLOCK_CACHE_MB" in
   ''|*[!0-9]*|0)
-    echo "ERROR: GETH_FDLIMIT must be a positive integer (got: $GETH_FDLIMIT)" >&2
+    echo "ERROR: RETH_CROSS_BLOCK_CACHE_MB must be a positive integer (got: $RETH_CROSS_BLOCK_CACHE_MB)" >&2
+    exit 1
+    ;;
+esac
+
+case "$RETH_RPC_CACHE_MAX_BLOCKS" in
+  ''|*[!0-9]*|0)
+    echo "ERROR: RETH_RPC_CACHE_MAX_BLOCKS must be a positive integer (got: $RETH_RPC_CACHE_MAX_BLOCKS)" >&2
     exit 1
     ;;
 esac
@@ -85,6 +100,13 @@ esac
 case "$PROCESS_POLL_INTERVAL_SECS" in
   ''|*[!0-9]*|0)
     echo "ERROR: PROCESS_POLL_INTERVAL_SECS must be a positive integer (got: $PROCESS_POLL_INTERVAL_SECS)" >&2
+    exit 1
+    ;;
+esac
+
+case "$L1_RPC_KIND" in
+  ''|*[!a-zA-Z0-9_-]*)
+    echo "ERROR: L1_RPC_KIND must be a non-empty provider kind (got: $L1_RPC_KIND)" >&2
     exit 1
     ;;
 esac
@@ -178,6 +200,79 @@ if [ ! -f "$GENESIS" ] || [ ! -f "$ROLLUP" ]; then
   exit 1
 fi
 
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 required for genesis hash-check and RPC method filter" >&2
+  exit 1
+fi
+
+if ! command -v op-reth >/dev/null 2>&1; then
+  echo "ERROR: op-reth binary not found on PATH" >&2
+  exit 1
+fi
+
+# Fail closed unless the container binary is the Task 1 pin. Do not grep the
+# tag string 2.3.3 (absent) or a bare 2.3 (would accept a later 2.3.x).
+RETH_VER="$(op-reth --version 2>&1 || true)"
+case "$RETH_VER" in
+  *"Reth Version: ${PIN_RETH_VERSION}"*) ;;
+  *)
+    echo "ERROR: op-reth pin mismatch" >&2
+    echo "  expected: Reth Version: ${PIN_RETH_VERSION} commit ${PIN_RETH_COMMIT}" >&2
+    echo "  got: $(printf '%s' "$RETH_VER" | tr '\n' ' ')" >&2
+    exit 1
+    ;;
+esac
+case "$RETH_VER" in
+  *"${PIN_RETH_COMMIT}"*) ;;
+  *)
+    echo "ERROR: op-reth pin mismatch" >&2
+    echo "  expected: Reth Version: ${PIN_RETH_VERSION} commit ${PIN_RETH_COMMIT}" >&2
+    echo "  got: $(printf '%s' "$RETH_VER" | tr '\n' ' ')" >&2
+    exit 1
+    ;;
+esac
+echo "op-reth pin ok: Reth Version: ${PIN_RETH_VERSION} commit ${PIN_RETH_COMMIT}"
+
+# Hash-check baked-in 852 artifacts; refuse 901 / any other genesis.
+if ! python3 - "$GENESIS" "$ROLLUP" "$EXPECTED_L2_CHAIN_ID" "$EXPECTED_GENESIS_HASH" <<'PY'
+import json, sys
+
+genesis_path, rollup_path, want_id, want_hash = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+want_chain = int(want_id)
+with open(genesis_path, encoding="utf-8") as fh:
+    genesis = json.load(fh)
+chain = (genesis.get("config") or {}).get("chainId")
+if chain != want_chain:
+    print(
+        "ERROR: refusing chain %s genesis — op-reth init is ForteL2 852 only (not 901)"
+        % (chain if chain is not None else "<missing>"),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+with open(rollup_path, encoding="utf-8") as fh:
+    rollup = json.load(fh)
+l2_id = rollup.get("l2_chain_id")
+if l2_id != want_chain:
+    print(
+        "ERROR: refusing rollup l2_chain_id %s — op-reth init is ForteL2 852 only (not 901)"
+        % (l2_id if l2_id is not None else "<missing>"),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+got_hash = ((rollup.get("genesis") or {}).get("l2") or {}).get("hash")
+if got_hash != want_hash:
+    print(
+        "ERROR: refusing genesis hash %s (want %s)"
+        % (got_hash or "<missing>", want_hash),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+print("genesis/rollup hash-check ok chain=%s hash=%s" % (want_chain, want_hash))
+PY
+then
+  exit 1
+fi
+
 mkdir -p "$DATA_DIR"
 if [ ! -f "$JWT_FILE" ]; then
   if [ -n "${JWT_SECRET:-}" ]; then
@@ -188,9 +283,9 @@ if [ ! -f "$JWT_FILE" ]; then
   chmod 600 "$JWT_FILE"
 fi
 
-if [ ! -d "$DATA_DIR/geth" ]; then
-  echo "Initializing op-geth datadir"
-  geth init --datadir="$DATA_DIR" --state.scheme=hash "$GENESIS"
+if [ ! -d "$DATA_DIR/db" ] && [ ! -d "$DATA_DIR/static_files" ]; then
+  echo "Initializing op-reth datadir (852; mid-chain rewind = wipe + re-derive, never debug_setHead)"
+  op-reth init --datadir="$DATA_DIR" --chain="$GENESIS"
 fi
 
 if [ "$L2_GETH_HTTP_PORT" = "$L2_HTTP_PORT" ]; then
@@ -198,25 +293,26 @@ if [ "$L2_GETH_HTTP_PORT" = "$L2_HTTP_PORT" ]; then
   exit 1
 fi
 
-GETH_MEM_LOG=""
-[ -n "$GETH_GOMEMLIMIT" ] && GETH_MEM_LOG=", gomemlimit=${GETH_GOMEMLIMIT}"
-echo "Starting op-geth (verifier EL) loopback :$L2_GETH_HTTP_PORT (cache=${GETH_CACHE_MB}MB, fdlimit=${GETH_FDLIMIT}, noprefetch, gcmode=full${GETH_MEM_LOG}; public filter :$L2_HTTP_PORT)"
-env ${GETH_GOMEMLIMIT:+GOMEMLIMIT=$GETH_GOMEMLIMIT} geth \
+echo "Starting op-reth (verifier EL, --full) loopback :$L2_GETH_HTTP_PORT (cross-block-cache=${RETH_CROSS_BLOCK_CACHE_MB}MB rpc-cache-blocks=${RETH_RPC_CACHE_MAX_BLOCKS}; public filter :$L2_HTTP_PORT)"
+op-reth node \
+  --chain="$GENESIS" \
   --datadir="$DATA_DIR" \
-  --http --http.addr=127.0.0.1 --http.port="$L2_GETH_HTTP_PORT" \
+  --http \
+  --http.addr=127.0.0.1 \
+  --http.port="$L2_GETH_HTTP_PORT" \
   --http.api=eth,net,web3 \
-  --http.vhosts=* --http.corsdomain=* \
-  --authrpc.addr=127.0.0.1 --authrpc.port="$L2_ENGINE_PORT" --authrpc.vhosts=* \
+  --http.corsdomain=* \
+  --authrpc.addr=127.0.0.1 \
+  --authrpc.port="$L2_ENGINE_PORT" \
   --authrpc.jwtsecret="$JWT_FILE" \
-  --syncmode=full --gcmode=full \
-  --cache="$GETH_CACHE_MB" \
-  --cache.preimages=false \
-  --cache.noprefetch \
-  --fdlimit="$GETH_FDLIMIT" \
-  --rollup.disabletxpoolgossip=true \
-  --nodiscover --maxpeers=0 \
-  --verbosity=3 &
-GETH_PID=$!
+  --full \
+  --rollup.disable-tx-pool-gossip \
+  --disable-discovery \
+  --addr=127.0.0.1 \
+  --max-peers=0 \
+  --engine.cross-block-cache-size="$RETH_CROSS_BLOCK_CACHE_MB" \
+  --rpc-cache.max-blocks="$RETH_RPC_CACHE_MAX_BLOCKS" &
+RETH_PID=$!
 
 cleanup() {
   if [ -n "${NODE_PID:-}" ]; then
@@ -228,7 +324,7 @@ cleanup() {
   if [ -n "${ROUTER_PID:-}" ]; then
     kill "$ROUTER_PID" 2>/dev/null || true
   fi
-  kill "$GETH_PID" 2>/dev/null || true
+  kill "$RETH_PID" 2>/dev/null || true
   if [ -n "${NODE_PID:-}" ]; then
     wait "$NODE_PID" 2>/dev/null || true
   fi
@@ -238,59 +334,72 @@ cleanup() {
   if [ -n "${ROUTER_PID:-}" ]; then
     wait "$ROUTER_PID" 2>/dev/null || true
   fi
-  wait "$GETH_PID" 2>/dev/null || true
+  wait "$RETH_PID" 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Wait for engine API: require IPC + a successful attach, not merely a live PID.
-# Do not kill a still-alive geth after a short fixed window — persistent
-# datadirs can take minutes to open IPC during startup/crash recovery.
-if [ "$GETH_READY_TIMEOUT_SECS" -eq 0 ]; then
-  echo "Waiting for op-geth engine API (no timeout while pid $GETH_PID is alive)..."
+el_http_ready() {
+  python3 -c '
+import sys
+import urllib.request
+
+port = sys.argv[1]
+url = "http://127.0.0.1:%s" % port
+body = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}"
+req = urllib.request.Request(
+    url,
+    data=body,
+    headers={"Content-Type": "application/json"},
+    method="POST",
+)
+urllib.request.urlopen(req, timeout=2).read()
+' "$L2_GETH_HTTP_PORT"
+}
+
+# Wait for engine/HTTP: require a successful eth_blockNumber, not merely a live PID.
+# Do not kill a still-alive op-reth after a short fixed window — persistent
+# datadirs can take minutes to open during startup/crash recovery.
+if [ "$RETH_READY_TIMEOUT_SECS" -eq 0 ]; then
+  echo "Waiting for op-reth HTTP (no timeout while pid $RETH_PID is alive)..."
 else
-  echo "Waiting for op-geth engine API (up to ${GETH_READY_TIMEOUT_SECS}s)..."
+  echo "Waiting for op-reth HTTP (up to ${RETH_READY_TIMEOUT_SECS}s)..."
 fi
 i=0
 ready=0
 while true; do
-  if ! kill -0 "$GETH_PID" 2>/dev/null; then
-    echo "ERROR: op-geth exited before engine API became ready" >&2
-    wait "$GETH_PID" || true
+  if ! kill -0 "$RETH_PID" 2>/dev/null; then
+    echo "ERROR: op-reth exited before HTTP became ready" >&2
+    wait "$RETH_PID" || true
     exit 1
   fi
-  if [ -S "$DATA_DIR/geth.ipc" ] \
-    && geth attach --exec "eth.blockNumber" "$DATA_DIR/geth.ipc" >/dev/null 2>&1; then
+  if el_http_ready >/dev/null 2>&1; then
     ready=1
     break
   fi
-  if [ "$GETH_READY_TIMEOUT_SECS" -gt 0 ] && [ "$i" -ge "$GETH_READY_TIMEOUT_SECS" ]; then
+  if [ "$RETH_READY_TIMEOUT_SECS" -gt 0 ] && [ "$i" -ge "$RETH_READY_TIMEOUT_SECS" ]; then
     break
   fi
   if [ "$i" -gt 0 ] && [ $((i % 30)) -eq 0 ]; then
-    echo "Still waiting for op-geth IPC at $DATA_DIR/geth.ipc (${i}s elapsed; pid $GETH_PID alive)"
+    echo "Still waiting for op-reth HTTP at 127.0.0.1:${L2_GETH_HTTP_PORT} (${i}s elapsed; pid $RETH_PID alive)"
   fi
   sleep 1
   i=$((i + 1))
 done
 if [ "$ready" -ne 1 ]; then
-  echo "ERROR: timed out waiting for op-geth IPC/RPC at $DATA_DIR/geth.ipc after ${i}s" >&2
-  kill "$GETH_PID" 2>/dev/null || true
-  wait "$GETH_PID" 2>/dev/null || true
+  echo "ERROR: timed out waiting for op-reth HTTP at 127.0.0.1:${L2_GETH_HTTP_PORT} after ${i}s" >&2
+  kill "$RETH_PID" 2>/dev/null || true
+  wait "$RETH_PID" 2>/dev/null || true
   exit 1
 fi
 # Signal HEALTHCHECK that EL is ready; probes may now succeed (healthy).
 : >"$FORTEL2_EL_READY_FILE"
-echo "op-geth engine API ready after ${i}s"
+echo "op-reth HTTP ready after ${i}s"
 
-# Public read door: allowlist proxy on the published port; geth stays loopback.
+# Public read door: allowlist proxy on the published port; op-reth stays loopback.
 if [ ! -f "$RPC_FILTER_SCRIPT" ]; then
   echo "ERROR: missing RPC method filter at $RPC_FILTER_SCRIPT" >&2
-  exit 1
-fi
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "ERROR: python3 required for RPC method filter" >&2
   exit 1
 fi
 export L2_RPC_FILTER_LISTEN="0.0.0.0:${L2_HTTP_PORT}"
@@ -313,10 +422,6 @@ L1_RPC_RATE_LIMIT="${L1_RPC_RATE_LIMIT:-5}"
 if [ "$L1_RPC_MODE" = "schedule" ]; then
   if [ ! -f "$L1_RPC_ROUTER_SCRIPT" ]; then
     echo "ERROR: missing L1 router script at $L1_RPC_ROUTER_SCRIPT" >&2
-    exit 1
-  fi
-  if ! command -v python3 >/dev/null 2>&1; then
-    echo "ERROR: python3 required for L1_RPC_SCHEDULE=business" >&2
     exit 1
   fi
   export L1_RPC_METERED_URL L1_RPC_PUBLIC_URL L1_RPC_LISTEN
@@ -349,10 +454,10 @@ fi
 
 NODE_MEM_LOG=""
 [ -n "$OP_NODE_GOMEMLIMIT" ] && NODE_MEM_LOG=" gomemlimit=${OP_NODE_GOMEMLIMIT}"
-echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT} l1-cache=${L1_CACHE_SIZE} max-concurrency=${L1_MAX_CONCURRENCY} rpc-max-batch=${L1_RPC_MAX_BATCH_SIZE}${NODE_MEM_LOG})"
+echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} rpckind=${L1_RPC_KIND} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT} l1-cache=${L1_CACHE_SIZE} max-concurrency=${L1_MAX_CONCURRENCY} rpc-max-batch=${L1_RPC_MAX_BATCH_SIZE}${NODE_MEM_LOG})"
 env ${OP_NODE_GOMEMLIMIT:+GOMEMLIMIT=$OP_NODE_GOMEMLIMIT} op-node \
   --l1="$L1_RPC_URL" \
-  --l1.rpckind=standard \
+  --l1.rpckind="$L1_RPC_KIND" \
   --l1.trustrpc=true \
   --l1.http-poll-interval="$L1_HTTP_POLL" \
   --l1.rpc-rate-limit="$L1_RPC_RATE_LIMIT" \
@@ -363,7 +468,7 @@ env ${OP_NODE_GOMEMLIMIT:+GOMEMLIMIT=$OP_NODE_GOMEMLIMIT} op-node \
   --l1.beacon.slot-duration-override="$L1_BLOCK_TIME" \
   --l2="http://127.0.0.1:${L2_ENGINE_PORT}" \
   --l2.jwt-secret="$JWT_FILE" \
-  --l2.enginekind=geth \
+  --l2.enginekind=reth \
   --rollup.config="$ROLLUP" \
   --sequencer.enabled=false \
   --verifier.l1-confs=1 \
@@ -374,9 +479,9 @@ env ${OP_NODE_GOMEMLIMIT:+GOMEMLIMIT=$OP_NODE_GOMEMLIMIT} op-node \
 NODE_PID=$!
 
 # Waiting for op-node alone can leave a superficially healthy container running
-# forever after geth crashes. Supervise children and propagate op-node's
+# forever after the EL crashes. Supervise children and propagate op-node's
 # status when it is the first process to stop.
-while kill -0 "$GETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
+while kill -0 "$RETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
   if [ -n "${ROUTER_PID}" ] && ! kill -0 "$ROUTER_PID" 2>/dev/null; then
     echo "ERROR: L1 RPC router exited while op-node was running" >&2
     exit 1
@@ -389,11 +494,11 @@ while kill -0 "$GETH_PID" 2>/dev/null && kill -0 "$NODE_PID" 2>/dev/null; do
 done
 
 # Check op-node first: if it has stopped (whether alone or concurrently with
-# geth), its exit status is the one we want to propagate. Exit immediately
-# after reaping op-node — do not wait on GETH_PID here, or a still-running
-# geth would block container exit and look healthy while the verifier is dead.
-# The EXIT trap's cleanup kills and reaps geth. Only when op-node is still
-# alive do we know geth must be the one that exited, since the loop above
+# op-reth), its exit status is the one we want to propagate. Exit immediately
+# after reaping op-node — do not wait on RETH_PID here, or a still-running
+# EL would block container exit and look healthy while the verifier is dead.
+# The EXIT trap's cleanup kills and reaps op-reth. Only when op-node is still
+# alive do we know op-reth must be the one that exited, since the loop above
 # only breaks once at least one child has died.
 if ! kill -0 "$NODE_PID" 2>/dev/null; then
   NODE_EXIT=0
@@ -401,6 +506,6 @@ if ! kill -0 "$NODE_PID" 2>/dev/null; then
   exit "$NODE_EXIT"
 fi
 
-echo "ERROR: op-geth exited while op-node was running" >&2
-wait "$GETH_PID" 2>/dev/null || true
+echo "ERROR: op-reth exited while op-node was running" >&2
+wait "$RETH_PID" 2>/dev/null || true
 exit 1

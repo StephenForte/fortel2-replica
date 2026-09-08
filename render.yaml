@@ -1,33 +1,30 @@
-# Render Blueprint — ForteL2 L2 verifier (stock op-geth + op-node).
+# Render Blueprint — ForteL2 L2 verifier (op-reth Task 7 + frozen live geth).
 #
-# This file defines exactly one service, by decision (R-0008): the private
-# replica. The public gateway is not declared here. Create it from the
-# Dashboard — see README "Going public".
+# LIVE geth (Oregon, Dashboard-created, unattached): Private Service
+# `fortel2-replica` with a 50 GB disk at /data. That first `services:` entry
+# is a frozen snapshot of the live env (R-0008 / R-0012). Do NOT re-apply
+# it as a **new** Blueprint onto the live Oregon pserv. Render cannot
+# reattach the live 50 GB disk. A new apply of that entry (`type: pserv` /
+# `sizeGB: 20`) would create a second empty-disk replica named the same
+# and a full L1 resync. Keep deploying the *existing* image onto the
+# existing pserv until Phase C. See README "Do not convert this service
+# to Web" and "Going public" / "Revert".
 #
-# LIVE (Oregon): Private Service `fortel2-replica` with a 50 GB disk at /data.
-# JSON-RPC reads go through the method filter on PORT (default 10000).
-# op-geth and op-node bind loopback only; only the filter is reachable
-# on the private network. Public traffic hits diskless Web Services
-# `fortel2-replica-rpc` and `fortel2-sequencer-rpc` (not this Blueprint).
+# Task 7 ADDITIONS (operator-applied, R-0013): `fortel2-replica-reth`
+# (new pserv + new 20 GB disk) and diskless staging gateway
+# `fortel2-replica-reth-rpc`. Add these objects; never mutate the live
+# entry, its disk name, or `fortel2-replica-rpc`. Phase C is a routing
+# flip + rename-swap — no disk is touched in either direction.
 #
-# Do NOT apply this file as a **new** Blueprint onto the live Oregon pserv.
-# Render cannot reattach the live 50 GB disk. A new apply of this Blueprint
-# (`type: pserv` / `sizeGB: 20`) would create a second replica with an empty
-# disk and a full L1 resync. Keep deploying this image onto the existing
-# pserv. See README "Do not convert this service to Web" and "Going public"
-# / "Revert".
-#
-# sizeGB: 20 below is the greenfield minimum, not the live disk. Do not
-# "fix" live to 20. Raising 20→50 on a *new* apply still creates an empty
-# 50 GB volume.
+# sizeGB: 20 on the live entry is the greenfield minimum, not the live
+# disk. Do not "fix" live to 20. Raising 20→50 on a *new* apply still
+# creates an empty 50 GB volume.
 #
 # Public URL (live): Dashboard Web Service `fortel2-replica-rpc` (no disk),
 # Dockerfile `./gateway/Dockerfile`, context `./gateway`, same Oregon env,
 # upstream http://fortel2-replica:10000. Sequencer tip: `fortel2-sequencer-rpc`
 # (`sequencer-read/start.sh`). Do not point a Web Service at ./Dockerfile.
-# Do not add those services to this file — a Blueprint apply cannot attach
-# them to the live unattached pserv; it would create its own replica
-# instead (R-0008).
+# Do not attach `fortel2-replica-rpc` to this Blueprint (R-0008).
 #
 # Greenfield replica only: New → Blueprint → this repo (then the service
 # stays Blueprint-managed). Live services are Dashboard-created and
@@ -103,3 +100,85 @@ services:
         value: "24s"
       - key: L1_RPC_RATE_LIMIT
         value: "5"
+
+  # --- Task 7 (R-0013): NEW objects. Operator-applied. Do not touch the live
+  # entry above. Initial sync is L1_RPC_FORCE=metered (D-0105: publicnode
+  # returns 0 receipts). JWT is generated in-container — do not paste the
+  # Mac's or the old replica's JWT_SECRET. Memory is measured in Phase B
+  # before any plan change; Standard 2 GB is the starting plan.
+  - type: pserv
+    name: fortel2-replica-reth
+    runtime: docker
+    plan: standard
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    region: oregon
+    # Filter answers GET / with {"ok":true,...} for Render's private-network probe.
+    healthCheckPath: /
+    disk:
+      name: fortel2-replica-reth-data
+      mountPath: /data
+      sizeGB: 20
+    envVars:
+      - key: L1_RPC_URL
+        sync: false
+      - key: L1_BLOCK_TIME
+        value: "12"
+      # Replaces GETH_CACHE_MB. Pinned op-reth default is 4096 MB (OOM on Standard).
+      - key: RETH_CROSS_BLOCK_CACHE_MB
+        value: "256"
+      - key: RETH_RPC_CACHE_MAX_BLOCKS
+        value: "256"
+      # Go soft cap stays for op-node only (op-reth is Rust).
+      - key: OP_NODE_GOMEMLIMIT
+        value: 768MiB
+      - key: L1_CACHE_SIZE
+        value: "128"
+      - key: L1_MAX_CONCURRENCY
+        value: "2"
+      - key: L1_RPC_MAX_BATCH_SIZE
+        value: "5"
+      - key: L1_RPC_KIND
+        value: quicknode
+      - key: TZ
+        value: America/Los_Angeles
+      # Initial derive is metered only. Re-enable schedule after catch-up
+      # and only if a 60-min overnight-leg observation advances (Phase B.5).
+      - key: L1_RPC_FORCE
+        value: metered
+      - key: L1_RPC_SCHEDULE
+        value: "off"
+      - key: L1_USE_PUBLIC_RPC
+        value: "0"
+      - key: L1_RPC_PUBLIC_URL
+        value: https://ethereum-sepolia-rpc.publicnode.com
+      - key: L1_RPC_BUSINESS_START
+        value: "9"
+      - key: L1_RPC_BUSINESS_END
+        value: "17"
+      - key: L1_HTTP_POLL_INTERVAL
+        value: "24s"
+      - key: L1_RPC_RATE_LIMIT
+        value: "5"
+
+  # Staging gateway only — pre-repoint verification. Not the public hostname.
+  # REPLICA_UPSTREAM is a literal (R-0004): never fromService.
+  - type: web
+    name: fortel2-replica-reth-rpc
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./gateway/Dockerfile
+    dockerContext: ./gateway
+    region: oregon
+    healthCheckPath: /healthz
+    envVars:
+      - key: REPLICA_UPSTREAM
+        value: http://fortel2-replica-reth:10000
+      - key: RPC_RATE
+        value: 20r/s
+      - key: RPC_BURST
+        value: "40"
+      - key: RPC_REAL_IP_HEADER
+        value: CF-Connecting-IP
+      - key: RPC_MAX_BODY
+        value: 1m

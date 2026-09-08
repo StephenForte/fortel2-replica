@@ -1,16 +1,37 @@
 #!/usr/bin/env python3
 """Black-box tests for the verifier container entrypoint."""
 
+import json
 import os
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import textwrap
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PIN_RETH_VERSION = "2.3.0-dev"
+PIN_RETH_COMMIT = "9384bc53d8c0c77e59cac83fdaaf3b372c6d2216"
+EXPECTED_GENESIS_HASH = (
+    "0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d"
+)
+
+GENESIS_852 = json.dumps({"config": {"chainId": 852}})
+ROLLUP_852 = json.dumps(
+    {
+        "l2_chain_id": 852,
+        "genesis": {"l2": {"hash": EXPECTED_GENESIS_HASH}},
+    }
+)
+PIN_VERSION_TEXT = (
+    f"Reth Version: {PIN_RETH_VERSION}\n"
+    f"Commit SHA: {PIN_RETH_COMMIT}\n"
+)
 
 
 class EntrypointTests(unittest.TestCase):
@@ -21,6 +42,8 @@ class EntrypointTests(unittest.TestCase):
         prepare=None,
         after=None,
         timeout=8,
+        genesis_text=GENESIS_852,
+        rollup_text=ROLLUP_852,
     ):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -32,51 +55,79 @@ class EntrypointTests(unittest.TestCase):
             genesis = root / "genesis.json"
             rollup = root / "rollup.json"
             if create_config:
-                genesis.write_text("{}")
-                rollup.write_text("{}")
+                genesis.write_text(genesis_text)
+                rollup.write_text(rollup_text)
 
             self.write_executable(
-                bin_dir / "geth",
+                bin_dir / "op-reth",
                 r'''#!/usr/bin/env python3
-import os, signal, socket, sys, time
-with open(os.environ["COMMAND_LOG"], "a") as log:
-    if os.environ.get("GOMEMLIMIT"):
-        log.write("geth-env GOMEMLIMIT=" + os.environ["GOMEMLIMIT"] + "\n")
-    log.write("geth " + " ".join(sys.argv[1:]) + "\n")
+import json
+import os
+import signal
+import socket
+import sys
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+log_path = os.environ["COMMAND_LOG"]
+if "--version" in sys.argv:
+    sys.stdout.write(os.environ.get("RETH_VERSION_TEXT", """'''
+                + PIN_VERSION_TEXT
+                + r'''"""))
+    sys.exit(0)
+
+with open(log_path, "a") as log:
+    log.write("op-reth " + " ".join(sys.argv[1:]) + "\n")
+
 if sys.argv[1:2] == ["init"]:
-    os.makedirs(os.path.join(os.environ["DATA_DIR"], "geth"), exist_ok=True)
-    sys.exit(int(os.environ.get("GETH_INIT_EXIT", "0")))
-if sys.argv[1:2] == ["attach"]:
-    open(os.path.join(os.environ["DATA_DIR"], "attached"), "a").close()
-    sys.exit(int(os.environ.get("GETH_ATTACH_EXIT", "0")))
-if os.environ.get("GETH_EXIT_IMMEDIATELY"):
-    sys.exit(int(os.environ["GETH_EXIT_IMMEDIATELY"]))
-sock = socket.socket(socket.AF_UNIX)
-path = os.path.join(os.environ["DATA_DIR"], "geth.ipc")
-try:
-    os.unlink(path)
-except FileNotFoundError:
-    pass
-sock.bind(path)
-exit_after = float(os.environ.get("GETH_EXIT_AFTER_SECS", "0"))
-exit_code = int(os.environ.get("GETH_EXIT_CODE", "0"))
-attached = os.path.join(os.environ["DATA_DIR"], "attached")
+    os.makedirs(os.path.join(os.environ["DATA_DIR"], "db"), exist_ok=True)
+    sys.exit(int(os.environ.get("RETH_INIT_EXIT", "0")))
+
+if os.environ.get("RETH_EXIT_IMMEDIATELY"):
+    sys.exit(int(os.environ["RETH_EXIT_IMMEDIATELY"]))
+
+http_ok = os.environ.get("RETH_HTTP_OK", "1") not in ("0", "false", "FALSE")
+port = int(os.environ.get("L2_GETH_HTTP_PORT", "8546"))
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *_args):
+        return
+
+    def do_POST(self):
+        n = int(self.headers.get("Content-Length", "0"))
+        self.rfile.read(n)
+        if not http_ok:
+            self.send_error(500)
+            return
+        payload = b'{"jsonrpc":"2.0","id":1,"result":"0x0"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+httpd = None
+if os.environ.get("RETH_BIND_HTTP", "1") != "0":
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+
+exit_after = float(os.environ.get("RETH_EXIT_AFTER_SECS", "0"))
+exit_code = int(os.environ.get("RETH_EXIT_CODE", "0"))
 
 def _exit(*_):
+    if httpd is not None:
+        httpd.shutdown()
     sys.exit(0)
 
 signal.signal(signal.SIGTERM, _exit)
 if exit_after > 0:
-    # Only start the exit countdown after engine-API attach succeeds,
-    # so this exercises the post-ready supervision path.
-    for _ in range(500):
-        if os.path.exists(attached):
-            break
-        time.sleep(0.01)
     time.sleep(exit_after)
+    if httpd is not None:
+        httpd.shutdown()
     sys.exit(exit_code)
 while True:
-    time.sleep(.01)
+    time.sleep(0.01)
 ''',
             )
             self.write_executable(
@@ -120,6 +171,7 @@ printf '%064d\n' 0
             filter_script.chmod(0o755)
             jwt_file = data_dir / "jwt.txt"
             ready_file = data_dir / "fortel2-el-ready"
+            http_port = self._free_port()
             env = {
                 **os.environ,
                 "PATH": f"{bin_dir}:{os.environ['PATH']}",
@@ -129,13 +181,15 @@ printf '%064d\n' 0
                 "L1_RPC_URL": "https://example.invalid",
                 "COMMAND_LOG": str(log),
                 "PROCESS_POLL_INTERVAL_SECS": "1",
-                "GETH_READY_TIMEOUT_SECS": "2",
+                "RETH_READY_TIMEOUT_SECS": "2",
                 "RPC_FILTER_SCRIPT": str(filter_script),
                 # Always pin JWT into the temp tree so an inherited JWT_FILE
                 # from the invoking shell/CI cannot escape the fixture.
                 "JWT_FILE": str(jwt_file),
                 # Pin readiness marker off /tmp so tests can assert on it.
                 "FORTEL2_EL_READY_FILE": str(ready_file),
+                "L2_GETH_HTTP_PORT": str(http_port),
+                "L2_HTTP_PORT": "8545",
             }
             # Drop inherited JWT_SECRET so each test opts in explicitly;
             # otherwise the openssl "unset" branch is never exercised.
@@ -145,6 +199,8 @@ printf '%064d\n' 0
                 prepare(data_dir, env)
             # Re-pin after extras/prepare so callers cannot redirect JWT_FILE.
             env["JWT_FILE"] = str(jwt_file)
+            # Keep a free HTTP port unless the caller overrode it.
+            env.setdefault("L2_GETH_HTTP_PORT", str(http_port))
             started = time.monotonic()
             result = subprocess.run(
                 ["/bin/sh", str(ROOT / "entrypoint.sh")],
@@ -163,6 +219,14 @@ printf '%064d\n' 0
     def write_executable(path, contents):
         path.write_text(textwrap.dedent(contents))
         path.chmod(0o755)
+
+    @staticmethod
+    def _free_port():
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+        return port
 
     def test_requires_l1_rpc_url(self):
         result, log, _, _ = self.run_entrypoint({"L1_RPC_URL": ""})
@@ -271,10 +335,10 @@ printf '%064d\n' 0
 
     def test_rejects_invalid_numeric_settings(self):
         for name, value, message in (
-            ("GETH_READY_TIMEOUT_SECS", "soon", "non-negative integer"),
-            ("GETH_CACHE_MB", "many", "non-negative integer"),
-            ("GETH_FDLIMIT", "0", "positive integer"),
-            ("GETH_FDLIMIT", "lots", "positive integer"),
+            ("RETH_READY_TIMEOUT_SECS", "soon", "non-negative integer"),
+            ("RETH_CROSS_BLOCK_CACHE_MB", "0", "positive integer"),
+            ("RETH_CROSS_BLOCK_CACHE_MB", "many", "positive integer"),
+            ("RETH_RPC_CACHE_MAX_BLOCKS", "0", "positive integer"),
             ("L1_CACHE_SIZE", "0", "positive integer"),
             ("L1_CACHE_SIZE", "big", "positive integer"),
             ("L1_MAX_CONCURRENCY", "0", "positive integer"),
@@ -292,6 +356,41 @@ printf '%064d\n' 0
         self.assertEqual(1, result.returncode)
         self.assertIn("missing", result.stderr)
 
+    def test_refuses_901_genesis(self):
+        result, log, _, _ = self.run_entrypoint(
+            {"JWT_SECRET": "a" * 64},
+            genesis_text=json.dumps({"config": {"chainId": 901}}),
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("not 901", result.stderr)
+        self.assertNotIn("op-reth init", log)
+        self.assertNotIn("op-reth node", log)
+
+    def test_refuses_wrong_genesis_hash(self):
+        result, log, _, _ = self.run_entrypoint(
+            {"JWT_SECRET": "a" * 64},
+            rollup_text=json.dumps(
+                {
+                    "l2_chain_id": 852,
+                    "genesis": {"l2": {"hash": "0xdeadbeef"}},
+                }
+            ),
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("refusing genesis hash", result.stderr)
+        self.assertNotIn("op-reth init", log)
+
+    def test_refuses_wrong_reth_pin(self):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "RETH_VERSION_TEXT": "Reth Version: 2.3.3\nCommit SHA: deadbeef\n",
+            },
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("op-reth pin mismatch", result.stderr)
+        self.assertEqual("", log)
+
     def test_initializes_and_starts_both_clients_with_expected_options(self):
         def after(result, log, data_dir):
             self.assertTrue((data_dir / "fortel2-el-ready").is_file())
@@ -301,22 +400,22 @@ printf '%064d\n' 0
             after=after,
         )
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("geth init --datadir=", log)
-        self.assertIn("--cache=256", log)
-        self.assertIn("--cache.preimages=false", log)
-        self.assertIn("--cache.noprefetch", log)
-        self.assertIn("--fdlimit=4096", log)
-        # MR-2: geth is loopback-only with a narrow namespace; filter is public.
+        self.assertIn("op-reth pin ok", result.stdout)
+        self.assertIn("hash-check ok", result.stdout)
+        self.assertIn("op-reth init --datadir=", log)
+        self.assertIn("--chain=", log)
+        self.assertIn("--full", log)
+        self.assertIn("--rollup.disable-tx-pool-gossip", log)
+        self.assertIn("--disable-discovery", log)
+        self.assertIn("--max-peers=0", log)
+        self.assertIn("--engine.cross-block-cache-size=256", log)
+        self.assertIn("--rpc-cache.max-blocks=256", log)
         self.assertIn("--http.addr=127.0.0.1", log)
-        self.assertIn("--http.port=8546", log)
-        http_api = [
-            part
-            for part in log.split()
-            if part.startswith("--http.api=")
-        ]
-        self.assertEqual(["--http.api=eth,net,web3"], http_api)
+        self.assertIn("--http.api=eth,net,web3", log)
+        self.assertNotIn("--proofs-history", log)
+        self.assertNotIn("geth ", log)
         self.assertIn(
-            "filter listen=0.0.0.0:8545 upstream=http://127.0.0.1:8546",
+            "filter listen=0.0.0.0:8545 upstream=http://127.0.0.1:",
             log,
         )
         self.assertIn("op-node --l1=https://example.invalid", log)
@@ -326,7 +425,10 @@ printf '%064d\n' 0
         self.assertIn("--l1.cache-size=128", log)
         self.assertIn("--l1.max-concurrency=2", log)
         self.assertIn("--l1.rpc-max-batch-size=5", log)
+        self.assertIn("--l1.rpckind=quicknode", log)
+        self.assertIn("--l2.enginekind=reth", log)
         self.assertIn("--sequencer.enabled=false", log)
+        self.assertIn("--p2p.disable=true", log)
         self.assertIn("mode=metered", result.stdout)
         self.assertFalse(data_dir.exists())  # temporary workspace was cleaned up
 
@@ -378,66 +480,69 @@ printf '%064d\n' 0
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn("openssl", log)
 
-    def test_skips_geth_init_when_datadir_exists(self):
+    def test_skips_reth_init_when_datadir_exists(self):
         def prepare(data_dir, _env):
-            (data_dir / "geth").mkdir()
+            (data_dir / "db").mkdir()
 
         result, log, _, _ = self.run_entrypoint(
             {"JWT_SECRET": "a" * 64},
             prepare=prepare,
         )
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertNotIn("geth init", log)
-        self.assertIn("geth --datadir=", log)
+        self.assertNotIn("op-reth init", log)
+        self.assertIn("op-reth node", log)
 
-    def test_propagates_geth_init_failure(self):
+    def test_propagates_reth_init_failure(self):
         result, log, _, _ = self.run_entrypoint(
-            {"JWT_SECRET": "a" * 64, "GETH_INIT_EXIT": "9"},
+            {"JWT_SECRET": "a" * 64, "RETH_INIT_EXIT": "9"},
         )
         self.assertEqual(9, result.returncode)
-        self.assertIn("geth init", log)
+        self.assertIn("op-reth init", log)
         self.assertNotIn("op-node", log)
 
     def test_honors_l1_credit_and_port_overrides(self):
+        el_port = self._free_port()
         result, log, _, _ = self.run_entrypoint(
             {
                 "JWT_SECRET": "a" * 64,
                 "L1_HTTP_POLL_INTERVAL": "30s",
                 "L1_RPC_RATE_LIMIT": "5",
                 "L1_BLOCK_TIME": "6",
-                "GETH_CACHE_MB": "128",
-                "GETH_FDLIMIT": "2048",
+                "RETH_CROSS_BLOCK_CACHE_MB": "128",
+                "RETH_RPC_CACHE_MAX_BLOCKS": "64",
                 "L1_CACHE_SIZE": "64",
                 "L1_MAX_CONCURRENCY": "3",
                 "L1_RPC_MAX_BATCH_SIZE": "8",
+                "L1_RPC_KIND": "standard",
                 "PORT": "10000",
                 "L2_HTTP_PORT": "9999",  # PORT must win for the public filter
-                "L2_GETH_HTTP_PORT": "8546",
+                "L2_GETH_HTTP_PORT": str(el_port),
                 "L2_ENGINE_PORT": "8559",
                 "L2_NODE_RPC_PORT": "9549",
             },
         )
         self.assertEqual(0, result.returncode, result.stderr)
-        # Published PORT → filter; geth stays on L2_GETH_HTTP_PORT.
+        # Published PORT → filter; EL stays on L2_GETH_HTTP_PORT.
         self.assertIn(
-            "filter listen=0.0.0.0:10000 upstream=http://127.0.0.1:8546",
+            f"filter listen=0.0.0.0:10000 upstream=http://127.0.0.1:{el_port}",
             log,
         )
-        self.assertIn("--http.port=8546", log)
+        self.assertIn(f"--http.port={el_port}", log)
         self.assertIn("--http.addr=127.0.0.1", log)
-        self.assertIn("--cache=128", log)
-        self.assertIn("--fdlimit=2048", log)
+        self.assertIn("--engine.cross-block-cache-size=128", log)
+        self.assertIn("--rpc-cache.max-blocks=64", log)
         self.assertIn("--authrpc.port=8559", log)
         self.assertIn("--l1.http-poll-interval=30s", log)
         self.assertIn("--l1.rpc-rate-limit=5", log)
         self.assertIn("--l1.cache-size=64", log)
         self.assertIn("--l1.max-concurrency=3", log)
         self.assertIn("--l1.rpc-max-batch-size=8", log)
+        self.assertIn("--l1.rpckind=standard", log)
         self.assertIn("--l1.beacon.slot-duration-override=6", log)
         self.assertIn("--l2=http://127.0.0.1:8559", log)
         self.assertIn("--rpc.port=9549", log)
 
-    def test_rejects_colliding_geth_and_filter_ports(self):
+    def test_rejects_colliding_el_and_filter_ports(self):
         result, _, _, _ = self.run_entrypoint(
             {
                 "JWT_SECRET": "a" * 64,
@@ -458,68 +563,66 @@ printf '%064d\n' 0
         self.assertEqual(1, result.returncode)
         self.assertIn("missing RPC method filter", result.stderr)
 
-    def test_honors_gomemlimit_overrides(self):
+    def test_honors_op_node_gomemlimit(self):
         result, log, _, _ = self.run_entrypoint(
             {
                 "JWT_SECRET": "a" * 64,
-                "GETH_GOMEMLIMIT": "700MiB",
                 "OP_NODE_GOMEMLIMIT": "768MiB",
             },
         )
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("geth-env GOMEMLIMIT=700MiB", log)
         self.assertIn("op-node-env GOMEMLIMIT=768MiB", log)
-        self.assertIn("gomemlimit=700MiB", result.stdout)
         self.assertIn("gomemlimit=768MiB", result.stdout)
+        self.assertNotIn("geth-env", log)
 
     def test_propagates_op_node_failure(self):
-        # Mock geth stays up until SIGTERM. The entrypoint must exit with
-        # op-node's status promptly (cleanup kills geth) — not block on
-        # wait(GETH_PID) until the unittest subprocess timeout fires.
+        # Mock op-reth stays up until SIGTERM. The entrypoint must exit with
+        # op-node's status promptly (cleanup kills op-reth) — not block on
+        # wait(RETH_PID) until the unittest subprocess timeout fires.
         result, _, _, elapsed = self.run_entrypoint({"NODE_EXIT": "42"})
         self.assertEqual(42, result.returncode)
         self.assertLess(elapsed, 6)
 
-    def test_exits_promptly_when_op_node_stops_while_geth_still_runs(self):
+    def test_exits_promptly_when_op_node_stops_while_reth_still_runs(self):
         result, _, _, elapsed = self.run_entrypoint(
             {"NODE_EXIT": "0", "PROCESS_POLL_INTERVAL_SECS": "1"},
         )
         self.assertEqual(0, result.returncode)
         self.assertLess(elapsed, 6)
 
-    def test_fails_when_geth_dies_before_engine_api_ready(self):
+    def test_fails_when_reth_dies_before_http_ready(self):
         result, _, _, _ = self.run_entrypoint(
-            {"GETH_EXIT_IMMEDIATELY": "7", "NODE_DELAY": "3"},
+            {"RETH_EXIT_IMMEDIATELY": "7", "NODE_DELAY": "3"},
         )
         self.assertEqual(1, result.returncode)
-        self.assertIn("op-geth exited before engine API became ready", result.stderr)
+        self.assertIn("op-reth exited before HTTP became ready", result.stderr)
         self.assertNotIn("op-node", result.stdout + result.stderr)
 
-    def test_fails_when_geth_dies_after_becoming_ready(self):
-        # Become ready (IPC + attach), start op-node, then have geth exit
-        # while op-node is still alive so supervision takes the geth-death path.
+    def test_fails_when_reth_dies_after_becoming_ready(self):
+        # Become ready (HTTP), start op-node, then have op-reth exit
+        # while op-node is still alive so supervision takes the EL-death path.
         result, log, _, _ = self.run_entrypoint(
             {
                 "JWT_SECRET": "a" * 64,
-                # Must exceed entrypoint's `sleep 1` after filter start, or geth
+                # Must exceed entrypoint's `sleep 1` after filter start, or EL
                 # dies during that sleep and cleanup SIGTERMs op-node before it logs.
-                "GETH_EXIT_AFTER_SECS": "2.5",
-                "GETH_EXIT_CODE": "7",
+                "RETH_EXIT_AFTER_SECS": "2.5",
+                "RETH_EXIT_CODE": "7",
                 "NODE_DELAY": "5",
                 "PROCESS_POLL_INTERVAL_SECS": "1",
             },
             timeout=12,
         )
         self.assertEqual(1, result.returncode, result.stderr)
-        self.assertIn("op-geth exited while op-node was running", result.stderr)
+        self.assertIn("op-reth exited while op-node was running", result.stderr)
         self.assertIn("op-node ", log)
 
-    def test_times_out_when_ipc_attach_never_succeeds(self):
+    def test_times_out_when_http_never_succeeds(self):
         def after(result, log, data_dir):
             self.assertFalse((data_dir / "fortel2-el-ready").exists())
 
         result, _, _, _ = self.run_entrypoint(
-            {"GETH_ATTACH_EXIT": "1"},
+            {"RETH_HTTP_OK": "0"},
             after=after,
         )
         self.assertEqual(1, result.returncode)
@@ -535,7 +638,7 @@ printf '%064d\n' 0
             self.assertFalse((data_dir / "fortel2-el-ready").exists())
 
         result, _, _, _ = self.run_entrypoint(
-            {"GETH_ATTACH_EXIT": "1"},
+            {"RETH_HTTP_OK": "0"},
             prepare=prepare,
             after=after,
         )
@@ -568,37 +671,49 @@ class HealthcheckTests(unittest.TestCase):
             )
             self.assertEqual(1, result.returncode)
 
-    def test_requires_attach_after_ready_marker(self):
+    def test_requires_http_after_ready_marker(self):
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            data_dir = root / "data"
-            bin_dir = root / "bin"
-            data_dir.mkdir()
-            bin_dir.mkdir()
-            ready = data_dir / "ready"
+            data_dir = Path(temp)
+            ready = Path(temp) / "ready"
             ready.write_text("")
-            # Fail attach → unhealthy once marked ready.
-            geth = bin_dir / "geth"
-            geth.write_text("#!/bin/sh\nexit 1\n")
-            geth.chmod(0o755)
+            # Nothing listening → unhealthy once marked ready.
             result = self.run_healthcheck(
                 {
-                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
                     "DATA_DIR": str(data_dir),
                     "FORTEL2_EL_READY_FILE": str(ready),
+                    "L2_GETH_HTTP_PORT": "1",
                 },
             )
             self.assertEqual(1, result.returncode)
 
-            geth.write_text("#!/bin/sh\nexit 0\n")
-            result = self.run_healthcheck(
-                {
-                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
-                    "DATA_DIR": str(data_dir),
-                    "FORTEL2_EL_READY_FILE": str(ready),
-                },
-            )
-            self.assertEqual(0, result.returncode, result.stderr)
+            class Handler(BaseHTTPRequestHandler):
+                def log_message(self, *_args):
+                    return
+
+                def do_POST(self):
+                    n = int(self.headers.get("Content-Length", "0"))
+                    self.rfile.read(n)
+                    payload = b'{"jsonrpc":"2.0","id":1,"result":"0x1"}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+
+            httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+            threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            try:
+                result = self.run_healthcheck(
+                    {
+                        "DATA_DIR": str(data_dir),
+                        "FORTEL2_EL_READY_FILE": str(ready),
+                        "L2_GETH_HTTP_PORT": str(httpd.server_address[1]),
+                    },
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
 
 
 if __name__ == "__main__":

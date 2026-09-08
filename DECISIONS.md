@@ -135,7 +135,7 @@ the rate limit. Revisit if the public endpoint sees real traffic.
 
 ## R-0008 — The gateway is not declared in `render.yaml`; the Blueprint stays single-service
 
-*2026-08-16 · supersedes R-0004, amends R-0005*
+*2026-08-16 · supersedes R-0004, amends R-0005 · AMENDED by R-0013 (2026-09-08) — Blueprint may declare the new Task 7 pserv + staging gateway; the live `fortel2-replica` entry is still never re-applied, and live `fortel2-replica-rpc` stays Dashboard-only.*
 
 `render.yaml` continues to define **exactly one** service: the private replica. The gateway
 (`fortel2-replica-rpc`) is created from the Dashboard — **New → Web Service** — and is
@@ -311,3 +311,56 @@ transcript. Do not run a local overnight loop. The agent **suggests** Wave 2 —
 it does not change env or deploy.
 
 See `README.md` §"Render".
+
+## R-0013 — Task 7 Phase A: new op-reth replica on a new service/disk; live geth is frozen
+
+*2026-09-08 · implements ForteL2 Task 7 / D-0109 / D-0110 / D-0114 / D-0122*
+
+The operated Render replica moves to **op-reth** on a **new** Private Service and a **new** disk. The live geth pserv `fortel2-replica` and its 50 GB `fortel2-replica-data` are never mutated. Public read and SOS private read stay on today's hostnames until Phase C.
+
+**Image pin (immutable digest, Task 1 rule / D-0109).**
+
+- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c`
+- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a`
+
+The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`.
+
+**Role.** Verifier only: `op-reth --full` (prune mode — without it this is an archive on a 20 GB disk), `--rollup.disable-tx-pool-gossip`, no `--proofs-history`. op-node `--l2.enginekind=reth`, `--sequencer.enabled=false`, `--p2p.disable=true`. `--l1.rpckind` from `L1_RPC_KIND` (default `quicknode`).
+
+**Binds.** Unchanged from today's replica: op-reth HTTP loopback only (`L2_GETH_HTTP_PORT`, default 8546); op-node loopback `:9545`; the method filter is the only listener on `PORT`. Allowlist is byte-identical (`tests/test_rpc_method_filter.py`). Fresh JWT is generated in-container on `/data` — never the Mac's, never the old replica's. The new Blueprint entry does **not** declare `JWT_SECRET`.
+
+**New Render objects (operator-applied).**
+
+| Object | Role |
+|---|---|
+| pserv `fortel2-replica-reth` | Oregon, plan **standard** to start. Memory is **measured in Phase B** before any plan change. |
+| disk `fortel2-replica-reth-data` | 20 GB at `/data`. D-0122 sizing: `--full` state ≈1–2 GB, no proofs store. |
+| web `fortel2-replica-reth-rpc` | Diskless staging gateway. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000` (literal, not `fromService`). Used **only** for pre-repoint verification. |
+
+Existing `fortel2-replica`, its disk, and `fortel2-replica-rpc` stay as they are until Phase C.
+
+**Do not re-apply the live Blueprint entry.** That first `services:` block is a frozen snapshot (R-0008). A new apply creates a second empty-disk replica named `fortel2-replica`. Add objects; never rewrite that entry.
+
+**Merge gate.** The root `Dockerfile` is now op-reth-only. **Disable auto-deploy on live `fortel2-replica` before this merges to main.** A post-merge deploy of that service would start op-reth against the geth 50 GB disk. Phase C is a routing flip + rename-swap, not a redeploy onto the old disk.
+
+**Initial L1.** `L1_RPC_FORCE=metered` (D-0105: publicnode can return 0 receipts and stall derivation silently). The business-hours schedule is re-enabled only after catch-up, and only if a 60-min overnight-leg observation shows derivation advancing. A stall on the public leg is a finding, not a Phase B failure.
+
+**Memory knobs (reth equivalents of `GETH_*`).** Pinned op-reth defaults `--engine.cross-block-cache-size` to **4096 MB** — that OOMs Render Standard. Starting values:
+
+| Old (geth / R-0012) | New (reth) | Flag |
+|---|---|---|
+| `GETH_CACHE_MB` | `RETH_CROSS_BLOCK_CACHE_MB=256` | `--engine.cross-block-cache-size` |
+| (unbounded RPC cache) | `RETH_RPC_CACHE_MAX_BLOCKS=256` | `--rpc-cache.max-blocks` |
+| `GETH_GOMEMLIMIT` / `GETH_FDLIMIT` | *removed* | op-reth is Rust; those Go/geth knobs do nothing |
+| `OP_NODE_GOMEMLIMIT=768MiB` | kept | op-node is still Go |
+| `L1_CACHE_SIZE=128` etc. | kept | op-node L1 receipt cache |
+
+Phase B measures RSS/disk over ≥6 h and recommends a plan. Do not upgrade the plan on a guess. Mini archive RSS was 1.4 GB (D-0122); this verifier is `--full`, not archive.
+
+**Artifacts.** `config/genesis.json` + `config/rollup.json` are the same 852 files (`pack-replica-artifacts.sh` output). Entrypoint hash-checks `genesis.l2.hash == 0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d` and refuses chain 901.
+
+**Phase C (operator window, recorded here so Phase A does not invent a third option).** Public read = flip `fortel2-replica-rpc`'s `REPLICA_UPSTREAM` to the new private host. SOS private read (`http://fortel2-replica:10000`, D-0032) is a **rename-swap**: old service → `fortel2-replica-geth`, new → `fortel2-replica`. Rollback = reverse both (env flip + rename); no disk is touched. Suspend the old service after a clean 24 h; do not delete it (Task 9). `rail-interface.json` `readRpcUrl` does not change (same public hostname).
+
+**Q4 / Q5 (PRD §11) stay open** until Phase B measures: whether `--full` is enough for public RPC (D-0114 prune window: diskless gateway cannot serve state older than ~latest−256), and disk/RAM of a clean 852 `--full` sync under current RPC load.
+
+**Not this decision.** Sequencer-tip / authenticated write; `fortel2-node` / `FRIENDS.md` (Task 8); deleting the old service or disk (Task 9); ForteL2 docs (planner-owned).

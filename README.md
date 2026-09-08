@@ -2,14 +2,16 @@
 
 A standalone **node** for the [ForteL2](https://github.com/StephenForte/ForteL2) learning L2 (chain ID **852**) that derives L2 state from **Ethereum Sepolia**.
 
-This is now **its own project** — split out of the ForteL2 monorepo into a self-contained repository you can clone, run, and deploy on its own. It runs a **verifier** (op-geth + op-node) and is the package you give friends / deploy on Render. It is **not** the sequencer, batcher, proposer, or dApp — and it never needs operator private keys.
+This is now **its own project** — split out of the ForteL2 monorepo into a self-contained repository you can clone, run, and deploy on its own. It runs a **verifier** (`op-reth --full` + op-node) and is the package you give friends / deploy on Render. It is **not** the sequencer, batcher, proposer, or dApp — and it never needs operator private keys.
 
 | Component | Role |
 |---|---|
-| op-geth | L2 execution (full sync, not archive) |
-| op-node | Verifier — derives L2 from L1 batches |
+| op-reth | L2 execution (verifier `--full`, not archive, no proofs store) |
+| op-node | Verifier — derives L2 from L1 batches (`--l2.enginekind=reth`) |
 
-Pinned images: `op-node:v1.19.2`, `op-geth:v1.101702.2` (OP Labs).
+Pinned images (immutable digest, D-0109 / R-0013): `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. Entrypoint fails closed if the binary is not that pin.
+
+**Task 7 (in progress):** a **new** Render pserv `fortel2-replica-reth` + 20 GB disk + staging gateway `fortel2-replica-reth-rpc`. The live geth pserv `fortel2-replica` and its 50 GB disk stay up until Phase C (routing flip + rename-swap). **Disable auto-deploy on live `fortel2-replica` before this image reaches main** — a deploy there would start op-reth on the geth disk.
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
@@ -17,7 +19,7 @@ Handing this to a friend? See [`RUNNING.md`](./RUNNING.md) for a full walkthroug
 
 ## Quick start (laptop / VPS)
 
-Needs Docker Compose and ~2 GB RAM. Foundry (`cast`) is optional. This path is **raw** op-geth + op-node on the host — not the Render method filter.
+Needs Docker Compose and ~2 GB RAM. Foundry (`cast`) is optional. This path is **raw** op-reth + op-node on the host — not the Render method filter. Local smoke on publicnode may stall (D-0105: 0 receipts); use a receipts-capable Sepolia URL for a real sync.
 
 ```bash
 git clone https://github.com/StephenForte/fortel2-replica.git
@@ -48,7 +50,7 @@ curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
 
 The live Render deploy is a **Private Service** (`fortel2-replica`, `srv-d9fsgi3rjlhs73ceh6tg`, Oregon env `evm-d9h424715fvs73cq2gl0`). Public reads are two diskless Web Services on that same network (ForteL2 D-0031): `https://fortel2-replica-rpc.onrender.com` (L1-derived) and `https://fortel2-sequencer-rpc.onrender.com` (sequencer tip). SettlementOS still reads at `http://fortel2-replica:10000` (D-0032).
 
-Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). op-geth listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed.
+Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). The EL listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed. Until Phase C the live pserv is still op-geth; the new pserv is op-reth.
 
 | Fact | Detail |
 |---|---|
@@ -66,17 +68,30 @@ Filter source: vendored from ForteL2 `scripts/rpc-method-filter.py` (see header 
 
 Render cannot flip Private ↔ Web in place, and **cannot reattach `/data` to a new service**. The live disk is **50 GB**. Do not apply `render.yaml` as a **new** Blueprint onto the live Oregon pserv (`type: pserv` / `sizeGB: 20` would create a second replica with an empty disk and a full L1 resync).
 
-A public URL is a **second, diskless** Web Service that proxies to this Private Service — not a new geth disk. See [Going public](#going-public).
+A public URL is a **second, diskless** Web Service that proxies to this Private Service — not a new EL disk. See [Going public](#going-public). Task 7 staging reads use `fortel2-replica-reth-rpc` → `http://fortel2-replica-reth:10000` and must not replace the live public hostname.
 
 ### Revert
 
 If a mistaken public replica (Web Service + its own disk) is created: delete that extra service. The live Private Service and its 50 GB `/data` stay as they are. Recreating `fortel2-replica` itself still means a **new disk and a full resync** — do not do that to “go private again.” To take a public gateway down, delete or suspend only `fortel2-replica-rpc` (or disable its custom domain). There is no `render.yaml` entry to remove — the gateway was never declared there (R-0008). SettlementOS keeps using `http://fortel2-replica:10000`.
 
+## Task 7 — new op-reth replica (R-0013)
+
+Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-replica` entry.
+
+| Service | Type | Disk | Role |
+|---|---|---|---|
+| `fortel2-replica` | pserv (live, frozen) | `fortel2-replica-data` 50 GB | geth until Phase C. Auto-deploy **off** before this image merges. |
+| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | op-reth `--full` verifier. Initial `L1_RPC_FORCE=metered`. |
+| `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Pre-repoint verification only. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
+| `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname — unchanged until Phase C env flip. |
+
+Phase C (Steve-approved window): flip live gateway `REPLICA_UPSTREAM` → rename-swap (`fortel2-replica` → `fortel2-replica-geth`, `fortel2-replica-reth` → `fortel2-replica`) so SOS keeps `http://fortel2-replica:10000`. Rollback = reverse both; no disk mutation. Suspend the old service after 24 h; do not delete it.
+
 ## Going public
 
 Keep the live Private Service and its 50 GB disk. Public replica reads go through the diskless Web Service `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`), which reverse-proxies to `http://fortel2-replica:10000` and rate-limits. SettlementOS stays on the private URL. The table below is that service's config — recreate from it only in a new environment.
 
-**Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). The replica image is still `./Dockerfile` (op-geth + op-node). Pointing a Web Service at that replica path would boot a **second public verifier**.
+**Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). The replica image is `./Dockerfile` (op-reth + op-node). Pointing a Web Service at that replica path would boot a **second public verifier**. The Task 7 staging gateway is declared as `fortel2-replica-reth-rpc` in `render.yaml` (R-0013); live `fortel2-replica-rpc` stays Dashboard-created.
 
 This section is the operator's entire configuration path. Gateway env is **not synced from `render.yaml`** — the gateway is not declared there (R-0008). Changing a key in the Dashboard means editing the table below too; nothing will catch the drift.
 
@@ -197,7 +212,7 @@ Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on 
 
 ## Render
 
-**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-geth + op-node (+ optional L1 router) in one container. Do not leave geth’s 1024MB default cache. Live policy is **Wave 1 on Standard** (R-0012) — do not jump to Pro or tighten heaps without a measured catch-up peak.
+**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-reth + op-node (+ optional L1 router) in one container. Live geth policy remains **Wave 1 on Standard** (R-0012) until Phase C. The new reth pserv starts on Standard; **do not change the plan until Phase B measures RSS**. Pinned op-reth defaults `--engine.cross-block-cache-size` to 4096 MB — that OOMs Standard. Set `RETH_CROSS_BLOCK_CACHE_MB=256` (R-0013). Mini archive RSS was 1.4 GB (D-0122); this verifier is `--full`.
 
 **OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. The usual 2 GB killer is op-node’s upstream `--l1.cache-size=900` (full L1 receipts), not the Python filter. Wave 1 (PR #39) is already in the tables below: `L1_CACHE_SIZE=128`, `L1_MAX_CONCURRENCY=2`, `L1_RPC_MAX_BATCH_SIZE=5`, `GETH_FDLIMIT=4096`, `--cache.noprefetch`. Measured 2026-08-17: catch-up RSS stayed **256–478 MB** for 12h after Wave 1 (Wave 0 peak was 2,125 MB, then exit 137).
 
@@ -229,7 +244,7 @@ The `sync: false` / Blueprint-sync mechanics below stay accurate, but they descr
 
 Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
-Live `fortel2-replica` is already that Private Service. Keep deploying this image onto it (filter on `PORT`; geth/op-node stay loopback). A public URL is a **separate diskless Web Service** ([Going public](#going-public)), not a second copy of this replica.
+Live `fortel2-replica` is already that Private Service (op-geth, until Phase C). **Do not deploy this op-reth image onto it.** Task 7 stands up `fortel2-replica-reth` on a new disk. A public URL is a **separate diskless Web Service** ([Going public](#going-public)), not a second copy of this replica. Staging verification uses `fortel2-replica-reth-rpc`.
 
 #### Required secrets (`sync: false` in Blueprint)
 
@@ -245,10 +260,14 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 | Variable | Value |
 |---|---|
 | `L1_BLOCK_TIME` | `12` |
-| `GETH_CACHE_MB` | `128` |
-| `GETH_FDLIMIT` | `4096` |
-| `GETH_GOMEMLIMIT` | `700MiB` |
+| `GETH_CACHE_MB` | `128` (live geth only; ignored by op-reth) |
+| `GETH_FDLIMIT` | `4096` (live geth only) |
+| `GETH_GOMEMLIMIT` | `700MiB` (live geth only) |
+| `RETH_CROSS_BLOCK_CACHE_MB` | `256` (new reth pserv — replaces `GETH_CACHE_MB`) |
+| `RETH_RPC_CACHE_MAX_BLOCKS` | `256` |
 | `OP_NODE_GOMEMLIMIT` | `768MiB` |
+| `L1_RPC_KIND` | `quicknode` (reth pserv; initial sync `L1_RPC_FORCE=metered`) |
+| `L1_RPC_FORCE` | `metered` on `fortel2-replica-reth` until Phase B.5 |
 | `L1_CACHE_SIZE` | `128` |
 | `L1_MAX_CONCURRENCY` | `2` |
 | `L1_RPC_MAX_BATCH_SIZE` | `5` |
@@ -263,7 +282,7 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 
 **What they do:**
 
-- **Memory (`GETH_*`, `OP_NODE_GOMEMLIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`):** Wave 1 on Standard (R-0012). Keep op-geth + op-node under the 2 GB cgroup during L1 derivation bursts. `L1_CACHE_SIZE` must stay a positive integer — `0` expands op-node’s cache to ~2400 L1 blocks and will OOM Standard.
+- **Memory (live geth `GETH_*` / R-0012; new reth `RETH_*` / R-0013):** Keep the EL + op-node under the 2 GB cgroup during L1 derivation bursts. `L1_CACHE_SIZE` must stay a positive integer — `0` expands op-node’s cache to ~2400 L1 blocks and will OOM Standard. `GETH_GOMEMLIMIT` does nothing on op-reth (Rust).
 - **L1 schedule (`L1_RPC_SCHEDULE`, `TZ`, `L1_RPC_*`):** QuickNode **09:00–17:00** Pacific, publicnode overnight via in-container router (no op-node restart at cutover).
 - **Credit throttle (`L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`):** slow L1 polling to limit QuickNode burn.
 
@@ -273,7 +292,8 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 |---|---|
 | `L1_RPC_FORCE` | `public` or `metered` — pin upstream and skip the schedule |
 | `L1_USE_PUBLIC_RPC` | `1` — same as `L1_RPC_FORCE=public` |
-| `GETH_READY_TIMEOUT_SECS` | `0` (default) — wait forever for geth IPC during slow disk recovery |
+| `GETH_READY_TIMEOUT_SECS` | live geth only — wait forever for geth IPC during slow disk recovery |
+| `RETH_READY_TIMEOUT_SECS` | `0` (default) — wait forever for op-reth HTTP during slow disk recovery |
 
 #### Manual Private Service checklist (unattached only)
 
@@ -285,9 +305,9 @@ For a **new** replica somewhere else — not the live Oregon node, and not a sub
 4. Set secrets + recommended env vars from the tables above.
 5. Deploy / restart after dashboard env edits.
 
-**Web Shell tip:** the image has no `curl`. Use dashboard **Shell** with `python3`/`urllib` against `http://127.0.0.1:$PORT` (filter) or `geth attach --exec "eth.blockNumber" /data/geth.ipc`. op-node is `http://127.0.0.1:9545` (loopback only).
+**Web Shell tip:** the image has no `curl`. Use dashboard **Shell** with `python3`/`urllib` against `http://127.0.0.1:$PORT` (filter) or `http://127.0.0.1:8546` (loopback EL). op-node is `http://127.0.0.1:9545` (loopback only). Do not print `L1_RPC_URL` or the JWT.
 
-**Health check / long recovery:** until `entrypoint.sh` marks op-geth IPC ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful `geth attach`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot. Render’s HTTP `healthCheckPath: /` hits the method filter once it is up.
+**Health check / long recovery:** until `entrypoint.sh` marks the EL ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful loopback `eth_blockNumber`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot. Render’s HTTP `healthCheckPath: /` hits the method filter once it is up.
 
 **QuickNode:** Prefer a dedicated endpoint token for this replica (**L2_Render**, not **L2_mini** / the Mac mini sequencer URL). Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — rotate the URL if leaked. Daytime schedule uses that endpoint; overnight / `L1_RPC_FORCE=public` / `L1_USE_PUBLIC_RPC=1` use publicnode. Treat ~**3 million credits/day** (per endpoint or combined) as the warn line — the daily automation flags it. L2_mini is usually the burner (`eth_getBlockByNumber`, `eth_blobBaseFee`, `eth_maxPriorityFeePerGas`); replica derivation on L2_Render should stay well under.
 
