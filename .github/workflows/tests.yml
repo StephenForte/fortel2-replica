@@ -33,6 +33,8 @@ jobs:
         run: |
           sh -n entrypoint.sh
           sh -n healthcheck.sh
+          sh -n entrypoint-reth.sh
+          sh -n healthcheck-reth.sh
           sh -n sequencer-read/start.sh
           sh -n gateway/14-resolvers-from-resolv.conf.envsh
 
