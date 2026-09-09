@@ -9,16 +9,20 @@
 # that and fails closed otherwise. Tag op-reth/v2.3.3 ≠ the reported version.
 #
 # OP Labs op-node images are distroless (no /bin/sh, no apt). Do not RUN
-# shell commands on that image — copy binaries into a Debian runtime instead.
+# shell commands on that image — copy binaries into an Ubuntu 24.04 runtime
+# instead. Official op-reth:v2.3.3 is Chainguard wolfi-base with a dynamically
+# linked binary (needs glibc ≥ 2.39 and libstdc++ ≥ 13 / CXXABI_1.3.15).
+# debian:bookworm-slim is glibc 2.36 and fails closed at the pin assert.
 # op-geth is not in this image.
 
 FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c AS reth
 FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a AS node
 
-FROM debian:bookworm-slim
+FROM ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates \
+    libstdc++6 \
     openssl \
     python3 \
     tzdata \
