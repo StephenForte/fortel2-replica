@@ -93,10 +93,15 @@ class RenderYamlTests(unittest.TestCase):
             "op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a",
             docker,
         )
+        self.assertIn(
+            "ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254",
+            docker,
+        )
         self.assertNotIn("images/op-geth", docker)
         self.assertNotIn("COPY --from=geth", docker)
         self.assertIn("COPY --from=reth", docker)
         self.assertIn("COPY entrypoint-reth.sh", docker)
+        self.assertIn("libstdc++6", docker)
         reth = next(
             block
             for block in _service_blocks(self.text)
@@ -108,6 +113,30 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("dockerfile: Dockerfile.reth", compose)
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
         self.assertIn("entrypoint-reth.sh", ci)
+
+    def test_reth_runtime_base_is_not_bookworm(self):
+        # Official op-reth is wolfi-linked (glibc 2.38+/CXXABI_1.3.15).
+        # bookworm-slim is glibc 2.36 and cannot load the binary.
+        docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
+        from_lines = [
+            line.split("#", 1)[0].strip()
+            for line in docker.splitlines()
+            if line.startswith("FROM ")
+        ]
+        self.assertTrue(from_lines)
+        for line in from_lines:
+            self.assertNotIn("bookworm", line)
+            self.assertNotIn("debian:", line)
+        runtime_from = [
+            line
+            for line in from_lines
+            if " AS " not in line and " as " not in line
+        ]
+        self.assertEqual(1, len(runtime_from), runtime_from)
+        self.assertRegex(
+            runtime_from[0],
+            r"^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$",
+        )
 
 
 if __name__ == "__main__":
