@@ -11,7 +11,7 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 
 Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. Live `./Dockerfile` stays main's `op-geth:v1.101702.2` image (R-0013) so a main deploy cannot swap the live EL.
 
-**Task 7 (in progress):** a **new** Render pserv `fortel2-replica-reth` (`Dockerfile.reth`) + 20 GB disk + staging gateway `fortel2-replica-reth-rpc`. The live geth pserv `fortel2-replica` and its 50 GB disk stay up until Phase C (routing flip + rename-swap).
+**Task 7 (in progress):** a **new** Render pserv `fortel2-replica-reth` (`Dockerfile.reth`) + 10 GB disk + staging gateway `fortel2-replica-reth-rpc`. The live geth pserv `fortel2-replica` and its 50 GB disk stay up until Phase C (routing flip + rename-swap).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
@@ -81,7 +81,7 @@ Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-repl
 | Service | Type | Disk | Role |
 |---|---|---|---|
 | `fortel2-replica` | pserv (live, frozen) | `fortel2-replica-data` 50 GB | `./Dockerfile` (op-geth v1.101702.2). Do not point this service at `Dockerfile.reth`. |
-| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | `Dockerfile.reth`. op-reth archive (`RETH_ARCHIVE=1`, omit `--full`). Bootstrap = snapshot restore (R-0014); set archive **before** first restore boot (a pruned datadir cannot be un-pruned). `L1_RPC_FORCE=public` after restore. |
+| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 10 GB | `Dockerfile.reth`. op-reth archive (`RETH_ARCHIVE=1`, omit `--full`). Bootstrap = snapshot restore (R-0014); set archive **before** first restore boot (a pruned datadir cannot be un-pruned). `L1_RPC_FORCE=public` after restore. |
 | `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Pre-repoint verification only. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
 | `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname — unchanged until Phase C env flip. |
 
@@ -353,7 +353,7 @@ For a **new** replica somewhere else — not the live Oregon node, and not a sub
 
 1. **New → Private Service**. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root). Do **not** choose Web here — that would be a public replica with its own disk.
 2. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
-3. Attach a **persistent disk** at `/data` (≥ 20 GB; live is **50 GB**).
+3. Attach a **persistent disk** at `/data` (the reth replica has **10 GB**; archive datadir ≈1.2 GB at ~823k blocks, D-0127; live geth is **50 GB**). Grow it when Phase B measures growth.
 4. Set secrets + recommended env vars from the tables above.
 5. Deploy / restart after dashboard env edits.
 
