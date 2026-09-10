@@ -2,11 +2,11 @@
 
 A standalone **node** for the [ForteL2](https://github.com/StephenForte/ForteL2) learning L2 (chain ID **852**) that derives L2 state from **Ethereum Sepolia**.
 
-This is now **its own project** — split out of the ForteL2 monorepo into a self-contained repository you can clone, run, and deploy on its own. It runs a **verifier** (`op-reth --full` + op-node) and is the package you give friends / deploy on Render. It is **not** the sequencer, batcher, proposer, or dApp — and it never needs operator private keys.
+This is now **its own project** — split out of the ForteL2 monorepo into a self-contained repository you can clone, run, and deploy on its own. It runs a **verifier** (op-reth + op-node) and is the package you give friends / deploy on Render. Local compose still uses `--full` (prune). The Render reth replica is **archive** (`RETH_ARCHIVE=1`, omit `--full`) so restored historical receipts/logs survive (D-0126). It is **not** the sequencer, batcher, proposer, or dApp — and it never needs operator private keys.
 
 | Component | Role |
 |---|---|
-| op-reth | L2 execution (verifier `--full`, not archive, no proofs store) |
+| op-reth | L2 execution (local `--full`; Render replica archive via `RETH_ARCHIVE=1`; no proofs store) |
 | op-node | Verifier — derives L2 from L1 batches (`--l2.enginekind=reth`) |
 
 Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. Live `./Dockerfile` stays main's `op-geth:v1.101702.2` image (R-0013) so a main deploy cannot swap the live EL.
@@ -81,7 +81,7 @@ Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-repl
 | Service | Type | Disk | Role |
 |---|---|---|---|
 | `fortel2-replica` | pserv (live, frozen) | `fortel2-replica-data` 50 GB | `./Dockerfile` (op-geth v1.101702.2). Do not point this service at `Dockerfile.reth`. |
-| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | `Dockerfile.reth`. op-reth `--full` verifier. Bootstrap = snapshot restore (R-0014); `L1_RPC_FORCE=public` after restore. |
+| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | `Dockerfile.reth`. op-reth archive (`RETH_ARCHIVE=1`, omit `--full`). Bootstrap = snapshot restore (R-0014); set archive **before** first restore boot (a pruned datadir cannot be un-pruned). `L1_RPC_FORCE=public` after restore. |
 | `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Pre-repoint verification only. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
 | `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname — unchanged until Phase C env flip. |
 
@@ -119,12 +119,13 @@ export DATA_DIR=… L2_CHAIN_ID=852   # Sepolia runtime dir
 
 The script refuses if the op-reth pid is alive. It packs `db/` + `static_files/` + `rocksdb/` (`--datadir.rocksdb` is a live store, not a cache). It writes `$DATA_DIR/snapshots/fortel2-852-reth-snapshot-<L2head>.tar.zst` plus `.sha256` and `.json`. Publish the tarball as a GitHub Release asset **only if it is under 2 GiB** (the script prints `bytes` and errors at the cap). The ForteL2 copy of this helper belongs at `scripts/snapshot-reth-state.sh` in that repo (this agent cannot push there).
 
-**Mini dry-run (before Render):** restore the tarball into `$DATA_DIR/l2/spike-op-reth` (Task 2 throwaway), start with `FORTEL2_RETH_PROFILE=verifier ./scripts/start-op-reth-verifier.sh` ( `--full`, sidecar ports, publicnode L1). Prove (4) reth accepts the archive-captured datadir under `--full` and (5) op-node starts derivation at an L1 origin near the capture-time safe head — not genesis `11545587`. Then `verify-reth-parity.sh` for ≥20 blocks. Stop and wipe the throwaway. If `--full` refuses the archive datadir, or op-node walks from genesis, **stop and report** — do not keep archive on Render.
+**Mini dry-run (before Render):** restore the tarball into `$DATA_DIR/l2/spike-op-reth` (Task 2 throwaway), start with `FORTEL2_RETH_PROFILE=verifier ./scripts/start-op-reth-verifier.sh` (sidecar ports, publicnode L1). Prove (4) reth accepts the archive-captured datadir and (5) op-node starts derivation at an L1 origin near the capture-time safe head — not genesis `11545587`. Then `verify-reth-parity.sh` for ≥20 blocks. Stop and wipe the throwaway. The Mini `--full` dry-run proved restore + resume, but `--full` pruned historical receipts — **do not restore Render as `--full`**. Set `RETH_ARCHIVE=1` before the restore boot (D-0126). If the datadir is refused, or op-node walks from genesis, **stop and report**.
 
 **Render:** dashboard-only env on `fortel2-replica-reth` (never Blueprint `value:`):
 
 | Key | Value |
 |---|---|
+| `RETH_ARCHIVE` | `1` **before** restore — omit `--full` so historical receipts/logs/tx-lookup survive. Unset/0 = `--full` prune (irreversible). Other values exit 1. |
 | `RETH_SNAPSHOT_URL` | HTTPS URL of the `.tar.zst` release asset |
 | `RETH_SNAPSHOT_SHA256` | 64 hex chars from the `.sha256` manifest |
 | `RETH_SNAPSHOT_FORCE` | `1` once to replace the paused 68 % `db/` + `static_files/` + `rocksdb/`; **unset after that boot** |
@@ -259,7 +260,7 @@ Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on 
 
 ## Render
 
-**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-reth + op-node (+ optional L1 router) in one container. Live geth policy remains **Wave 1 on Standard** (R-0012) until Phase C. The new reth pserv starts on Standard; **do not change the plan until Phase B measures RSS**. Pinned op-reth defaults `--engine.cross-block-cache-size` to 4096 MB — that OOMs Standard. Set `RETH_CROSS_BLOCK_CACHE_MB=256` (R-0013). Mini archive RSS was 1.4 GB (D-0122); this verifier is `--full`.
+**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-reth + op-node (+ optional L1 router) in one container. Live geth policy remains **Wave 1 on Standard** (R-0012) until Phase C. The new reth pserv starts on Standard; **do not change the plan until Phase B measures RSS**. Pinned op-reth defaults `--engine.cross-block-cache-size` to 4096 MB — that OOMs Standard. Set `RETH_CROSS_BLOCK_CACHE_MB=256` (R-0013). Mini archive RSS was 1.4 GB (D-0122); the Render reth replica is archive (`RETH_ARCHIVE=1`), not `--full`.
 
 **OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. The usual 2 GB killer is op-node’s upstream `--l1.cache-size=900` (full L1 receipts), not the Python filter. Wave 1 (PR #39) is already in the tables below: `L1_CACHE_SIZE=128`, `L1_MAX_CONCURRENCY=2`, `L1_RPC_MAX_BATCH_SIZE=5`, `GETH_FDLIMIT=4096`, `--cache.noprefetch`. Measured 2026-08-17: catch-up RSS stayed **256–478 MB** for 12h after Wave 1 (Wave 0 peak was 2,125 MB, then exit 137).
 
@@ -339,6 +340,7 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 |---|---|
 | `L1_RPC_FORCE` | `public` or `metered` — pin upstream and skip the schedule |
 | `L1_USE_PUBLIC_RPC` | `1` — same as `L1_RPC_FORCE=public` |
+| `RETH_ARCHIVE` | `1` on `fortel2-replica-reth` **before** snapshot restore (D-0126). Omits `--full` (archive). Unset/0 keeps `--full`. Never Blueprint-sync. |
 | `RETH_SNAPSHOT_URL` | HTTPS URL of `fortel2-852-reth-snapshot-<L2head>.tar.zst` (R-0014). Empty = init from genesis |
 | `RETH_SNAPSHOT_SHA256` | Required when URL is set. Refuse restore on mismatch |
 | `RETH_SNAPSHOT_FORCE` | `1` once to replace an existing `db/` on `fortel2-replica-reth`. Unset after that boot. Never on live geth |

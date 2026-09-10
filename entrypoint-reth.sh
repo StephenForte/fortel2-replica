@@ -1,7 +1,8 @@
 #!/bin/sh
 # Stock ForteL2 verifier: op-reth + op-node (no sequencer / batcher / proposer).
 # Includes Render-oriented readiness/shutdown fixes from ForteL2 PRs #23–#25.
-# Role is verifier: --full (prune, not archive), no --proofs-history.
+# Role is verifier: --full (prune, not archive) unless RETH_ARCHIVE=1,
+# no --proofs-history. reth has no --archive flag; archive is omitting --full.
 set -eu
 
 DATA_DIR="${DATA_DIR:-/data}"
@@ -27,6 +28,9 @@ RETH_CROSS_BLOCK_CACHE_MB="${RETH_CROSS_BLOCK_CACHE_MB:-256}"
 # Replaces the unbounded geth RPC/state cache. Default 5000 blocks is too large
 # for a 2 GB verifier; keep a small positive cache.
 RETH_RPC_CACHE_MAX_BLOCKS="${RETH_RPC_CACHE_MAX_BLOCKS:-256}"
+# 1 = omit --full (reth default is archive: keep historical receipts/logs).
+# Unset or 0 = --full prune, as today. A pruned datadir cannot be un-pruned.
+RETH_ARCHIVE="${RETH_ARCHIVE:-}"
 # Optional Go soft memory cap (Go 1.19+). op-reth is Rust — GETH_GOMEMLIMIT
 # does not apply. Keep this on Render Standard so op-node + the L1 router stay
 # under the cgroup limit during L1 derivation bursts. Unset on ≥4GB hosts.
@@ -80,6 +84,14 @@ esac
 case "$RETH_RPC_CACHE_MAX_BLOCKS" in
   ''|*[!0-9]*|0)
     echo "ERROR: RETH_RPC_CACHE_MAX_BLOCKS must be a positive integer (got: $RETH_RPC_CACHE_MAX_BLOCKS)" >&2
+    exit 1
+    ;;
+esac
+
+case "$RETH_ARCHIVE" in
+  ""|0|1) ;;
+  *)
+    echo "ERROR: RETH_ARCHIVE must be 0 or 1 (got: $RETH_ARCHIVE)" >&2
     exit 1
     ;;
 esac
@@ -462,7 +474,16 @@ if [ "$L2_GETH_HTTP_PORT" = "$L2_HTTP_PORT" ]; then
   exit 1
 fi
 
-echo "Starting op-reth (verifier EL, --full) loopback :$L2_GETH_HTTP_PORT (cross-block-cache=${RETH_CROSS_BLOCK_CACHE_MB}MB rpc-cache-blocks=${RETH_RPC_CACHE_MAX_BLOCKS}; public filter :$L2_HTTP_PORT)"
+# Unquoted $RETH_PRUNE_FLAG: empty must not become an argv slot. Do not invent
+# --archive — reth has no such flag; archive is the absence of --full.
+RETH_PRUNE_FLAG="--full"
+if [ "$RETH_ARCHIVE" = "1" ]; then
+  RETH_PRUNE_FLAG=""
+  echo "op-reth: archive mode — retains historical receipts/logs (--full omitted)"
+  echo "Starting op-reth (verifier EL, archive) loopback :$L2_GETH_HTTP_PORT (cross-block-cache=${RETH_CROSS_BLOCK_CACHE_MB}MB rpc-cache-blocks=${RETH_RPC_CACHE_MAX_BLOCKS}; public filter :$L2_HTTP_PORT)"
+else
+  echo "Starting op-reth (verifier EL, --full) loopback :$L2_GETH_HTTP_PORT (cross-block-cache=${RETH_CROSS_BLOCK_CACHE_MB}MB rpc-cache-blocks=${RETH_RPC_CACHE_MAX_BLOCKS}; public filter :$L2_HTTP_PORT)"
+fi
 op-reth node \
   --chain="$GENESIS" \
   --datadir="$DATA_DIR" \
@@ -474,7 +495,7 @@ op-reth node \
   --authrpc.addr=127.0.0.1 \
   --authrpc.port="$L2_ENGINE_PORT" \
   --authrpc.jwtsecret="$JWT_FILE" \
-  --full \
+  $RETH_PRUNE_FLAG \
   --rollup.disable-tx-pool-gossip \
   --disable-discovery \
   --addr=127.0.0.1 \
