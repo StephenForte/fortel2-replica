@@ -11,7 +11,7 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 
 Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. Live `./Dockerfile` stays main's `op-geth:v1.101702.2` image (R-0013) so a main deploy cannot swap the live EL.
 
-**Task 7 (in progress):** a **new** Render pserv `fortel2-replica-reth` (`Dockerfile.reth`) + 10 GB disk + staging gateway `fortel2-replica-reth-rpc`. The live geth pserv `fortel2-replica` and its 50 GB disk stay up until Phase C (routing flip + rename-swap).
+**Task 7 (in progress):** a **new** Render pserv `fortel2-replica-reth` (`Dockerfile.reth`) + 10 GB disk + staging gateway `fortel2-replica-reth-rpc`. The live geth pserv `fortel2-replica` and its 50 GB disk stay up until Phase C (routing flip + rename-swap). Phase B evidence on the snapshot-restored archive replica is in [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 

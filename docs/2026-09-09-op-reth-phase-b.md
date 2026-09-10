@@ -1,4 +1,5 @@
 # Task 7 Phase B evidence — 2026-09-09
+Superseded by `docs/2026-09-10-op-reth-phase-b.md`; the from-genesis path was abandoned (D-0123).
 
 Verification of `fortel2-replica-reth` (op-reth) from the Mini against the
 staging gateway `https://fortel2-replica-reth-rpc.onrender.com`. Live

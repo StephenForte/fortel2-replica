@@ -407,3 +407,34 @@ The entrypoint omitted `--full` correctly. reth still configured a full-node pru
 
 **Not this decision.** Refuse-and-exit instead of auto-remove (specified: auto-remove-with-log). Re-running the Render restore (operator). README disk-size mismatch (service disk is 10 GB; planner). Phase B.
 
+## R-0016 — Task 7 Phase B on the snapshot-restored archive replica: header/receipt parity, staging gateway, and sync lag pass; Q5 disk/RSS still pending
+
+*2026-09-10 · implements ForteL2 D-0123 resume / D-0127 restore; amends R-0013 Phase B; evidence in `docs/2026-09-10-op-reth-phase-b.md`*
+
+Phase B was re-run against `fortel2-replica-reth` after the D-0127 archive restore (snapshot 811872, `RETH_ARCHIVE=1`, `L1_RPC_FORCE=public`, `L1_RPC_KIND=standard`), not against the abandoned from-genesis Alchemy derive. Staging door is `https://fortel2-replica-reth-rpc.onrender.com`. Live geth `fortel2-replica` / `fortel2-replica-rpc` were not mutated. Receipt checks use the live geth gateway as the archive baseline (D-0125: header match is not receipt match).
+
+**Passed (this worker, 2026-09-10 22:52–23:06Z, Mac sequencer EL `http://127.0.0.1:9545` read-only).**
+
+- **Header parity** (`scripts/verify-reth-parity.sh`): 20 consecutive safe-overlap blocks including pins `0,5,473031,473032,811872,811875`. Full match on number/hash/parentHash/stateRoot/receiptsRoot/txCount. Heads at run: candidate EL 823761, sequencer EL 823901. Exit 0.
+- **Receipt parity** (same script, vs `https://fortel2-replica-rpc.onrender.com`): first-tx `eth_getTransactionReceipt` MATCH on blockHash/status/logs/logsBloom for pins plus extras 100000, 400000, 700000 (8 receipts; genesis skipped — 0 txs). Block 5 tx `0xc3425ec1…` status `0x1` (the D-0125 `--full` null). A null candidate receipt is a named FAIL, not a crash.
+- **Logs:** `eth_getLogs` 473031–483030 → 3 logs on both staging and live geth; first log address `0x4200…0010`, topics[0] `0xb0444523…`, block 474217. MATCH.
+- **Gateway** (`scripts/allowlist-load-test.sh`, `LOAD_N=40`): `eth_sendRawTransaction`, `admin_nodeInfo`, `debug_traceTransaction`, `personal_listAccounts` all `-32601` `method not allowed`. Allowlisted `eth_blockNumber` n=40, errors=0, error_rate=0.000, p50=144 ms, **p95=184 ms**, max=215 ms.
+- **Sync lag** (`scripts/replica-sync-check.sh`, three samples ≥5 min apart, `REPLICA_MAX_SAFE_LAG=12`): staging does not expose `optimism_syncStatus` (allowlist). Lag vs live `safe_l2` was **0**, **−156** (replica EL ahead of sequencer safe), **0**. All ≤ 12. Numbers in the evidence doc.
+
+**Pending — planner+operator (R-0016 follow-up, not this PR).** PRD Q5: `du` of `/data/db`, `/data/static_files`, `/data/rocksdb` and `df /data` at 0 h / 6 h / 24 h; RSS over the same windows; restart check. 0 h RSS is the planner-measured 289–304 MB band (not reproduced here). Do not invent disk numbers. Do not start Phase C on a guess about growth.
+
+**Phase C preconditions (operator decides; this entry does not start Phase C).**
+
+| Gate | Status |
+|---|---|
+| Header parity vs sequencer (≥20 blocks, pins including 473031/473032 and snapshot 811872/811875) | **met** |
+| Receipt + logs parity vs live geth gateway (archive property) | **met** |
+| Staging gateway allowlist + p95/error-rate | **met** |
+| Sync lag ≤ 12 vs live safe, three samples ≥5 min apart | **met** |
+| RSS + disk over ≥6 h (Q5) | **pending** |
+| Restart check | **pending** |
+
+**Not this decision.** Whether Phase C may start (operator). Q5 6 h/24 h / restart. ForteL2 D-0125 pid-name collision and ForteL2's copy of the null-receipt crash. Any Render env, plan, or disk change.
+
+Next free R-id is **R-0017**.
+

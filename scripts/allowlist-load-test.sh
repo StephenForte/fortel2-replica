@@ -41,29 +41,34 @@ def rpc(method, params, timeout=30):
     return http, body, elapsed
 
 
-def code_of(body):
-    err = body.get("error") or {}
-    return err.get("code")
-
-
 print(f"allowlist load-test url={URL} n={N}")
 
-# Write + privileged methods must be JSON-RPC -32601 (filter), not forwarded.
+# Write + privileged methods must be JSON-RPC -32601 "method not allowed" (filter), not forwarded.
 refusals = [
     ("eth_sendRawTransaction", ["0x"]),
     ("admin_nodeInfo", []),
     ("debug_traceTransaction", ["0x" + "00" * 32]),
+    ("personal_listAccounts", []),
 ]
 refuse_fail = 0
 for method, params in refusals:
     http, body, ms = rpc(method, params)
-    code = code_of(body)
-    ok = code == -32601
-    print(f"  refuse {method} http={http} code={code} {ms:.0f}ms {'OK' if ok else 'FAIL'}")
+    err = body.get("error") or {}
+    code = err.get("code")
+    msg = str(err.get("message") or "")
+    ok = code == -32601 and "method not allowed" in msg.lower()
+    print(
+        f"  refuse {method} http={http} code={code} msg={msg!r} {ms:.0f}ms "
+        f"{'OK' if ok else 'FAIL'}"
+    )
     if not ok:
         refuse_fail += 1
 if refuse_fail:
-    print(f"ERROR: {refuse_fail} refusal check(s) failed (want -32601)", file=sys.stderr)
+    print(
+        f"ERROR: {refuse_fail} refusal check(s) failed "
+        "(want -32601 method not allowed)",
+        file=sys.stderr,
+    )
     sys.exit(1)
 
 latencies = []
