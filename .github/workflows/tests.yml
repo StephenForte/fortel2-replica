@@ -29,6 +29,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install zstd (snapshot pack/restore tests)
+        run: sudo apt-get update && sudo apt-get install -y zstd
+
       - name: Check shell syntax
         run: |
           sh -n entrypoint.sh
@@ -37,6 +40,7 @@ jobs:
           sh -n healthcheck-reth.sh
           sh -n sequencer-read/start.sh
           sh -n gateway/14-resolvers-from-resolv.conf.envsh
+          bash -n scripts/snapshot-reth-state.sh
 
       - name: Check Python syntax
         run: |

@@ -82,6 +82,14 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("dockerfilePath: ./Dockerfile.reth\n", reth)
         self.assertNotIn("key: GETH_CACHE_MB", reth)
         self.assertNotIn("key: JWT_SECRET", reth)
+        # Snapshot URL/hash are operator dashboard secrets, never Blueprint values
+        # (a synced empty URL would be a no-op; a synced FORCE would wipe /data).
+        self.assertNotIn("key: RETH_SNAPSHOT_URL", reth)
+        self.assertNotIn("key: RETH_SNAPSHOT_SHA256", reth)
+        self.assertNotIn("key: RETH_SNAPSHOT_FORCE", reth)
+        self.assertIn("RETH_SNAPSHOT_URL", self.text)
+        live = _service_blocks(self.text)[0]
+        self.assertNotIn("RETH_SNAPSHOT", live)
 
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
@@ -102,6 +110,10 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("COPY --from=reth", docker)
         self.assertIn("COPY entrypoint-reth.sh", docker)
         self.assertIn("libstdc++6", docker)
+        self.assertIn("curl", docker)
+        self.assertIn("zstd", docker)
+        self.assertNotIn("RETH_SNAPSHOT", (ROOT / "Dockerfile").read_text(encoding="utf-8"))
+        self.assertNotIn("RETH_SNAPSHOT", (ROOT / "entrypoint.sh").read_text(encoding="utf-8"))
         reth = next(
             block
             for block in _service_blocks(self.text)

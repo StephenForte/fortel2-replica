@@ -28,6 +28,8 @@ docker compose up -d
 
 The container's op-reth must report `Reth Version: 2.3.0-dev` commit `9384bc53…` (same binary lineage as the Mini pin). The single-container image asserts that at start.
 
+**Snapshot restore** (`RETH_SNAPSHOT_URL` / `RETH_SNAPSHOT_SHA256` / `RETH_SNAPSHOT_FORCE`) is the Render `Dockerfile.reth` entrypoint path (R-0014), not this two-container compose. Local compose always `op-reth init`s an empty volume from genesis. To bootstrap a compose volume from a tarball, extract `db/` + `static_files/` + `rocksdb/` into the `reth-data` volume while the stack is down — never while op-reth is running, and never copy `jwt.txt` from the Mac.
+
 ## Confirm it works
 
 ```bash

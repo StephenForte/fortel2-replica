@@ -48,6 +48,14 @@ L1_RPC_KIND="${L1_RPC_KIND:-quicknode}"
 FORTEL2_EL_READY_FILE="${FORTEL2_EL_READY_FILE:-/tmp/fortel2-el-ready}"
 rm -f "$FORTEL2_EL_READY_FILE"
 FILTER_PID=""
+# Optional first-boot snapshot (R-0014 / D-0123). Only this reth entrypoint
+# restores; live geth ./Dockerfile / entrypoint.sh never grow this path.
+# RETH_SNAPSHOT_URL + RETH_SNAPSHOT_SHA256 are operator-set. FORCE=1 is a
+# one-shot replace of an existing db/ after a validated extract (paused 68 %
+# disk) — unset after. A FORCE failure leaves the current db in place.
+RETH_SNAPSHOT_URL="${RETH_SNAPSHOT_URL:-}"
+RETH_SNAPSHOT_SHA256="${RETH_SNAPSHOT_SHA256:-}"
+RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
 
 # Task 1 pin (D-0109). Tag op-reth/v2.3.3 is not the --version string.
 PIN_RETH_VERSION='2.3.0-dev'
@@ -282,6 +290,167 @@ if [ ! -f "$JWT_FILE" ]; then
   fi
   chmod 600 "$JWT_FILE"
 fi
+
+# R-0014: bootstrap from a stopped-EL snapshot instead of re-deriving from
+# genesis. Pin + 852 genesis hash-check already ran (fail-fast). Restore
+# never writes jwt.txt (fresh in-container) and never runs on live geth.
+snapshot_force_enabled() {
+  case "${RETH_SNAPSHOT_FORCE}" in
+    1|true|TRUE|yes|YES|on|ON) return 0 ;;
+    ""|0|false|FALSE|no|NO|off|OFF) return 1 ;;
+    *)
+      echo "ERROR: RETH_SNAPSHOT_FORCE must be 0 or 1 (got: ${RETH_SNAPSHOT_FORCE})" >&2
+      exit 1
+      ;;
+  esac
+}
+
+normalize_snapshot_sha256() {
+  s=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | tr -d ' \t\n\r')
+  s=${s#0x}
+  case "$s" in
+    ""|*[!0-9a-f]*)
+      echo "ERROR: RETH_SNAPSHOT_SHA256 must be 64 hex chars (got: ${1:-<empty>})" >&2
+      exit 1
+      ;;
+  esac
+  if [ "${#s}" -ne 64 ]; then
+    echo "ERROR: RETH_SNAPSHOT_SHA256 must be 64 hex chars (got length ${#s})" >&2
+    exit 1
+  fi
+  printf '%s' "$s"
+}
+
+redact_snapshot_url() {
+  u="$1"
+  case "$u" in
+    http://*|https://*)
+      printf '%s\n' "$u" | sed -E 's#(https?://[^/]+).*#\1/<redacted>#'
+      ;;
+    *)
+      printf '%s' "<redacted>"
+      ;;
+  esac
+}
+
+restore_reth_snapshot() {
+  if [ -z "$RETH_SNAPSHOT_URL" ]; then
+    if snapshot_force_enabled; then
+      echo "ERROR: RETH_SNAPSHOT_FORCE=1 requires RETH_SNAPSHOT_URL" >&2
+      exit 1
+    fi
+    return 0
+  fi
+  if [ -z "$RETH_SNAPSHOT_SHA256" ]; then
+    echo "ERROR: RETH_SNAPSHOT_URL is set but RETH_SNAPSHOT_SHA256 is empty — refuse to restore without a pinned hash" >&2
+    exit 1
+  fi
+  want_sha=$(normalize_snapshot_sha256 "$RETH_SNAPSHOT_SHA256")
+  if [ -d "$DATA_DIR/db" ] && ! snapshot_force_enabled; then
+    echo "snapshot: datadir already has db/; skipping restore (set RETH_SNAPSHOT_FORCE=1 to replace)"
+    return 0
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl required to download RETH_SNAPSHOT_URL" >&2
+    exit 1
+  fi
+  if ! command -v zstd >/dev/null 2>&1; then
+    echo "ERROR: zstd required to extract a reth snapshot" >&2
+    exit 1
+  fi
+  work="$DATA_DIR/.reth-snapshot-work"
+  rm -rf "$work"
+  mkdir -p "$work/extract"
+  archive="$work/snapshot.tar.zst"
+  url_log=$(redact_snapshot_url "$RETH_SNAPSHOT_URL")
+  replacing=0
+  if snapshot_force_enabled && [ -d "$DATA_DIR/db" ]; then
+    replacing=1
+    echo "WARN: RETH_SNAPSHOT_FORCE=1 will replace existing db/, static_files/, and rocksdb/ (jwt.txt kept) only after download, sha256, listing, and extract succeed. Unset FORCE after this boot — a later restart with FORCE still set will replace again. Needs free space for the tarball beside the current db." >&2
+    echo "snapshot: FORCE staged replace of existing db/ (jwt.txt kept; current db stays until extract ok)"
+  fi
+  echo "snapshot: downloading ${url_log}"
+  if ! curl -fsSL --retry 3 --retry-delay 2 -o "$archive" "$RETH_SNAPSHOT_URL"; then
+    echo "ERROR: snapshot download failed" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  got_sha=$(sha256sum "$archive" | awk '{print $1}')
+  if [ "$got_sha" != "$want_sha" ]; then
+    echo "ERROR: snapshot sha256 mismatch" >&2
+    echo "  expected: $want_sha" >&2
+    echo "  got:      $got_sha" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  echo "snapshot: sha256 ok"
+  listing=$(tar --zstd -tf "$archive") || {
+    echo "ERROR: snapshot archive is not a readable tar.zst" >&2
+    rm -rf "$work"
+    exit 1
+  }
+  if printf '%s\n' "$listing" | grep -Eiq '(^|/)jwt\.txt$|(^|/)historical-proofs(/|$)|(^|/)pids(/|$)|(^|/)logs(/|$)'; then
+    echo "ERROR: snapshot archive contains jwt.txt, historical-proofs/, pids/, or logs/ — refuse" >&2
+    printf '%s\n' "$listing" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  if printf '%s\n' "$listing" | grep -Eiq '(^|/)\.\.(/|$)|^/'; then
+    echo "ERROR: snapshot archive contains path traversal or absolute paths — refuse" >&2
+    printf '%s\n' "$listing" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  extras=$(printf '%s\n' "$listing" | grep -Ev '^(\./)?(db|static_files|rocksdb)(/.*)?$' || true)
+  if [ -n "$extras" ]; then
+    echo "ERROR: snapshot archive contains paths outside db/, static_files/, and rocksdb/ — refuse" >&2
+    printf '%s\n' "$extras" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  echo "snapshot: archive listing ok (db/ + static_files/ + rocksdb/; no jwt/proofs)"
+  if ! tar --zstd -xf "$archive" -C "$work/extract"; then
+    echo "ERROR: snapshot extract failed" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  extract_root="$work/extract"
+  if [ -d "$extract_root/db" ] || [ -d "$extract_root/static_files" ]; then
+    :
+  elif [ -d "$extract_root/./db" ]; then
+    :
+  else
+    echo "ERROR: snapshot extract did not produce db/ or static_files/" >&2
+    rm -rf "$work"
+    exit 1
+  fi
+  # Swap only after a validated extract. A FORCE mismatch/download failure
+  # must leave the paused derive in place (Codex review on R-0014).
+  if [ "$replacing" -eq 1 ]; then
+    echo "snapshot: FORCE replacing existing db/ after validated extract"
+    rm -rf "$DATA_DIR/db" "$DATA_DIR/static_files" "$DATA_DIR/rocksdb"
+  fi
+  if [ -d "$extract_root/db" ]; then
+    rm -rf "$DATA_DIR/db"
+    mv "$extract_root/db" "$DATA_DIR/db"
+  fi
+  if [ -d "$extract_root/static_files" ]; then
+    rm -rf "$DATA_DIR/static_files"
+    mv "$extract_root/static_files" "$DATA_DIR/static_files"
+  fi
+  if [ -d "$extract_root/rocksdb" ]; then
+    rm -rf "$DATA_DIR/rocksdb"
+    mv "$extract_root/rocksdb" "$DATA_DIR/rocksdb"
+  fi
+  rm -rf "$work"
+  if [ ! -d "$DATA_DIR/db" ]; then
+    echo "ERROR: snapshot restore finished without $DATA_DIR/db" >&2
+    exit 1
+  fi
+  echo "snapshot: restore ok sha256=$got_sha"
+}
+
+restore_reth_snapshot
 
 if [ ! -d "$DATA_DIR/db" ] && [ ! -d "$DATA_DIR/static_files" ]; then
   echo "Initializing op-reth datadir (852; mid-chain rewind = wipe + re-derive, never debug_setHead)"
