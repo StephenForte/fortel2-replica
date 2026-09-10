@@ -125,7 +125,7 @@ The script refuses if the op-reth pid is alive. It packs `db/` + `static_files/`
 
 | Key | Value |
 |---|---|
-| `RETH_ARCHIVE` | `1` **before** restore — omit `--full` so historical receipts/logs/tx-lookup survive. Unset/0 = `--full` prune (irreversible). Other values exit 1. |
+| `RETH_ARCHIVE` | `1` **before** restore — omit `--full` so historical receipts/logs/tx-lookup survive. Also removes a stale `$DATA_DIR/reth.toml` `[prune]` section left by a prior `--full` boot (omitting `--full` alone does not). Unset/0 = `--full` prune (irreversible). Other values exit 1. |
 | `RETH_SNAPSHOT_URL` | HTTPS URL of the `.tar.zst` release asset |
 | `RETH_SNAPSHOT_SHA256` | 64 hex chars from the `.sha256` manifest |
 | `RETH_SNAPSHOT_FORCE` | `1` once to replace the paused 68 % `db/` + `static_files/` + `rocksdb/`; **unset after that boot** |
@@ -340,7 +340,7 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 |---|---|
 | `L1_RPC_FORCE` | `public` or `metered` — pin upstream and skip the schedule |
 | `L1_USE_PUBLIC_RPC` | `1` — same as `L1_RPC_FORCE=public` |
-| `RETH_ARCHIVE` | `1` on `fortel2-replica-reth` **before** snapshot restore (D-0126). Omits `--full` (archive). Unset/0 keeps `--full`. Never Blueprint-sync. |
+| `RETH_ARCHIVE` | `1` on `fortel2-replica-reth` **before** snapshot restore (D-0126). Omits `--full` (archive) and removes a stale `reth.toml` prune section. Unset/0 keeps `--full`. Never Blueprint-sync. |
 | `RETH_SNAPSHOT_URL` | HTTPS URL of `fortel2-852-reth-snapshot-<L2head>.tar.zst` (R-0014). Empty = init from genesis |
 | `RETH_SNAPSHOT_SHA256` | Required when URL is set. Refuse restore on mismatch |
 | `RETH_SNAPSHOT_FORCE` | `1` once to replace an existing `db/` on `fortel2-replica-reth`. Unset after that boot. Never on live geth |
