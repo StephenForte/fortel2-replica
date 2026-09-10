@@ -10,7 +10,7 @@ This is **not** the hosted Render node. Local compose publishes raw op-reth / op
 
 - Docker + the Compose plugin (`docker compose`). Nothing else — no Go/Node, no Foundry.
 - ~2 GB RAM. A 512 MB box will OOM (same warning as the Render note in `README.md`).
-- Disk for the `reth-data` volume. Derivation starts at L1 block `11323401` and the volume grows as it catches up. `--full` is a prune mode: without it you build an archive. D-0122 sizing for `--full` state is ≈1–2 GB (no proofs store).
+- Disk for the `reth-data` volume. Derivation starts at L1 block `11323401` and the volume grows as it catches up. `--full` is a prune mode: without it you build an archive. D-0122 sizing for `--full` state is ≈1–2 GB (no proofs store). The Render entrypoint honors `RETH_ARCHIVE=1` to omit `--full` (full archive; D-0126); local compose still always passes `--full`.
 - A **Sepolia HTTPS** endpoint in `L1_RPC_URL`. `.env.example` already has `https://ethereum-sepolia-rpc.publicnode.com` for a **smoke test only**. PublicNode can return 0 receipts and stall derivation (ForteL2 D-0105). Use a receipts-capable provider (QuickNode) for anything you leave running. Compose does **not** run `L1_RPC_SCHEDULE` / the in-container router — those are Render-only. Render's new replica starts with `L1_RPC_FORCE=metered`.
 
 ## Steps

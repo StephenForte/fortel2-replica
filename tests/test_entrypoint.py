@@ -352,6 +352,14 @@ printf '%064d\n' 0
                 self.assertEqual(1, result.returncode)
                 self.assertIn(message, result.stderr)
 
+    def test_rejects_invalid_reth_archive(self):
+        for value in ("2", "yes"):
+            with self.subTest(value=value):
+                result, log, _, _ = self.run_entrypoint({"RETH_ARCHIVE": value})
+                self.assertEqual(1, result.returncode)
+                self.assertIn("RETH_ARCHIVE", result.stderr)
+                self.assertEqual("", log)
+
     def test_requires_both_config_files(self):
         result, _, _, _ = self.run_entrypoint(create_config=False)
         self.assertEqual(1, result.returncode)
@@ -432,6 +440,33 @@ printf '%064d\n' 0
         self.assertIn("--p2p.disable=true", log)
         self.assertIn("mode=metered", result.stdout)
         self.assertFalse(data_dir.exists())  # temporary workspace was cleaned up
+
+    def test_reth_archive_omits_full_and_prints_mode(self):
+        def after(_result, _log, data_dir):
+            self.assertEqual([], list(data_dir.rglob("reth.toml")))
+
+        result, log, _, _ = self.run_entrypoint(
+            {"JWT_SECRET": "a" * 64, "RETH_ARCHIVE": "1"},
+            after=after,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        node_lines = [ln for ln in log.splitlines() if ln.startswith("op-reth node ")]
+        self.assertEqual(1, len(node_lines), log)
+        self.assertNotIn("--full", node_lines[0])
+        self.assertNotIn("--archive", node_lines[0])
+        self.assertNotIn("--full", log)
+        self.assertIn(
+            "op-reth: archive mode — retains historical receipts/logs (--full omitted)",
+            result.stdout,
+        )
+
+    def test_reth_archive_zero_keeps_full(self):
+        result, log, _, _ = self.run_entrypoint(
+            {"JWT_SECRET": "a" * 64, "RETH_ARCHIVE": "0"},
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("--full", log)
+        self.assertNotIn("archive mode", result.stdout)
 
     def test_generates_jwt_with_openssl_when_secret_unset(self):
         def prepare(_data_dir, env):
