@@ -34,6 +34,20 @@ PIN_VERSION_TEXT = (
     f"Commit SHA: {PIN_RETH_COMMIT}\n"
 )
 
+# Persisted --full prune config (R-0015). Matches the Render 2026-09-10
+# /data/reth.toml that survived omitting --full: receipts/account/storage
+# history at Distance(10064). The hermetic stub never writes this file.
+PRUNED_RETH_TOML = (
+    "[prune]\n"
+    "block_interval = 5\n"
+    "minimum_pruning_distance = 10064\n"
+    "\n"
+    "[prune.segments]\n"
+    "receipts = { distance = 10064 }\n"
+    "account_history = { distance = 10064 }\n"
+    "storage_history = { distance = 10064 }\n"
+)
+
 
 class EntrypointTests(unittest.TestCase):
     def run_entrypoint(
@@ -360,6 +374,23 @@ printf '%064d\n' 0
                 self.assertIn("RETH_ARCHIVE", result.stderr)
                 self.assertEqual("", log)
 
+    def test_rejects_invalid_reth_archive_leaves_reth_toml(self):
+        def prepare(data_dir, _env):
+            (data_dir / "reth.toml").write_text(PRUNED_RETH_TOML)
+
+        def after(_result, _log, data_dir):
+            self.assertTrue((data_dir / "reth.toml").is_file())
+            self.assertEqual(PRUNED_RETH_TOML, (data_dir / "reth.toml").read_text())
+
+        result, log, _, _ = self.run_entrypoint(
+            {"RETH_ARCHIVE": "2"},
+            prepare=prepare,
+            after=after,
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("RETH_ARCHIVE", result.stderr)
+        self.assertEqual("", log)
+
     def test_requires_both_config_files(self):
         result, _, _, _ = self.run_entrypoint(create_config=False)
         self.assertEqual(1, result.returncode)
@@ -442,11 +473,15 @@ printf '%064d\n' 0
         self.assertFalse(data_dir.exists())  # temporary workspace was cleaned up
 
     def test_reth_archive_omits_full_and_prints_mode(self):
+        def prepare(data_dir, _env):
+            (data_dir / "reth.toml").write_text(PRUNED_RETH_TOML)
+
         def after(_result, _log, data_dir):
             self.assertEqual([], list(data_dir.rglob("reth.toml")))
 
         result, log, _, _ = self.run_entrypoint(
             {"JWT_SECRET": "a" * 64, "RETH_ARCHIVE": "1"},
+            prepare=prepare,
             after=after,
         )
         self.assertEqual(0, result.returncode, result.stderr)
@@ -459,6 +494,11 @@ printf '%064d\n' 0
             "op-reth: archive mode — retains historical receipts/logs (--full omitted)",
             result.stdout,
         )
+        self.assertIn(
+            "op-reth: removed stale prune config from",
+            result.stdout,
+        )
+        self.assertIn("reth.toml (RETH_ARCHIVE=1)", result.stdout)
 
     def test_reth_archive_zero_keeps_full(self):
         result, log, _, _ = self.run_entrypoint(
@@ -467,6 +507,28 @@ printf '%064d\n' 0
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("--full", log)
         self.assertNotIn("archive mode", result.stdout)
+
+    def test_reth_full_leaves_seeded_prune_toml_untouched(self):
+        for extra in ({}, {"RETH_ARCHIVE": "0"}):
+            with self.subTest(env=extra):
+                def prepare(data_dir, _env):
+                    (data_dir / "reth.toml").write_text(PRUNED_RETH_TOML)
+
+                def after(_result, _log, data_dir):
+                    self.assertTrue((data_dir / "reth.toml").is_file())
+                    self.assertEqual(
+                        PRUNED_RETH_TOML, (data_dir / "reth.toml").read_text()
+                    )
+
+                result, log, _, _ = self.run_entrypoint(
+                    {"JWT_SECRET": "a" * 64, **extra},
+                    prepare=prepare,
+                    after=after,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn("--full", log)
+                self.assertNotIn("removed stale prune config", result.stdout)
+                self.assertNotIn("archive mode", result.stdout)
 
     def test_generates_jwt_with_openssl_when_secret_unset(self):
         def prepare(_data_dir, env):
@@ -809,9 +871,11 @@ printf '%064d\n' 0
             db = data_dir / "db"
             db.mkdir()
             (db / "mdbx.dat").write_text("keep-me")
+            (data_dir / "reth.toml").write_text(PRUNED_RETH_TOML)
 
         def after(result, log, data_dir):
             self.assertEqual("keep-me", (data_dir / "db" / "mdbx.dat").read_text())
+            self.assertEqual(PRUNED_RETH_TOML, (data_dir / "reth.toml").read_text())
 
         result, log, _, _ = self.run_entrypoint(
             {
@@ -846,6 +910,10 @@ printf '%064d\n' 0
                 (data_dir / "static_files" / "old").write_text("old")
                 (data_dir / "rocksdb").mkdir()
                 (data_dir / "rocksdb" / "old.sst").write_text("stale")
+                (data_dir / "reth.toml").write_text(PRUNED_RETH_TOML)
+                jwt = data_dir / "jwt.txt"
+                jwt.write_text("a" * 64)
+                jwt.chmod(0o600)
 
             def after(result, log, data_dir):
                 self.assertEqual("new-snap", (data_dir / "db" / "mdbx.dat").read_text())
@@ -853,6 +921,7 @@ printf '%064d\n' 0
                 self.assertFalse((data_dir / "rocksdb" / "old.sst").exists())
                 self.assertEqual("sst", (data_dir / "rocksdb" / "000001.sst").read_text())
                 self.assertEqual("a" * 64, (data_dir / "jwt.txt").read_text())
+                self.assertFalse((data_dir / "reth.toml").exists())
 
             try:
                 url = "http://127.0.0.1:%s/snap.tar.zst" % httpd.server_address[1]
@@ -892,11 +961,13 @@ printf '%064d\n' 0
                 (data_dir / "static_files" / "old").write_text("old")
                 (data_dir / "rocksdb").mkdir()
                 (data_dir / "rocksdb" / "old.sst").write_text("stale")
+                (data_dir / "reth.toml").write_text(PRUNED_RETH_TOML)
 
             def after(result, log, data_dir):
                 self.assertEqual("old-db", (data_dir / "db" / "mdbx.dat").read_text())
                 self.assertEqual("old", (data_dir / "static_files" / "old").read_text())
                 self.assertEqual("stale", (data_dir / "rocksdb" / "old.sst").read_text())
+                self.assertEqual(PRUNED_RETH_TOML, (data_dir / "reth.toml").read_text())
                 self.assertFalse((data_dir / ".reth-snapshot-work").exists())
 
             try:
@@ -925,9 +996,11 @@ printf '%064d\n' 0
             db = data_dir / "db"
             db.mkdir()
             (db / "mdbx.dat").write_text("keep-me")
+            (data_dir / "reth.toml").write_text(PRUNED_RETH_TOML)
 
         def after(result, log, data_dir):
             self.assertEqual("keep-me", (data_dir / "db" / "mdbx.dat").read_text())
+            self.assertEqual(PRUNED_RETH_TOML, (data_dir / "reth.toml").read_text())
 
         result, log, _, _ = self.run_entrypoint(
             {

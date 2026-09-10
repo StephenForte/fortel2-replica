@@ -382,3 +382,28 @@ Do not re-derive ~800k L2 blocks against a metered L1 provider. Publicnode prune
 **Render first boot after restore.** Operator sets `RETH_SNAPSHOT_URL` + `RETH_SNAPSHOT_SHA256` on `fortel2-replica-reth`, `RETH_SNAPSHOT_FORCE=1` once to clear the paused 68 % disk, `L1_RPC_FORCE=public`. Logs must show pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip (pin/genesis fail-fast before the download). Then Phase B (parity, gateway, restart, sizing) resumes. Do not FORCE the live geth disk.
 
 **Not this decision.** Mini capture window (operator); publishing the GitHub release asset (operator); Phase C; Task 8 friend nodes (they reuse this tarball + restore path); any L1 provider change beyond `L1_RPC_FORCE=public`.
+
+## R-0015 — `RETH_ARCHIVE=1` must defeat a stale `[prune]` config in `$DATA_DIR/reth.toml`
+
+*2026-09-10 · amends R-0014 FORCE restore; ForteL2 D-0126 (Render reth replica is full archive)*
+
+**What happened.** Deploy of `842c28d` on `fortel2-replica-reth` (2026-09-10T20:56Z) had all six dashboard keys set, including `RETH_ARCHIVE=1`. Logs:
+
+```
+snapshot: restore ok sha256=830d78f62526551d351c65d310c38c80972bffde7ffc0eb9be2cd546cf9c8027
+op-reth: archive mode — retains historical receipts/logs (--full omitted)
+Starting op-reth (verifier EL, archive) loopback :8546 (...)
+INFO Pruning configuration is present in the config file, but no CLI arguments are provided. Using config from file.
+INFO Configuration loaded path="/data/reth.toml"
+INFO Loaded storage settings settings=StorageSettings { storage_v2: true } pruning_mode="full"
+INFO Pruner initialized prune_config=PruneConfig { block_interval: 5, segments: PruneModes { sender_recovery: Some(Full), transaction_lookup: None, receipts: Some(Distance(10064)), account_history: Some(Distance(10064)), storage_history: Some(Distance(10064)), bodies_history: Some(Before(0)), receipts_log_filter: ReceiptsLogPruneConfig({}) }, minimum_pruning_distance: 10064 }
+```
+
+The entrypoint omitted `--full` correctly. reth still configured a full-node pruner. Cause: earlier `--full` runs on this disk wrote prune segments into `/data/reth.toml`. reth persists the effective config there and, with no CLI prune flags, reads it back. The snapshot tarball excludes `reth.toml`; FORCE restore kept it (it only replaced `db/`, `static_files/`, `rocksdb/`). The Mac archive sequencer's `reth.toml` has `[prune]` / `[prune.segments]` with empty segments (archive); the Render file carried `receipts` / `account_history` / `storage_history` = distance 10064. The operator suspended the service before any new L2 block was committed (pruner runs every 5 blocks); restored data is believed intact. Operator will re-restore with `RETH_SNAPSHOT_FORCE=1` after this lands.
+
+**Rule.** Archive mode = omit `--full` **and** no persisted prune segments. With `RETH_ARCHIVE=1`, the entrypoint deletes `$DATA_DIR/reth.toml` if present (unconditionally — do not hand-write a replacement; reth's TOML schema drifts between versions) and logs `op-reth: removed stale prune config from $DATA_DIR/reth.toml (RETH_ARCHIVE=1)`. reth regenerates the file on start; an empty `[prune.segments]` after an archive boot is correct (do not "fix" it). `RETH_ARCHIVE` unset or `0` does not touch the file and still passes `--full`. Invalid values still exit 1 before any datadir change. The dangerous direction is a datadir that ever booted `--full`: prune segments stay in `reth.toml` forever, and omitting `--full` does not clear them.
+
+**FORCE restore.** `RETH_SNAPSHOT_FORCE=1` drops `$DATA_DIR/reth.toml` along with `db/`, `static_files/`, `rocksdb/` — only after download → sha256 → listing → extract succeed. `jwt.txt` stays. A FORCE failure still leaves the paused derive and the existing toml in place.
+
+**Not this decision.** Refuse-and-exit instead of auto-remove (specified: auto-remove-with-log). Re-running the Render restore (operator). README disk-size mismatch (service disk is 10 GB; planner). Phase B.
+

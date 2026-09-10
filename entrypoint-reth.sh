@@ -2,7 +2,10 @@
 # Stock ForteL2 verifier: op-reth + op-node (no sequencer / batcher / proposer).
 # Includes Render-oriented readiness/shutdown fixes from ForteL2 PRs #23–#25.
 # Role is verifier: --full (prune, not archive) unless RETH_ARCHIVE=1,
-# no --proofs-history. reth has no --archive flag; archive is omitting --full.
+# no --proofs-history. reth has no --archive flag; archive is omitting --full
+# AND deleting a persisted $DATA_DIR/reth.toml (a prior --full boot writes
+# [prune] segments there; omitting --full does not clear them). Do not
+# hand-write a replacement toml — reth regenerates defaults on the next start.
 set -eu
 
 DATA_DIR="${DATA_DIR:-/data}"
@@ -28,8 +31,10 @@ RETH_CROSS_BLOCK_CACHE_MB="${RETH_CROSS_BLOCK_CACHE_MB:-256}"
 # Replaces the unbounded geth RPC/state cache. Default 5000 blocks is too large
 # for a 2 GB verifier; keep a small positive cache.
 RETH_RPC_CACHE_MAX_BLOCKS="${RETH_RPC_CACHE_MAX_BLOCKS:-256}"
-# 1 = omit --full (reth default is archive: keep historical receipts/logs).
-# Unset or 0 = --full prune, as today. A pruned datadir cannot be un-pruned.
+# 1 = omit --full (reth default is archive: keep historical receipts/logs)
+# and delete $DATA_DIR/reth.toml if present (stale prune segments from a
+# prior --full boot). Unset or 0 = --full prune, as today; reth.toml is
+# not touched. A pruned datadir cannot be un-pruned.
 RETH_ARCHIVE="${RETH_ARCHIVE:-}"
 # Optional Go soft memory cap (Go 1.19+). op-reth is Rust — GETH_GOMEMLIMIT
 # does not apply. Keep this on Render Standard so op-node + the L1 router stay
@@ -56,7 +61,8 @@ FILTER_PID=""
 # restores; live geth ./Dockerfile / entrypoint.sh never grow this path.
 # RETH_SNAPSHOT_URL + RETH_SNAPSHOT_SHA256 are operator-set. FORCE=1 is a
 # one-shot replace of an existing db/ after a validated extract (paused 68 %
-# disk) — unset after. A FORCE failure leaves the current db in place.
+# disk) — also drops reth.toml (persisted prune config); unset after. A
+# FORCE failure leaves the current db (and toml) in place.
 RETH_SNAPSHOT_URL="${RETH_SNAPSHOT_URL:-}"
 RETH_SNAPSHOT_SHA256="${RETH_SNAPSHOT_SHA256:-}"
 RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
@@ -303,9 +309,11 @@ if [ ! -f "$JWT_FILE" ]; then
   chmod 600 "$JWT_FILE"
 fi
 
-# R-0014: bootstrap from a stopped-EL snapshot instead of re-deriving from
-# genesis. Pin + 852 genesis hash-check already ran (fail-fast). Restore
+# R-0014 / R-0015: bootstrap from a stopped-EL snapshot instead of re-deriving
+# from genesis. Pin + 852 genesis hash-check already ran (fail-fast). Restore
 # never writes jwt.txt (fresh in-container) and never runs on live geth.
+# FORCE replace also drops reth.toml so a fresh datadir cannot inherit a
+# prior --full prune config.
 snapshot_force_enabled() {
   case "${RETH_SNAPSHOT_FORCE}" in
     1|true|TRUE|yes|YES|on|ON) return 0 ;;
@@ -378,8 +386,8 @@ restore_reth_snapshot() {
   replacing=0
   if snapshot_force_enabled && [ -d "$DATA_DIR/db" ]; then
     replacing=1
-    echo "WARN: RETH_SNAPSHOT_FORCE=1 will replace existing db/, static_files/, and rocksdb/ (jwt.txt kept) only after download, sha256, listing, and extract succeed. Unset FORCE after this boot — a later restart with FORCE still set will replace again. Needs free space for the tarball beside the current db." >&2
-    echo "snapshot: FORCE staged replace of existing db/ (jwt.txt kept; current db stays until extract ok)"
+    echo "WARN: RETH_SNAPSHOT_FORCE=1 will replace existing db/, static_files/, and rocksdb/ (jwt.txt kept; reth.toml dropped) only after download, sha256, listing, and extract succeed. Unset FORCE after this boot — a later restart with FORCE still set will replace again. Needs free space for the tarball beside the current db." >&2
+    echo "snapshot: FORCE staged replace of existing db/ (jwt.txt kept; reth.toml dropped; current db stays until extract ok)"
   fi
   echo "snapshot: downloading ${url_log}"
   if ! curl -fsSL --retry 3 --retry-delay 2 -o "$archive" "$RETH_SNAPSHOT_URL"; then
@@ -441,6 +449,7 @@ restore_reth_snapshot() {
   if [ "$replacing" -eq 1 ]; then
     echo "snapshot: FORCE replacing existing db/ after validated extract"
     rm -rf "$DATA_DIR/db" "$DATA_DIR/static_files" "$DATA_DIR/rocksdb"
+    rm -f "$DATA_DIR/reth.toml"
   fi
   if [ -d "$extract_root/db" ]; then
     rm -rf "$DATA_DIR/db"
@@ -476,10 +485,19 @@ fi
 
 # Unquoted $RETH_PRUNE_FLAG: empty must not become an argv slot. Do not invent
 # --archive — reth has no such flag; archive is the absence of --full.
+# Delete reth.toml unconditionally under archive (if present). Parsing out
+# [prune] would need a TOML writer; reth's schema drifts and a hand-authored
+# file can be rejected at boot. reth regenerates defaults on the next start.
+# After an archive boot the rewritten file has empty [prune.segments] — that
+# is correct; the next archive start deletes it again (harmless).
 RETH_PRUNE_FLAG="--full"
 if [ "$RETH_ARCHIVE" = "1" ]; then
   RETH_PRUNE_FLAG=""
   echo "op-reth: archive mode — retains historical receipts/logs (--full omitted)"
+  if [ -f "$DATA_DIR/reth.toml" ]; then
+    rm -f "$DATA_DIR/reth.toml"
+    echo "op-reth: removed stale prune config from $DATA_DIR/reth.toml (RETH_ARCHIVE=1)"
+  fi
   echo "Starting op-reth (verifier EL, archive) loopback :$L2_GETH_HTTP_PORT (cross-block-cache=${RETH_CROSS_BLOCK_CACHE_MB}MB rpc-cache-blocks=${RETH_RPC_CACHE_MAX_BLOCKS}; public filter :$L2_HTTP_PORT)"
 else
   echo "Starting op-reth (verifier EL, --full) loopback :$L2_GETH_HTTP_PORT (cross-block-cache=${RETH_CROSS_BLOCK_CACHE_MB}MB rpc-cache-blocks=${RETH_RPC_CACHE_MAX_BLOCKS}; public filter :$L2_HTTP_PORT)"

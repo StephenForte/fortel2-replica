@@ -169,10 +169,13 @@ services:
       # succeed. Then UNSET FORCE after the restore boot. After restore, switch
       # L1_RPC_FORCE to public (tip-follow; publicnode prunes old receipts).
       # Live geth never grows this path.
-      # Archive mode (D-0126): operator dashboard RETH_ARCHIVE=1 before restore
-      # so op-reth omits --full and retains historical receipts/logs. Unset/0 is
-      # --full prune. Do not put RETH_ARCHIVE in this Blueprint (a synced 0
-      # would prune a restored archive datadir). reth has no --archive flag.
+      # Archive mode (D-0126 / R-0015): operator dashboard RETH_ARCHIVE=1 before
+      # restore so op-reth omits --full and retains historical receipts/logs.
+      # Also deletes $DATA_DIR/reth.toml if present — a prior --full boot
+      # persists [prune] segments there; omitting --full does not clear them.
+      # Unset/0 is --full prune (reth.toml untouched). Do not put RETH_ARCHIVE
+      # in this Blueprint (a synced 0 would prune a restored archive datadir).
+      # reth has no --archive flag. FORCE restore also drops reth.toml (jwt kept).
 
   # Staging gateway only — pre-repoint verification. Not the public hostname.
   # REPLICA_UPSTREAM is a literal (R-0004): never fromService.
