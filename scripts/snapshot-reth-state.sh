@@ -212,16 +212,22 @@ META="$OUT_DIR/${BASE}.json"
 
 # Pack from inside the datadir so members are db/ and static_files/ only.
 # Never add jwt.txt, historical-proofs/, logs, or pids.
-tmp_tar="$(mktemp "${TMPDIR:-/tmp}/fortel2-reth-snap.XXXXXX.tar")"
+# BSD mktemp requires XXXXXX at the end of the template (no .tar suffix).
+tmp_tar="$(mktemp "${TMPDIR:-/tmp}/fortel2-reth-snap.XXXXXX")"
 cleanup_tmp() {
   rm -f "$tmp_tar"
 }
 trap cleanup_tmp EXIT
 
-# BSD tar (macOS) and GNU tar both accept -cf from a -C directory.
-tar -C "$SRC" -cf "$tmp_tar" db
+# COPYFILE_DISABLE / --no-xattrs: macOS bsdtar otherwise injects AppleDouble
+# `._*` members (com.apple.provenance) that fail the db/static_files allowlist.
+pack_tar() {
+  COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar --no-xattrs "$@"
+}
+
+pack_tar -C "$SRC" -cf "$tmp_tar" db
 if [[ -d "$SRC/static_files" ]]; then
-  tar -C "$SRC" -rf "$tmp_tar" static_files
+  pack_tar -C "$SRC" -rf "$tmp_tar" static_files
 fi
 
 listing="$(tar -tf "$tmp_tar")"

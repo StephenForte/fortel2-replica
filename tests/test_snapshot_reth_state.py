@@ -198,6 +198,36 @@ class SnapshotRethStateTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("--labels-json is required", result.stderr)
 
+    def test_mktemp_template_is_bsd_safe(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn('mktemp "${TMPDIR:-/tmp}/fortel2-reth-snap.XXXXXX"', text)
+        self.assertNotIn("XXXXXX.tar", text)
+
+    def test_tar_disables_macos_copyfile(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("COPYFILE_DISABLE=1", text)
+        self.assertIn("--no-xattrs", text)
+        self.assertIn("pack_tar", text)
+
+    def test_appledouble_sibling_is_not_packed(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_dir = Path(temp)
+            src = self.populate_datadir(data_dir)
+            (src / "._db").write_text("appledouble")
+            labels = self.labels(data_dir / "labels.json", number=9)
+            result = self.run_script(
+                {"DATA_DIR": str(data_dir), "L2_CHAIN_ID": "852"},
+                ["--labels-json", str(labels)],
+            )
+            self.assertEqual(0, result.returncode, result.stderr + result.stdout)
+            archive = data_dir / "snapshots" / "fortel2-852-reth-snapshot-9.tar.zst"
+            listing = subprocess.check_output(
+                ["tar", "--zstd", "-tf", str(archive)],
+                text=True,
+            )
+            self.assertNotIn("._db", listing)
+            self.assertIn("db/mdbx.dat", listing)
+
 
 if __name__ == "__main__":
     unittest.main()
