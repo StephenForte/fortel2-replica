@@ -353,7 +353,7 @@ For a **new** replica somewhere else — not the live Oregon node, and not a sub
 
 1. **New → Private Service**. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root). Do **not** choose Web here — that would be a public replica with its own disk.
 2. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
-3. Attach a **persistent disk** at `/data` (the reth replica has **10 GB**; archive datadir ≈1.2 GB at ~823k blocks, D-0127; live geth is **50 GB**). Grow it when Phase B measures growth.
+3. Attach a **persistent disk** at `/data` (≥ 20 GB, per `render.yaml`; live geth is **50 GB**). This checklist deploys the root `./Dockerfile` (op-geth). The Task 7 reth service is separate: `fortel2-replica-reth-data` is 10 GB and the archive datadir measured ≈1.2 GB at ~823k blocks (D-0127); Phase B measures growth before resizing.
 4. Set secrets + recommended env vars from the tables above.
 5. Deploy / restart after dashboard env edits.
 
