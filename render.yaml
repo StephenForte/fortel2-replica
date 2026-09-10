@@ -160,6 +160,14 @@ services:
         value: "24s"
       - key: L1_RPC_RATE_LIMIT
         value: "5"
+      # Snapshot bootstrap (R-0014 / D-0123): operator dashboard only — do not
+      # put RETH_SNAPSHOT_URL / RETH_SNAPSHOT_SHA256 / RETH_SNAPSHOT_FORCE in
+      # this Blueprint. On first boot with an empty disk, set URL + SHA256
+      # (GitHub release asset of db/ + static_files/, hash from the .sha256
+      # manifest). To replace the paused 68 % derive, set FORCE=1 once, then
+      # UNSET it after the restore boot. After restore, switch L1_RPC_FORCE to
+      # public (tip-follow; publicnode prunes old receipts). Live geth never
+      # grows this path.
 
   # Staging gateway only — pre-repoint verification. Not the public hostname.
   # REPLICA_UPSTREAM is a literal (R-0004): never fromService.

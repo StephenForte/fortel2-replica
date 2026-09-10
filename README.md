@@ -81,11 +81,58 @@ Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-repl
 | Service | Type | Disk | Role |
 |---|---|---|---|
 | `fortel2-replica` | pserv (live, frozen) | `fortel2-replica-data` 50 GB | `./Dockerfile` (op-geth v1.101702.2). Do not point this service at `Dockerfile.reth`. |
-| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | `Dockerfile.reth`. op-reth `--full` verifier. Initial `L1_RPC_FORCE=metered`. |
+| `fortel2-replica-reth` | pserv (new) | `fortel2-replica-reth-data` 20 GB | `Dockerfile.reth`. op-reth `--full` verifier. Bootstrap = snapshot restore (R-0014); `L1_RPC_FORCE=public` after restore. |
 | `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Pre-repoint verification only. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
 | `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname — unchanged until Phase C env flip. |
 
 Phase C (Steve-approved window): flip live gateway `REPLICA_UPSTREAM` → rename-swap (`fortel2-replica` → `fortel2-replica-geth`, `fortel2-replica-reth` → `fortel2-replica`) so SOS keeps `http://fortel2-replica:10000`. Rollback = reverse both; no disk mutation. Suspend the old service after 24 h; do not delete it.
+
+### Snapshot bootstrap (R-0014 / D-0123)
+
+Do not finish the from-genesis metered derive. Capture the Mac sequencer's `$DATA_DIR/l2/op-reth` **only while op-reth is stopped**, restore onto `fortel2-replica-reth`, then tip-follow on publicnode.
+
+**Capture (operator, ~5 min, daytime — not 23:45):**
+
+```bash
+# 1. Save labels while the EL is still up (do not print JWT / L1 URLs)
+python3 - <<'PY' > /tmp/fortel2-reth-labels.json
+import json, urllib.request
+url = "http://127.0.0.1:9545"
+def blk(tag):
+    body = json.dumps({"jsonrpc":"2.0","id":1,"method":"eth_getBlockByNumber","params":[tag, False]}).encode()
+    req = urllib.request.Request(url, data=body, headers={"Content-Type":"application/json"})
+    return json.loads(urllib.request.urlopen(req, timeout=5).read())["result"]
+latest, safe, finalized = blk("latest"), blk("safe"), blk("finalized")
+json.dump({
+    "l2_head": {"number": int(latest["number"], 16), "hash": latest["hash"]},
+    "safe": {"hash": safe["hash"]},
+    "finalized": {"hash": finalized["hash"]},
+}, open("/dev/stdout","w"), indent=2)
+print()
+PY
+# 2. Kickstart sleep (op-reth stops). Then:
+unset FORTEL2_ENV
+export DATA_DIR=… L2_CHAIN_ID=852   # Sepolia runtime dir
+./scripts/snapshot-reth-state.sh --labels-json /tmp/fortel2-reth-labels.json
+# 3. Kickstart wake. Verify the sequencer from outside.
+```
+
+The script refuses if the op-reth pid is alive. It writes `$DATA_DIR/snapshots/fortel2-852-reth-snapshot-<L2head>.tar.zst` plus `.sha256` and `.json`. Publish the tarball as a GitHub Release asset **only if it is under 2 GiB** (the script prints `bytes` and errors at the cap). The ForteL2 copy of this helper belongs at `scripts/snapshot-reth-state.sh` in that repo (this agent cannot push there).
+
+**Mini dry-run (before Render):** restore the tarball into `$DATA_DIR/l2/spike-op-reth` (Task 2 throwaway), start with `FORTEL2_RETH_PROFILE=verifier ./scripts/start-op-reth-verifier.sh` ( `--full`, sidecar ports, publicnode L1). Prove (4) reth accepts the archive-captured datadir under `--full` and (5) op-node starts derivation at an L1 origin near the capture-time safe head — not genesis `11545587`. Then `verify-reth-parity.sh` for ≥20 blocks. Stop and wipe the throwaway. If `--full` refuses the archive datadir, or op-node walks from genesis, **stop and report** — do not keep archive on Render.
+
+**Render:** dashboard-only env on `fortel2-replica-reth` (never Blueprint `value:`):
+
+| Key | Value |
+|---|---|
+| `RETH_SNAPSHOT_URL` | HTTPS URL of the `.tar.zst` release asset |
+| `RETH_SNAPSHOT_SHA256` | 64 hex chars from the `.sha256` manifest |
+| `RETH_SNAPSHOT_FORCE` | `1` once to replace the paused 68 % `db/`; **unset after that boot** |
+| `L1_RPC_FORCE` | `public` after restore (tip-follow) |
+
+First restore boot logs: pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip. `FORCE` wipes only `db/` + `static_files/` on this pserv; it never touches live geth.
+
+History in the tarball is a copy of the sequencer. Independent derivation of that history was Task 3. From the snapshot onward this replica derives from L1. Friends (Task 8) reuse the same tarball + restore path.
 
 ## Going public
 
@@ -266,8 +313,8 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 | `RETH_CROSS_BLOCK_CACHE_MB` | `256` (new reth pserv — replaces `GETH_CACHE_MB`) |
 | `RETH_RPC_CACHE_MAX_BLOCKS` | `256` |
 | `OP_NODE_GOMEMLIMIT` | `768MiB` |
-| `L1_RPC_KIND` | `quicknode` (reth pserv; initial sync `L1_RPC_FORCE=metered`) |
-| `L1_RPC_FORCE` | `metered` on `fortel2-replica-reth` until Phase B.5 |
+| `L1_RPC_KIND` | `quicknode` (reth pserv; after snapshot restore use `L1_RPC_FORCE=public`) |
+| `L1_RPC_FORCE` | `metered` until snapshot restore (R-0014); then `public` |
 | `L1_CACHE_SIZE` | `128` |
 | `L1_MAX_CONCURRENCY` | `2` |
 | `L1_RPC_MAX_BATCH_SIZE` | `5` |
@@ -292,6 +339,9 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 |---|---|
 | `L1_RPC_FORCE` | `public` or `metered` — pin upstream and skip the schedule |
 | `L1_USE_PUBLIC_RPC` | `1` — same as `L1_RPC_FORCE=public` |
+| `RETH_SNAPSHOT_URL` | HTTPS URL of `fortel2-852-reth-snapshot-<L2head>.tar.zst` (R-0014). Empty = init from genesis |
+| `RETH_SNAPSHOT_SHA256` | Required when URL is set. Refuse restore on mismatch |
+| `RETH_SNAPSHOT_FORCE` | `1` once to replace an existing `db/` on `fortel2-replica-reth`. Unset after that boot. Never on live geth |
 | `GETH_READY_TIMEOUT_SECS` | live geth only — wait forever for geth IPC during slow disk recovery |
 | `RETH_READY_TIMEOUT_SECS` | `0` (default) — wait forever for op-reth HTTP during slow disk recovery |
 
@@ -305,7 +355,7 @@ For a **new** replica somewhere else — not the live Oregon node, and not a sub
 4. Set secrets + recommended env vars from the tables above.
 5. Deploy / restart after dashboard env edits.
 
-**Web Shell tip:** the image has no `curl`. Use dashboard **Shell** with `python3`/`urllib` against `http://127.0.0.1:$PORT` (filter) or `http://127.0.0.1:8546` (loopback EL). op-node is `http://127.0.0.1:9545` (loopback only). Do not print `L1_RPC_URL` or the JWT.
+**Web Shell tip:** the live geth image has no `curl`. Use dashboard **Shell** with `python3`/`urllib` against `http://127.0.0.1:$PORT` (filter) or `http://127.0.0.1:8546` (loopback EL). The Task 7 reth image (`Dockerfile.reth`) includes `curl` + `zstd` for snapshot restore only. op-node is `http://127.0.0.1:9545` (loopback only). Do not print `L1_RPC_URL` or the JWT.
 
 **Health check / long recovery:** until `entrypoint.sh` marks the EL ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful loopback `eth_blockNumber`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot. Render’s HTTP `healthCheckPath: /` hits the method filter once it is up.
 

@@ -314,7 +314,7 @@ See `README.md` §"Render".
 
 ## R-0013 — Task 7 Phase A: new op-reth replica on a new service/disk; live geth is frozen
 
-*2026-09-08 · implements ForteL2 Task 7 / D-0109 / D-0110 / D-0114 / D-0122*
+*2026-09-08 · implements ForteL2 Task 7 / D-0109 / D-0110 / D-0114 / D-0122 · AMENDED by R-0014 (2026-09-10) — bootstrap is a stopped-EL snapshot, not a from-genesis metered derive*
 
 The operated Render replica moves to **op-reth** on a **new** Private Service and a **new** disk. The live geth pserv `fortel2-replica` and its 50 GB `fortel2-replica-data` are never mutated. Public read and SOS private read stay on today's hostnames until Phase C.
 
@@ -343,7 +343,7 @@ Existing `fortel2-replica`, its disk, and `fortel2-replica-rpc` stay as they are
 
 **Two Dockerfiles (why `./Dockerfile` stays geth).** Live `fortel2-replica` is Dashboard-created and auto-deploys `./Dockerfile`. Replacing that file with an op-reth image would start reth against the 50 GB geth disk on the next main deploy — the R-0008 / empty-disk class of accident, reached through an image swap rather than a new Blueprint apply. `./Dockerfile` therefore stays **byte-identical to main's op-geth v1.101702.2 image**. The Task 7 image is `Dockerfile.reth` (digest-pinned op-reth + op-node); only `fortel2-replica-reth` points at it. Phase C is a routing flip + rename-swap, not a redeploy onto the old disk.
 
-**Initial L1.** `L1_RPC_FORCE=metered` (D-0105: publicnode can return 0 receipts and stall derivation silently). The business-hours schedule is re-enabled only after catch-up, and only if a 60-min overnight-leg observation shows derivation advancing. A stall on the public leg is a finding, not a Phase B failure.
+**Initial L1.** AMENDED by R-0014: do not finish the from-genesis metered derive (D-0123). Snapshot-restore the Mac sequencer datadir, then `L1_RPC_FORCE=public` for tip-follow. The original Phase A start (`L1_RPC_FORCE=metered`) remains the recorded first-boot path; it is paused at ~68 %, not deleted.
 
 **Memory knobs (reth equivalents of `GETH_*`).** Pinned op-reth defaults `--engine.cross-block-cache-size` to **4096 MB** — that OOMs Render Standard. Starting values:
 
@@ -364,3 +364,21 @@ Phase B measures RSS/disk over ≥6 h and recommends a plan. Do not upgrade the 
 **Q4 / Q5 (PRD §11) stay open** until Phase B measures: whether `--full` is enough for public RPC (D-0114 prune window: diskless gateway cannot serve state older than ~latest−256), and disk/RAM of a clean 852 `--full` sync under current RPC load.
 
 **Not this decision.** Sequencer-tip / authenticated write; `fortel2-node` / `FRIENDS.md` (Task 8); deleting the old service or disk (Task 9); ForteL2 docs (planner-owned).
+
+## R-0014 — Bootstrap the Render reth replica from a stopped-EL snapshot of the Mac sequencer
+
+*2026-09-10 · implements ForteL2 D-0123 resume; amends R-0013 initial-L1*
+
+Do not re-derive ~800k L2 blocks against a metered L1 provider. Publicnode prunes old receipts; Alchemy free is ≈340 CU per L1 block; Chainstack free has no history; QuickNode is declined (D-0123). Resume Task 7 by restoring `db/` + `static_files/` captured from the Mac's live `$DATA_DIR/l2/op-reth` **while op-reth is stopped**.
+
+**Capture (Mac Mini, operator-supervised, daytime — not 23:45).** `scripts/snapshot-reth-state.sh` (this repo; also the ForteL2 landing for the same helper). Refuses if the op-reth pid is alive. Packs only `db/` + `static_files/`. Excludes `historical-proofs/` (sequencer-only, 15+ GB), `jwt.txt`, logs, pids, and anything under `$DATA_DIR` outside `l2/op-reth`. Asserts the archive listing is clean before writing. Output: `fortel2-852-reth-snapshot-<L2head>.tar.zst` plus a SHA-256 manifest and metadata JSON (L2 head number/hash, safe/finalized hashes, capture time, pin commit `9384bc53…`) under `$DATA_DIR/snapshots/`. GitHub release assets cap at 2 GiB — measure; if larger, split or do not publish as one asset. Nothing secret enters the tarball.
+
+**Restore (`entrypoint-reth.sh` only).** When `RETH_SNAPSHOT_URL` is set and the datadir has no `db/`, download, verify SHA-256 against `RETH_SNAPSHOT_SHA256` (refuse on mismatch), extract `db/` + `static_files/` only, then continue the existing pin assert + 852 genesis hash-check (those already ran fail-fast before the download). Never restore over an existing `db/` unless `RETH_SNAPSHOT_FORCE=1` (operator-set, one-shot — wipe `db/` + `static_files/`, keep `jwt.txt`, **unset FORCE after that boot**). Live `./Dockerfile` / `entrypoint.sh` stay the geth image and never grow this path.
+
+**Verifier profile.** The restored node still runs `--full`. The Mini dry-run (restore into `$DATA_DIR/l2/spike-op-reth`, `start-op-reth-verifier.sh`, publicnode L1) must prove reth accepts an archive-captured datadir under prune-forward, and that op-node resumes from the snapshot's **safe** head (L1 origin near capture time — not genesis `11545587`). If either fails, report; do not silently keep archive on Render.
+
+**Independence.** History in the tarball is a copy of the sequencer's state. Independent derivation of that history was already proven by Task 3 (genesis→safe head parity). From the snapshot onward the replica derives independently from L1. Planner records the matching PRD note; this decision is the replica-repo copy.
+
+**Render first boot after restore.** Operator sets `RETH_SNAPSHOT_URL` + `RETH_SNAPSHOT_SHA256` on `fortel2-replica-reth`, `RETH_SNAPSHOT_FORCE=1` once to clear the paused 68 % disk, `L1_RPC_FORCE=public`. Logs must show pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip (pin/genesis fail-fast before the download). Then Phase B (parity, gateway, restart, sizing) resumes. Do not FORCE the live geth disk.
+
+**Not this decision.** Mini capture window (operator); publishing the GitHub release asset (operator); Phase C; Task 8 friend nodes (they reuse this tarball + restore path); any L1 provider change beyond `L1_RPC_FORCE=public`.
