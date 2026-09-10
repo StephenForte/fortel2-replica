@@ -186,11 +186,20 @@ for raw in extra:
     if n > hi:
         missing_pins.append(n)
 heights = sample_heights(hi, extra, MIN_BLOCKS)
+consec = list(range(max(0, hi - (MIN_BLOCKS - 1)), hi + 1))
+heights = sorted(set(heights) | set(consec))
+if len(consec) < MIN_BLOCKS:
+    fail(
+        f"overlap high-water {hi} cannot form {MIN_BLOCKS} consecutive blocks"
+    )
 if len(heights) < MIN_BLOCKS:
     fail(f"overlap high-water {hi} yields {len(heights)} samples; need >= {MIN_BLOCKS}")
 if 0 not in heights or (hi >= 5 and 5 not in heights):
     fail(f"sample list must include 0 and 5 (got {heights})")
-print(f"samples={len(heights)} heights={heights}")
+print(
+    f"samples={len(heights)} consecutive_tip={consec[0]}-{consec[-1]} "
+    f"heights={heights}"
+)
 if missing_pins:
     print(f"WARN: pinned heights not yet derived on replica: {missing_pins}")
 
@@ -284,27 +293,33 @@ if CHECK_RECEIPTS:
             f"candidate={len(cand_logs)} live={len(live_logs)}"
         )
 
-    def log_key(lg):
+    def log_entry(lg):
         if not isinstance(lg, dict):
             return None
         topics = lg.get("topics") or []
         return {
             "address": str(lg.get("address") or "").lower(),
-            "topics0": str(topics[0]).lower() if topics else None,
+            "topics": [str(t).lower() for t in topics],
+            "data": str(lg.get("data") or "").lower(),
             "blockNumber": hx(lg.get("blockNumber")),
+            "transactionHash": norm_hash(lg.get("transactionHash")),
+            "logIndex": hx(lg.get("logIndex")),
+            "transactionIndex": hx(lg.get("transactionIndex")),
         }
 
-    ck = log_key(cand_logs[0] if cand_logs else None)
-    lk = log_key(live_logs[0] if live_logs else None)
-    if ck != lk:
-        fail(
-            f"eth_getLogs first-log mismatch range={logs_from}-{logs_to} "
-            f"candidate={ck} live={lk}"
-        )
+    for i, (cl, ll) in enumerate(zip(cand_logs, live_logs)):
+        ck = log_entry(cl)
+        lk = log_entry(ll)
+        if ck != lk:
+            fail(
+                f"eth_getLogs log[{i}] mismatch range={logs_from}-{logs_to} "
+                f"candidate={ck} live={lk}"
+            )
+    first = log_entry(cand_logs[0])
     print(
         f"  logs {logs_from}-{logs_to} count={len(cand_logs)} "
-        f"first address={ck['address']} topics0={ck['topics0']} "
-        f"block={ck['blockNumber']} MATCH"
+        f"all {len(cand_logs)} MATCH first address={first['address']} "
+        f"topics0={(first['topics'] or [None])[0]} block={first['blockNumber']}"
     )
     print(f"receipt-match: {receipt_ok} receipts + eth_getLogs {logs_from}-{logs_to}")
 

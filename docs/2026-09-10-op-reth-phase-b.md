@@ -65,7 +65,10 @@ LOGS_FROM=473031 LOGS_TO=483030 \
 bash scripts/verify-reth-parity.sh
 ```
 
-Run 2026-09-10T22:58:09Z. Exit 0.
+Run 2026-09-10T22:58:09Z. Exit 0. That first run sampled 20 overlap heights
+(not 20 consecutive on-chain). A follow-up after review comments also checks
+20 consecutive blocks at the overlap head and compares every `eth_getLogs`
+entry (see below).
 
 ```
 heads candidate_el=823761 live_el=823901
@@ -87,6 +90,18 @@ receipt live=https://fortel2-replica-rpc.onrender.com heights=[0, 5, 473031, 473
   logs 473031-483030 count=3 first address=0x4200000000000000000000000000000000000010 topics0=0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89 block=474217 MATCH
 receipt-match: 8 receipts + eth_getLogs 473031-483030
 verify-reth-parity: PASS (20 blocks)
+```
+
+Follow-up 2026-09-10T23:36:15Z (review comments: consecutive tip range + every log entry). Exit 0.
+
+```
+heads candidate_el=825015 live_el=825044
+samples=39 consecutive_tip=824996-825015
+  … pins + spaced samples MATCH …
+  … 20 consecutive 824996–825015 MATCH …
+  logs 473031-483030 count=3 all 3 MATCH first address=0x4200000000000000000000000000000000000010 topics0=0xb0444523268717a02698be47d0803aa7468c00acbed2f8bd93a0459cde61dd89 block=474217
+receipt-match: 8 receipts + eth_getLogs 473031-483030
+verify-reth-parity: PASS (39 blocks)
 ```
 
 Extra receipt heights 100000 / 400000 / 700000 are in 100000–800000. The
@@ -125,9 +140,10 @@ bash scripts/replica-sync-check.sh
 ```
 
 `REPLICA_MAX_SAFE_LAG=12`. Staging has no `optimism_syncStatus`; the script
-uses live op-node `:9547` `safe_l2` when reachable. Negative lag means the
-replica EL tip is ahead of the sequencer's reported safe (sequencer unsafe is
-still slightly ahead of the replica).
+requires live op-node `:9547` `safe_l2` and does not treat the sequencer EL
+tip as safe. Negative lag means the replica EL tip is ahead of the
+sequencer's reported safe (sequencer unsafe is still slightly ahead of the
+replica).
 
 | # | sampled_at (UTC) | replica EL | live EL | live safe_l2 | lag vs safe/tip | EL lag | result |
 |---|---|---|---|---|---|---|---|

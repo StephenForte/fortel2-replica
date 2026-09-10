@@ -2,6 +2,8 @@
 # Phase B: compare the staging reth gateway EL tip to the Mac sequencer.
 # optimism_syncStatus is not on the public allowlist — infer L1-origin
 # progress from L2 block timestamps when the node RPC is unreachable.
+# The lag gate requires live op-node safe_l2; it does not treat the
+# sequencer EL (unsafe) tip as safe.
 set -euo pipefail
 
 REPLICA="${REPLICA_L2_RPC_URL:-https://fortel2-replica-reth-rpc.onrender.com}"
@@ -95,10 +97,16 @@ sync, err = rpc(REPLICA, "optimism_syncStatus", [])
 if err:
     print(f"replica optimism_syncStatus not exposed ({err}) — infer from EL")
 else:
-    print(f"replica syncStatus: {json.dumps(st)}")
+    print(f"replica syncStatus: {json.dumps(sync)}")
 
-lag = (safe_l if safe_l is not None else tip_l) - tip_r
-print(f"lag vs live safe/tip: {lag} (max {MAX_LAG})")
+if safe_l is None:
+    print(
+        "ERROR: live op-node safe_l2 unavailable; refusing to treat sequencer EL tip as safe",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+lag = safe_l - tip_r
+print(f"lag vs live safe_l2: {lag} (max {MAX_LAG})")
 if tip_r < 1:
     print("ERROR: replica tip is still genesis", file=sys.stderr)
     sys.exit(1)

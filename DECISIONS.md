@@ -415,9 +415,9 @@ Phase B was re-run against `fortel2-replica-reth` after the D-0127 archive resto
 
 **Passed (this worker, 2026-09-10 22:52–23:06Z, Mac sequencer EL `http://127.0.0.1:9545` read-only).**
 
-- **Header parity** (`scripts/verify-reth-parity.sh`): 20 consecutive safe-overlap blocks including pins `0,5,473031,473032,811872,811875`. Full match on number/hash/parentHash/stateRoot/receiptsRoot/txCount. Heads at run: candidate EL 823761, sequencer EL 823901. Exit 0.
+- **Header parity** (`scripts/verify-reth-parity.sh`): 20 sampled overlap blocks plus 20 consecutive blocks at the overlap head, including pins `0,5,473031,473032,811872,811875`. Full match on number/hash/parentHash/stateRoot/receiptsRoot/txCount. First run (22:58Z): 20 sampled, candidate EL 823761 / sequencer EL 823901. Follow-up (23:36Z, after review comments): **39 blocks MATCH**, consecutive tip 824996–825015. Exit 0.
 - **Receipt parity** (same script, vs `https://fortel2-replica-rpc.onrender.com`): first-tx `eth_getTransactionReceipt` MATCH on blockHash/status/logs/logsBloom for pins plus extras 100000, 400000, 700000 (8 receipts; genesis skipped — 0 txs). Block 5 tx `0xc3425ec1…` status `0x1` (the D-0125 `--full` null). A null candidate receipt is a named FAIL, not a crash.
-- **Logs:** `eth_getLogs` 473031–483030 → 3 logs on both staging and live geth; first log address `0x4200…0010`, topics[0] `0xb0444523…`, block 474217. MATCH.
+- **Logs:** `eth_getLogs` 473031–483030 → 3 logs on both staging and live geth; every log MATCH (address, all topics, data, blockNumber, transactionHash, logIndex, transactionIndex). First log address `0x4200…0010`, topics[0] `0xb0444523…`, block 474217.
 - **Gateway** (`scripts/allowlist-load-test.sh`, `LOAD_N=40`): `eth_sendRawTransaction`, `admin_nodeInfo`, `debug_traceTransaction`, `personal_listAccounts` all `-32601` `method not allowed`. Allowlisted `eth_blockNumber` n=40, errors=0, error_rate=0.000, p50=144 ms, **p95=184 ms**, max=215 ms.
 - **Sync lag** (`scripts/replica-sync-check.sh`, three samples ≥5 min apart, `REPLICA_MAX_SAFE_LAG=12`): staging does not expose `optimism_syncStatus` (allowlist). Lag vs live `safe_l2` was **0**, **−156** (replica EL ahead of sequencer safe), **0**. All ≤ 12. Numbers in the evidence doc.
 
@@ -427,7 +427,7 @@ Phase B was re-run against `fortel2-replica-reth` after the D-0127 archive resto
 
 | Gate | Status |
 |---|---|
-| Header parity vs sequencer (≥20 blocks, pins including 473031/473032 and snapshot 811872/811875) | **met** |
+| Header parity vs sequencer (≥20 sampled overlap blocks + 20 consecutive at head, pins including 473031/473032 and snapshot 811872/811875) | **met** |
 | Receipt + logs parity vs live geth gateway (archive property) | **met** |
 | Staging gateway allowlist + p95/error-rate | **met** |
 | Sync lag ≤ 12 vs live safe, three samples ≥5 min apart | **met** |
