@@ -11,7 +11,8 @@
 # to Web" and "Going public" / "Revert".
 #
 # Task 7 ADDITIONS (operator-applied, R-0013): `fortel2-replica-reth`
-# (new pserv + new 20 GB disk) and diskless staging gateway
+# (new pserv; Blueprint sizeGB: 20 is greenfield, live dashboard disk is
+# 10 GB — D-0127 / #49; do not re-apply to "fix" it) and diskless staging gateway
 # `fortel2-replica-reth-rpc`. Add these objects; never mutate the live
 # entry, its disk name, or `fortel2-replica-rpc`. Phase C is a routing
 # flip + rename-swap — no disk is touched in either direction.
