@@ -654,9 +654,18 @@ printf '%064d\n' 0
             members.append("db")
         if (payload_root / "static_files").is_dir():
             members.append("static_files")
+        if (payload_root / "rocksdb").is_dir():
+            members.append("rocksdb")
         extra = [
             n
-            for n in ("jwt.txt", "historical-proofs", "logs", "pids")
+            for n in (
+                "jwt.txt",
+                "historical-proofs",
+                "logs",
+                "pids",
+                "exex",
+                "blobstore",
+            )
             if (payload_root / n).exists()
         ]
         subprocess.run(
@@ -725,12 +734,15 @@ printf '%064d\n' 0
             (root / "db" / "mdbx.dat").write_text("from-snap")
             (root / "static_files").mkdir()
             (root / "static_files" / "headers.0").write_text("hdr")
+            (root / "rocksdb").mkdir()
+            (root / "rocksdb" / "000001.sst").write_text("sst")
             data, digest = self._pack_reth_snapshot(root)
             httpd = self._serve_snapshot(data)
 
             def after(result, log, data_dir):
                 self.assertEqual("from-snap", (data_dir / "db" / "mdbx.dat").read_text())
                 self.assertTrue((data_dir / "static_files" / "headers.0").is_file())
+                self.assertEqual("sst", (data_dir / "rocksdb" / "000001.sst").read_text())
                 self.assertTrue((data_dir / "jwt.txt").is_file())
                 self.assertFalse((data_dir / "jwt.txt").read_text() == "")
 
@@ -750,6 +762,7 @@ printf '%064d\n' 0
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("snapshot: sha256 ok", result.stdout)
         self.assertIn("snapshot: restore ok", result.stdout)
+        self.assertIn("archive listing ok (db/ + static_files/ + rocksdb/", result.stdout)
         self.assertIn("op-reth pin ok", result.stdout)
         self.assertIn("hash-check ok", result.stdout)
         self.assertNotIn("op-reth init", log)
@@ -785,6 +798,8 @@ printf '%064d\n' 0
             root = Path(temp)
             (root / "db").mkdir()
             (root / "db" / "mdbx.dat").write_text("new-snap")
+            (root / "rocksdb").mkdir()
+            (root / "rocksdb" / "000001.sst").write_text("sst")
             data, digest = self._pack_reth_snapshot(root)
             httpd = self._serve_snapshot(data)
 
@@ -794,10 +809,14 @@ printf '%064d\n' 0
                 (db / "mdbx.dat").write_text("old-db")
                 (data_dir / "static_files").mkdir()
                 (data_dir / "static_files" / "old").write_text("old")
+                (data_dir / "rocksdb").mkdir()
+                (data_dir / "rocksdb" / "old.sst").write_text("stale")
 
             def after(result, log, data_dir):
                 self.assertEqual("new-snap", (data_dir / "db" / "mdbx.dat").read_text())
                 self.assertFalse((data_dir / "static_files" / "old").exists())
+                self.assertFalse((data_dir / "rocksdb" / "old.sst").exists())
+                self.assertEqual("sst", (data_dir / "rocksdb" / "000001.sst").read_text())
                 self.assertEqual("a" * 64, (data_dir / "jwt.txt").read_text())
 
             try:
@@ -836,10 +855,13 @@ printf '%064d\n' 0
                 (db / "mdbx.dat").write_text("old-db")
                 (data_dir / "static_files").mkdir()
                 (data_dir / "static_files" / "old").write_text("old")
+                (data_dir / "rocksdb").mkdir()
+                (data_dir / "rocksdb" / "old.sst").write_text("stale")
 
             def after(result, log, data_dir):
                 self.assertEqual("old-db", (data_dir / "db" / "mdbx.dat").read_text())
                 self.assertEqual("old", (data_dir / "static_files" / "old").read_text())
+                self.assertEqual("stale", (data_dir / "rocksdb" / "old.sst").read_text())
                 self.assertFalse((data_dir / ".reth-snapshot-work").exists())
 
             try:
@@ -884,6 +906,34 @@ printf '%064d\n' 0
         )
         self.assertEqual(1, result.returncode)
         self.assertIn("snapshot download failed", result.stderr)
+        self.assertNotIn("op-reth node", log)
+
+    def test_snapshot_refuses_exex_in_archive(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "db").mkdir()
+            (root / "db" / "mdbx.dat").write_text("x")
+            (root / "rocksdb").mkdir()
+            (root / "rocksdb" / "000001.sst").write_text("sst")
+            (root / "exex").mkdir()
+            (root / "exex" / "wal").write_text("no")
+            data, digest = self._pack_reth_snapshot(root)
+            httpd = self._serve_snapshot(data)
+            try:
+                url = "http://127.0.0.1:%s/snap.tar.zst" % httpd.server_address[1]
+                result, log, _, _ = self.run_entrypoint(
+                    {
+                        "JWT_SECRET": "a" * 64,
+                        "RETH_SNAPSHOT_URL": url,
+                        "RETH_SNAPSHOT_SHA256": digest,
+                    },
+                )
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("paths outside db/, static_files/, and rocksdb/", result.stderr)
+        self.assertIn("exex", result.stderr)
         self.assertNotIn("op-reth node", log)
 
     def test_snapshot_refuses_jwt_in_archive(self):

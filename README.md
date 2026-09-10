@@ -117,7 +117,7 @@ export DATA_DIR=… L2_CHAIN_ID=852   # Sepolia runtime dir
 # 3. Kickstart wake. Verify the sequencer from outside.
 ```
 
-The script refuses if the op-reth pid is alive. It writes `$DATA_DIR/snapshots/fortel2-852-reth-snapshot-<L2head>.tar.zst` plus `.sha256` and `.json`. Publish the tarball as a GitHub Release asset **only if it is under 2 GiB** (the script prints `bytes` and errors at the cap). The ForteL2 copy of this helper belongs at `scripts/snapshot-reth-state.sh` in that repo (this agent cannot push there).
+The script refuses if the op-reth pid is alive. It packs `db/` + `static_files/` + `rocksdb/` (`--datadir.rocksdb` is a live store, not a cache). It writes `$DATA_DIR/snapshots/fortel2-852-reth-snapshot-<L2head>.tar.zst` plus `.sha256` and `.json`. Publish the tarball as a GitHub Release asset **only if it is under 2 GiB** (the script prints `bytes` and errors at the cap). The ForteL2 copy of this helper belongs at `scripts/snapshot-reth-state.sh` in that repo (this agent cannot push there).
 
 **Mini dry-run (before Render):** restore the tarball into `$DATA_DIR/l2/spike-op-reth` (Task 2 throwaway), start with `FORTEL2_RETH_PROFILE=verifier ./scripts/start-op-reth-verifier.sh` ( `--full`, sidecar ports, publicnode L1). Prove (4) reth accepts the archive-captured datadir under `--full` and (5) op-node starts derivation at an L1 origin near the capture-time safe head — not genesis `11545587`. Then `verify-reth-parity.sh` for ≥20 blocks. Stop and wipe the throwaway. If `--full` refuses the archive datadir, or op-node walks from genesis, **stop and report** — do not keep archive on Render.
 
@@ -127,10 +127,10 @@ The script refuses if the op-reth pid is alive. It writes `$DATA_DIR/snapshots/f
 |---|---|
 | `RETH_SNAPSHOT_URL` | HTTPS URL of the `.tar.zst` release asset |
 | `RETH_SNAPSHOT_SHA256` | 64 hex chars from the `.sha256` manifest |
-| `RETH_SNAPSHOT_FORCE` | `1` once to replace the paused 68 % `db/`; **unset after that boot** |
+| `RETH_SNAPSHOT_FORCE` | `1` once to replace the paused 68 % `db/` + `static_files/` + `rocksdb/`; **unset after that boot** |
 | `L1_RPC_FORCE` | `public` after restore (tip-follow) |
 
-First restore boot logs: pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip. `FORCE` replaces `db/` + `static_files/` on this pserv **only after** extract succeeds; it never touches live geth. A FORCE failure leaves the paused derive in place.
+First restore boot logs: pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip. `FORCE` replaces `db/` + `static_files/` + `rocksdb/` on this pserv **only after** extract succeeds; it never touches live geth. A FORCE failure leaves the paused derive in place.
 
 History in the tarball is a copy of the sequencer. Independent derivation of that history was Task 3. From the snapshot onward this replica derives from L1. Friends (Task 8) reuse the same tarball + restore path.
 

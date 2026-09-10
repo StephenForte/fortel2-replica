@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Capture $DATA_DIR/l2/op-reth db/ + static_files/ for a Render/friend restore.
+# Capture $DATA_DIR/l2/op-reth db/ + static_files/ + rocksdb/ for a Render/friend restore.
 # Sepolia (chain 852) only. READ-ONLY of the live sequencer datadir — never
 # --wipe, never write into l2/op-reth. Capture is corrupt-by-design if op-reth
 # is running: refuse when the pid file is alive or `op-reth node` is in the
@@ -31,7 +31,7 @@ usage() {
   cat <<'EOF'
 usage: snapshot-reth-state.sh --labels-json PATH [--datadir PATH]
 
-Capture db/ + static_files/ of the Sepolia op-reth datadir while the EL is STOPPED.
+Capture db/ + static_files/ + rocksdb/ of the Sepolia op-reth datadir while the EL is STOPPED.
 
   --labels-json PATH   L2 head/safe/finalized as reth reported them (required).
                        Schema: {"l2_head":{"number":N,"hash":"0x…"},
@@ -43,7 +43,7 @@ Requires DATA_DIR (Sepolia runtime dir) and L2_CHAIN_ID=852. Refuses:
   - op-reth pid alive (pidfile or `op-reth node` process)
   - L2_CHAIN_ID other than 852 / FORTEL2_ENV=.env.sepolia
   - writes into l2/op-reth
-  - packing jwt.txt, historical-proofs/, logs/, pids/, or anything outside db/ + static_files/
+  - packing jwt.txt, historical-proofs/, logs/, pids/, exex/, blobstore/, or anything outside db/ + static_files/ + rocksdb/
 
 Output under $DATA_DIR/snapshots/. Prints size + head. Does not upload.
 EOF
@@ -210,7 +210,8 @@ ARCHIVE="$OUT_DIR/${BASE}.tar.zst"
 MANIFEST="$OUT_DIR/${BASE}.sha256"
 META="$OUT_DIR/${BASE}.json"
 
-# Pack from inside the datadir so members are db/ and static_files/ only.
+# Pack from inside the datadir so members are db/, static_files/, rocksdb/ only.
+# rocksdb/ is a first-class datadir store (--datadir.rocksdb), not a cache.
 # Never add jwt.txt, historical-proofs/, logs, or pids.
 # BSD mktemp requires XXXXXX at the end of the template (no .tar suffix).
 tmp_tar="$(mktemp "${TMPDIR:-/tmp}/fortel2-reth-snap.XXXXXX")"
@@ -220,7 +221,7 @@ cleanup_tmp() {
 trap cleanup_tmp EXIT
 
 # COPYFILE_DISABLE / --no-xattrs: macOS bsdtar otherwise injects AppleDouble
-# `._*` members (com.apple.provenance) that fail the db/static_files allowlist.
+# `._*` members (com.apple.provenance) that fail the db/static_files/rocksdb allowlist.
 pack_tar() {
   COPYFILE_DISABLE=1 COPY_EXTENDED_ATTRIBUTES_DISABLE=1 tar --no-xattrs "$@"
 }
@@ -229,6 +230,9 @@ pack_tar -C "$SRC" -cf "$tmp_tar" db
 if [[ -d "$SRC/static_files" ]]; then
   pack_tar -C "$SRC" -rf "$tmp_tar" static_files
 fi
+if [[ -d "$SRC/rocksdb" ]]; then
+  pack_tar -C "$SRC" -rf "$tmp_tar" rocksdb
+fi
 
 listing="$(tar -tf "$tmp_tar")"
 if printf '%s\n' "$listing" | grep -Eiq '(^|/)jwt\.txt$|(^|/)historical-proofs(/|$)|(^|/)pids(/|$)|(^|/)logs(/|$)'; then
@@ -236,9 +240,9 @@ if printf '%s\n' "$listing" | grep -Eiq '(^|/)jwt\.txt$|(^|/)historical-proofs(/
   printf '%s\n' "$listing" >&2
   exit 1
 fi
-extras="$(printf '%s\n' "$listing" | grep -Ev '^(\./)?(db|static_files)(/.*)?$' || true)"
+extras="$(printf '%s\n' "$listing" | grep -Ev '^(\./)?(db|static_files|rocksdb)(/.*)?$' || true)"
 if [[ -n "$extras" ]]; then
-  echo "ERROR: archive listing contains paths outside db/ and static_files/" >&2
+  echo "ERROR: archive listing contains paths outside db/, static_files/, and rocksdb/" >&2
   printf '%s\n' "$extras" >&2
   exit 1
 fi
@@ -254,9 +258,18 @@ if command -v op-reth >/dev/null 2>&1; then
   RETH_VER="$(op-reth --version 2>&1 | tr '\n' ' ' || true)"
 fi
 
+INCLUDES='["db/"'
+if [[ -d "$SRC/static_files" ]]; then
+  INCLUDES+=', "static_files/"'
+fi
+if [[ -d "$SRC/rocksdb" ]]; then
+  INCLUDES+=', "rocksdb/"'
+fi
+INCLUDES+=']'
+
 python3 - "$META" "$HEAD_NUM" "$HEAD_HASH" "$SAFE_HASH" "$FINALIZED_HASH" \
   "$CAPTURED_AT" "$SHA" "$BYTES" "$ARCHIVE" "$PIN_RETH_COMMIT" "$PIN_RETH_VERSION" \
-  "$RETH_VER" <<'PY'
+  "$RETH_VER" "$INCLUDES" <<'PY'
 import json, sys
 
 (
@@ -272,6 +285,7 @@ import json, sys
     pin_commit,
     pin_version,
     reth_ver,
+    includes_json,
 ) = sys.argv[1:]
 payload = {
     "chain_id": 852,
@@ -283,7 +297,7 @@ payload = {
     "safe": {"hash": safe_hash or None},
     "finalized": {"hash": finalized_hash or None},
     "datadir": "l2/op-reth",
-    "includes": ["db/", "static_files/"],
+    "includes": json.loads(includes_json),
     "excludes": ["historical-proofs/", "jwt.txt", "logs/", "pids/"],
     "archive": archive.split("/")[-1],
     "sha256": sha256,

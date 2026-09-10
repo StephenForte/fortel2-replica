@@ -366,7 +366,7 @@ restore_reth_snapshot() {
   replacing=0
   if snapshot_force_enabled && [ -d "$DATA_DIR/db" ]; then
     replacing=1
-    echo "WARN: RETH_SNAPSHOT_FORCE=1 will replace existing db/ and static_files/ (jwt.txt kept) only after download, sha256, listing, and extract succeed. Unset FORCE after this boot — a later restart with FORCE still set will replace again. Needs free space for the tarball beside the current db." >&2
+    echo "WARN: RETH_SNAPSHOT_FORCE=1 will replace existing db/, static_files/, and rocksdb/ (jwt.txt kept) only after download, sha256, listing, and extract succeed. Unset FORCE after this boot — a later restart with FORCE still set will replace again. Needs free space for the tarball beside the current db." >&2
     echo "snapshot: FORCE staged replace of existing db/ (jwt.txt kept; current db stays until extract ok)"
   fi
   echo "snapshot: downloading ${url_log}"
@@ -401,14 +401,14 @@ restore_reth_snapshot() {
     rm -rf "$work"
     exit 1
   fi
-  extras=$(printf '%s\n' "$listing" | grep -Ev '^(\./)?(db|static_files)(/.*)?$' || true)
+  extras=$(printf '%s\n' "$listing" | grep -Ev '^(\./)?(db|static_files|rocksdb)(/.*)?$' || true)
   if [ -n "$extras" ]; then
-    echo "ERROR: snapshot archive contains paths outside db/ and static_files/ — refuse" >&2
+    echo "ERROR: snapshot archive contains paths outside db/, static_files/, and rocksdb/ — refuse" >&2
     printf '%s\n' "$extras" >&2
     rm -rf "$work"
     exit 1
   fi
-  echo "snapshot: archive listing ok (db/ + static_files/ only; no jwt/proofs)"
+  echo "snapshot: archive listing ok (db/ + static_files/ + rocksdb/; no jwt/proofs)"
   if ! tar --zstd -xf "$archive" -C "$work/extract"; then
     echo "ERROR: snapshot extract failed" >&2
     rm -rf "$work"
@@ -428,7 +428,7 @@ restore_reth_snapshot() {
   # must leave the paused derive in place (Codex review on R-0014).
   if [ "$replacing" -eq 1 ]; then
     echo "snapshot: FORCE replacing existing db/ after validated extract"
-    rm -rf "$DATA_DIR/db" "$DATA_DIR/static_files"
+    rm -rf "$DATA_DIR/db" "$DATA_DIR/static_files" "$DATA_DIR/rocksdb"
   fi
   if [ -d "$extract_root/db" ]; then
     rm -rf "$DATA_DIR/db"
@@ -437,6 +437,10 @@ restore_reth_snapshot() {
   if [ -d "$extract_root/static_files" ]; then
     rm -rf "$DATA_DIR/static_files"
     mv "$extract_root/static_files" "$DATA_DIR/static_files"
+  fi
+  if [ -d "$extract_root/rocksdb" ]; then
+    rm -rf "$DATA_DIR/rocksdb"
+    mv "$extract_root/rocksdb" "$DATA_DIR/rocksdb"
   fi
   rm -rf "$work"
   if [ ! -d "$DATA_DIR/db" ]; then
