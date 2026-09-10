@@ -164,8 +164,9 @@ services:
       # put RETH_SNAPSHOT_URL / RETH_SNAPSHOT_SHA256 / RETH_SNAPSHOT_FORCE in
       # this Blueprint. On first boot with an empty disk, set URL + SHA256
       # (GitHub release asset of db/ + static_files/, hash from the .sha256
-      # manifest). To replace the paused 68 % derive, set FORCE=1 once, then
-      # UNSET it after the restore boot. After restore, switch L1_RPC_FORCE to
+      # manifest). To replace the paused 68 % derive, set FORCE=1 once; the
+      # current db is removed only after download/hash/extract succeed. Then
+      # UNSET FORCE after the restore boot. After restore, switch L1_RPC_FORCE to
       # public (tip-follow; publicnode prunes old receipts). Live geth never
       # grows this path.
 

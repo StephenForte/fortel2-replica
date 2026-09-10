@@ -130,7 +130,7 @@ The script refuses if the op-reth pid is alive. It writes `$DATA_DIR/snapshots/f
 | `RETH_SNAPSHOT_FORCE` | `1` once to replace the paused 68 % `db/`; **unset after that boot** |
 | `L1_RPC_FORCE` | `public` after restore (tip-follow) |
 
-First restore boot logs: pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip. `FORCE` wipes only `db/` + `static_files/` on this pserv; it never touches live geth.
+First restore boot logs: pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip. `FORCE` replaces `db/` + `static_files/` on this pserv **only after** extract succeeds; it never touches live geth. A FORCE failure leaves the paused derive in place.
 
 History in the tarball is a copy of the sequencer. Independent derivation of that history was Task 3. From the snapshot onward this replica derives from L1. Friends (Task 8) reuse the same tarball + restore path.
 

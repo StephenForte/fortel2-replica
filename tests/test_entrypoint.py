@@ -816,10 +816,75 @@ printf '%064d\n' 0
                 httpd.shutdown()
                 httpd.server_close()
         self.assertEqual(0, result.returncode, result.stderr)
-        self.assertIn("FORCE replacing existing db", result.stdout)
+        self.assertIn("FORCE staged replace of existing db", result.stdout)
+        self.assertIn("FORCE replacing existing db/ after validated extract", result.stdout)
         self.assertIn("Unset FORCE after this boot", result.stderr)
         self.assertIn("snapshot: restore ok", result.stdout)
         self.assertNotIn("op-reth init", log)
+
+    def test_snapshot_force_mismatch_keeps_existing_db(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "db").mkdir()
+            (root / "db" / "mdbx.dat").write_text("new-snap")
+            data, digest = self._pack_reth_snapshot(root)
+            httpd = self._serve_snapshot(data)
+
+            def prepare(data_dir, _env):
+                db = data_dir / "db"
+                db.mkdir()
+                (db / "mdbx.dat").write_text("old-db")
+                (data_dir / "static_files").mkdir()
+                (data_dir / "static_files" / "old").write_text("old")
+
+            def after(result, log, data_dir):
+                self.assertEqual("old-db", (data_dir / "db" / "mdbx.dat").read_text())
+                self.assertEqual("old", (data_dir / "static_files" / "old").read_text())
+                self.assertFalse((data_dir / ".reth-snapshot-work").exists())
+
+            try:
+                url = "http://127.0.0.1:%s/snap.tar.zst" % httpd.server_address[1]
+                result, log, _, _ = self.run_entrypoint(
+                    {
+                        "JWT_SECRET": "a" * 64,
+                        "RETH_SNAPSHOT_URL": url,
+                        "RETH_SNAPSHOT_SHA256": "0" * 64,
+                        "RETH_SNAPSHOT_FORCE": "1",
+                    },
+                    prepare=prepare,
+                    after=after,
+                )
+            finally:
+                httpd.shutdown()
+                httpd.server_close()
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("snapshot sha256 mismatch", result.stderr)
+        self.assertNotIn("FORCE replacing existing db/ after validated extract", result.stdout)
+        self.assertNotIn("op-reth init", log)
+        self.assertNotIn("op-reth node", log)
+
+    def test_snapshot_force_failed_download_keeps_existing_db(self):
+        def prepare(data_dir, _env):
+            db = data_dir / "db"
+            db.mkdir()
+            (db / "mdbx.dat").write_text("keep-me")
+
+        def after(result, log, data_dir):
+            self.assertEqual("keep-me", (data_dir / "db" / "mdbx.dat").read_text())
+
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "RETH_SNAPSHOT_URL": "http://127.0.0.1:1/missing.tar.zst",
+                "RETH_SNAPSHOT_SHA256": "a" * 64,
+                "RETH_SNAPSHOT_FORCE": "1",
+            },
+            prepare=prepare,
+            after=after,
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("snapshot download failed", result.stderr)
+        self.assertNotIn("op-reth node", log)
 
     def test_snapshot_refuses_jwt_in_archive(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -51,7 +51,8 @@ FILTER_PID=""
 # Optional first-boot snapshot (R-0014 / D-0123). Only this reth entrypoint
 # restores; live geth ./Dockerfile / entrypoint.sh never grow this path.
 # RETH_SNAPSHOT_URL + RETH_SNAPSHOT_SHA256 are operator-set. FORCE=1 is a
-# one-shot wipe of an existing db/ (the paused 68 % disk) — unset after.
+# one-shot replace of an existing db/ after a validated extract (paused 68 %
+# disk) — unset after. A FORCE failure leaves the current db in place.
 RETH_SNAPSHOT_URL="${RETH_SNAPSHOT_URL:-}"
 RETH_SNAPSHOT_SHA256="${RETH_SNAPSHOT_SHA256:-}"
 RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
@@ -362,10 +363,11 @@ restore_reth_snapshot() {
   mkdir -p "$work/extract"
   archive="$work/snapshot.tar.zst"
   url_log=$(redact_snapshot_url "$RETH_SNAPSHOT_URL")
+  replacing=0
   if snapshot_force_enabled && [ -d "$DATA_DIR/db" ]; then
-    echo "WARN: RETH_SNAPSHOT_FORCE=1 removing existing db/ and static_files/ (jwt.txt kept). Unset FORCE after this boot — a later restart with FORCE still set will wipe again." >&2
-    echo "snapshot: FORCE replacing existing db/ (jwt.txt kept)"
-    rm -rf "$DATA_DIR/db" "$DATA_DIR/static_files"
+    replacing=1
+    echo "WARN: RETH_SNAPSHOT_FORCE=1 will replace existing db/ and static_files/ (jwt.txt kept) only after download, sha256, listing, and extract succeed. Unset FORCE after this boot — a later restart with FORCE still set will replace again. Needs free space for the tarball beside the current db." >&2
+    echo "snapshot: FORCE staged replace of existing db/ (jwt.txt kept; current db stays until extract ok)"
   fi
   echo "snapshot: downloading ${url_log}"
   if ! curl -fsSL --retry 3 --retry-delay 2 -o "$archive" "$RETH_SNAPSHOT_URL"; then
@@ -421,6 +423,12 @@ restore_reth_snapshot() {
     echo "ERROR: snapshot extract did not produce db/ or static_files/" >&2
     rm -rf "$work"
     exit 1
+  fi
+  # Swap only after a validated extract. A FORCE mismatch/download failure
+  # must leave the paused derive in place (Codex review on R-0014).
+  if [ "$replacing" -eq 1 ]; then
+    echo "snapshot: FORCE replacing existing db/ after validated extract"
+    rm -rf "$DATA_DIR/db" "$DATA_DIR/static_files"
   fi
   if [ -d "$extract_root/db" ]; then
     rm -rf "$DATA_DIR/db"
