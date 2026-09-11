@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
-# Task 7 Phase B: sampled safe-block parity — staging reth gateway vs Mac sequencer EL.
-# Staging is HTTPS (not loopback). optimism_syncStatus is not on the allowlist;
-# overlap high-water is min(replica EL tip, live EL tip). Exit 0 only on a full match.
+# Sampled safe-block parity — live public replica RPC vs Mac sequencer EL.
+# Default CANDIDATE is the live public hostname (reth after R-0017).
+# Staging fortel2-replica-reth-rpc is suspended 2026-09-12. optimism_syncStatus
+# is not on the allowlist; overlap high-water is min(replica EL tip, live EL tip).
+# Exit 0 only on a full match.
 # With CHECK_RECEIPTS=1 (default), also compares first-tx receipts and one
-# eth_getLogs range vs the live geth gateway. A null candidate receipt is a
+# eth_getLogs range vs RECEIPT_LIVE_RPC. A null candidate receipt is a
 # named FAIL (block + tx), never an AttributeError (D-0125 crash class).
 set -euo pipefail
 
-CANDIDATE="${CANDIDATE_RPC:-https://fortel2-replica-reth-rpc.onrender.com}"
+CANDIDATE="${CANDIDATE_RPC:-https://fortel2-replica-rpc.onrender.com}"
 LIVE="${LIVE_RPC:-http://127.0.0.1:9545}"
 MIN_BLOCKS="${MIN_BLOCKS:-20}"
 SLEEP_MS="${SLEEP_MS:-400}"
 BLOCKS_CSV="${BLOCKS_CSV:-0,5,473031,473032,811872,811875}"
-# Receipt/logs parity vs the live geth public gateway (archive evidence, D-0125).
+# Receipt/logs vs RECEIPT_LIVE_RPC. Default is the same public hostname as
+# CANDIDATE after R-0017 (Phase B used this URL as the geth archive baseline).
 RECEIPT_LIVE="${RECEIPT_LIVE_RPC:-https://fortel2-replica-rpc.onrender.com}"
 RECEIPT_EXTRA_CSV="${RECEIPT_EXTRA_CSV:-100000,400000,700000}"
 LOGS_FROM="${LOGS_FROM:-473031}"
@@ -230,7 +233,7 @@ if missing_pins and os.environ.get("ALLOW_MISSING_PINS") != "1":
         f"replica tip {head_c} has not reached pinned heights {missing_pins}; "
         "parity incomplete until catch-up"
     )
-print(f"full-match: staging gateway = live sequencer ({len(heights)} blocks)")
+print(f"full-match: public replica = live sequencer ({len(heights)} blocks)")
 
 receipt_ok = 0
 if CHECK_RECEIPTS:

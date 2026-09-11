@@ -6,16 +6,19 @@
 # it as a **new** Blueprint onto the live Oregon pserv. Render cannot
 # reattach the live 50 GB disk. A new apply of that entry (`type: pserv` /
 # `sizeGB: 20`) would create a second empty-disk replica named the same
-# and a full L1 resync. Keep deploying the *existing* image onto the
-# existing pserv until Phase C. See README "Do not convert this service
+# and a full L1 resync. Keep deploying the *existing* geth image onto this
+# frozen pserv (rollback target until Task 9). Phase C (R-0017) was env
+# repoint, not an image change. See README "Do not convert this service
 # to Web" and "Going public" / "Revert".
 #
-# Task 7 ADDITIONS (operator-applied, R-0013): `fortel2-replica-reth`
-# (new pserv; Blueprint sizeGB: 20 is greenfield, live dashboard disk is
-# 10 GB — D-0127 / #49; do not re-apply to "fix" it) and diskless staging gateway
-# `fortel2-replica-reth-rpc`. Add these objects; never mutate the live
-# entry, its disk name, or `fortel2-replica-rpc`. Phase C is a routing
-# flip + rename-swap — no disk is touched in either direction.
+# Task 7 ADDITIONS (operator-applied, R-0013 / R-0017): `fortel2-replica-reth`
+# (pserv; Blueprint sizeGB: 20 is greenfield, live dashboard disk is
+# 10 GB — D-0127 / #49; grow to ≈25 GB before 2026-10-20; do not re-apply to
+# "fix" it) and diskless staging gateway `fortel2-replica-reth-rpc`
+# (suspend 2026-09-12 after 17:25Z). Add these objects; never mutate the live
+# entry, its disk name, or `fortel2-replica-rpc`. Phase C executed as two
+# env edits to http://fortel2-replica-reth:10000 — not a rename-swap.
+# Render private hostnames are immutable slugs; renaming moves no traffic.
 #
 # sizeGB: 20 on the live entry is the greenfield minimum, not the live
 # disk. Do not "fix" live to 20. Raising 20→50 on a *new* apply still
@@ -23,7 +26,8 @@
 #
 # Public URL (live): Dashboard Web Service `fortel2-replica-rpc` (no disk),
 # Dockerfile `./gateway/Dockerfile`, context `./gateway`, same Oregon env,
-# upstream http://fortel2-replica:10000. Sequencer tip: `fortel2-sequencer-rpc`
+# upstream http://fortel2-replica-reth:10000 (R-0017). Rollback = env back to
+# http://fortel2-replica:10000. Sequencer tip: `fortel2-sequencer-rpc`
 # (`sequencer-read/start.sh`). Do not point a Web Service at ./Dockerfile.
 # Do not attach `fortel2-replica-rpc` to this Blueprint (R-0008).
 #
@@ -178,8 +182,8 @@ services:
       # in this Blueprint (a synced 0 would prune a restored archive datadir).
       # reth has no --archive flag. FORCE restore also drops reth.toml (jwt kept).
 
-  # Staging gateway only — pre-repoint verification. Not the public hostname.
-  # REPLICA_UPSTREAM is a literal (R-0004): never fromService.
+  # Staging gateway — verification-only; suspend 2026-09-12 after 17:25Z
+  # (R-0017). REPLICA_UPSTREAM is a literal (R-0004): never fromService.
   - type: web
     name: fortel2-replica-reth-rpc
     runtime: docker
