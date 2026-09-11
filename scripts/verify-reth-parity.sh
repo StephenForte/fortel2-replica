@@ -5,8 +5,8 @@
 # is not on the allowlist; overlap high-water is min(replica EL tip, live EL tip).
 # Exit 0 only on a full match.
 # With CHECK_RECEIPTS=1 (default), also compares first-tx receipts and one
-# eth_getLogs range vs RECEIPT_LIVE_RPC. Same-URL as CANDIDATE is a named
-# SKIP (public hostname is reth after R-0017). A null candidate receipt is a
+# eth_getLogs range vs RECEIPT_LIVE_RPC (default: Mac sequencer EL, $LIVE).
+# Same-URL as CANDIDATE is a named SKIP. A null candidate receipt is a
 # named FAIL (block + tx), never an AttributeError (D-0125 crash class).
 set -euo pipefail
 
@@ -15,9 +15,9 @@ LIVE="${LIVE_RPC:-http://127.0.0.1:9545}"
 MIN_BLOCKS="${MIN_BLOCKS:-20}"
 SLEEP_MS="${SLEEP_MS:-400}"
 BLOCKS_CSV="${BLOCKS_CSV:-0,5,473031,473032,811872,811875}"
-# Receipt/logs vs RECEIPT_LIVE_RPC. Default is the public hostname; after R-0017
-# that equals CANDIDATE, so the script SKIPs rather than self-comparing.
-RECEIPT_LIVE="${RECEIPT_LIVE_RPC:-https://fortel2-replica-rpc.onrender.com}"
+# Receipt/logs vs RECEIPT_LIVE_RPC. Default is the Mac sequencer EL ($LIVE).
+# Equal-URL SKIP remains if RECEIPT_LIVE_RPC is set to CANDIDATE.
+RECEIPT_LIVE="${RECEIPT_LIVE_RPC:-$LIVE}"
 RECEIPT_EXTRA_CSV="${RECEIPT_EXTRA_CSV:-100000,400000,700000}"
 LOGS_FROM="${LOGS_FROM:-473031}"
 LOGS_TO="${LOGS_TO:-483030}"
