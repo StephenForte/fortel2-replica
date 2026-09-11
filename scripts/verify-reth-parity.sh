@@ -5,7 +5,8 @@
 # is not on the allowlist; overlap high-water is min(replica EL tip, live EL tip).
 # Exit 0 only on a full match.
 # With CHECK_RECEIPTS=1 (default), also compares first-tx receipts and one
-# eth_getLogs range vs RECEIPT_LIVE_RPC. A null candidate receipt is a
+# eth_getLogs range vs RECEIPT_LIVE_RPC. Same-URL as CANDIDATE is a named
+# SKIP (public hostname is reth after R-0017). A null candidate receipt is a
 # named FAIL (block + tx), never an AttributeError (D-0125 crash class).
 set -euo pipefail
 
@@ -14,8 +15,8 @@ LIVE="${LIVE_RPC:-http://127.0.0.1:9545}"
 MIN_BLOCKS="${MIN_BLOCKS:-20}"
 SLEEP_MS="${SLEEP_MS:-400}"
 BLOCKS_CSV="${BLOCKS_CSV:-0,5,473031,473032,811872,811875}"
-# Receipt/logs vs RECEIPT_LIVE_RPC. Default is the same public hostname as
-# CANDIDATE after R-0017 (Phase B used this URL as the geth archive baseline).
+# Receipt/logs vs RECEIPT_LIVE_RPC. Default is the public hostname; after R-0017
+# that equals CANDIDATE, so the script SKIPs rather than self-comparing.
 RECEIPT_LIVE="${RECEIPT_LIVE_RPC:-https://fortel2-replica-rpc.onrender.com}"
 RECEIPT_EXTRA_CSV="${RECEIPT_EXTRA_CSV:-100000,400000,700000}"
 LOGS_FROM="${LOGS_FROM:-473031}"
@@ -236,6 +237,13 @@ if missing_pins and os.environ.get("ALLOW_MISSING_PINS") != "1":
 print(f"full-match: public replica = live sequencer ({len(heights)} blocks)")
 
 receipt_ok = 0
+if CHECK_RECEIPTS and RECEIPT_LIVE.rstrip("/") == CAND:
+    print(
+        "receipt-match SKIP: RECEIPT_LIVE_RPC equals CANDIDATE "
+        "(public hostname is reth after R-0017; no independent public archive baseline). "
+        "Set RECEIPT_LIVE_RPC to an archive peer to compare."
+    )
+    CHECK_RECEIPTS = False
 if CHECK_RECEIPTS:
     if not RECEIPT_LIVE:
         fail("CHECK_RECEIPTS=1 but RECEIPT_LIVE is empty")
