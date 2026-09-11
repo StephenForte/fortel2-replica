@@ -438,3 +438,26 @@ Phase B was re-run against `fortel2-replica-reth` after the D-0127 archive resto
 
 Next free R-id is **R-0017**.
 
+## R-0017 — Task 7 Phase C executed: env repoint (not rename-swap); Q5 answered; 24 h rollback
+
+*2026-09-11 · implements ForteL2 D-0128; supersedes R-0013's rename-swap clause only. Planner-verified 2026-09-11.*
+
+Phase C executed 17:16–17:25Z as **two env edits** to `http://fortel2-replica-reth:10000`:
+
+1. `fortel2-replica-rpc` `REPLICA_UPSTREAM` — verified: `web3_clientVersion` `reth/v2.3.0-9384bc5` through the public hostname, tip 856809, block-5 receipt served, `/healthz` 200, `eth_sendRawTransaction` → `-32601`.
+2. settlementos `FORTEL2_SEPOLIA_READ_RPC_URL` — deploy live 17:21Z, operator confirmed the balances UI.
+
+**The R-0013 rename-swap does not work on Render.** Private hostnames are the immutable service slug, not the display name. After renaming `fortel2-replica`→`fortel2-replica-geth` and `fortel2-replica-reth`→`fortel2-replica`, the public gateway still answered Geth 2.5 min later and the service records kept `url: fortel2-replica:10000` on the geth service. The renames were reverted because Blueprint sync matches by name (a sync in the renamed state would create two new empty-disk services — R-0008). Names now equal slugs: `fortel2-replica` = geth (`srv-d9fsgi3rjlhs73ceh6tg`, 50 GB, `./Dockerfile`), `fortel2-replica-reth` = reth (`srv-dagquc7qj5pc73fdnjsg`, 10 GB, `Dockerfile.reth`).
+
+**Supersedes R-0013's rename-swap clause:** repoint consumers by env value; service names must equal slugs so the Blueprint keeps matching.
+
+**Consumers (from deployed env):** viewer → public gateway; SettlementOS → private slug hostname (`http://fortel2-replica-reth:10000`); SettlementExplorer → `https://fortel2-sequencer-rpc.onrender.com` (never the replica); ChainBank → Sepolia L1 only.
+
+**Q5:** `/data` 1.1 → 1.2 GB over 18.1 h (db 107→110 MB, `static_files` 900→935 MB, rocksdb 74→166 MB) ≈ 170 MB/day; 10 GB disk ≈ 7 weeks headroom → grow to ≈25 GB before 2026-10-20. RSS peak 724 MB / avg 451 MB / last 519 MB of 2 GiB (09-10 23:49Z → 09-11 16:59Z); CPU 5-min avg peak 9.8 %. Plan stays Standard (1c-2g). Geth replica for comparison: 800–1,009 MB RSS, CPU spikes to 100 %.
+
+**Rollback for 24 h:** both env values back to `http://fortel2-replica:10000`. On 2026-09-12 after 17:25Z the operator suspends `fortel2-replica` (geth) and `fortel2-replica-reth-rpc` (staging gateway, `srv-dagr42tbedkc73c5mp80`); neither is deleted before Task 9.
+
+**Not this decision.** Suspending or deleting any service (operator, 2026-09-12); the disk grow (operator, before 2026-10-20); ForteL2 docs (planner, PR #214); Task 8 (`fortel2-node`) and Task 9 (geth removal).
+
+Next free R-id is **R-0018**.
+

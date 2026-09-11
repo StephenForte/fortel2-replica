@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# Phase B: compare the staging reth gateway EL tip to the Mac sequencer.
+# Compare the live public replica RPC EL tip to the Mac sequencer.
+# Default REPLICA_L2_RPC_URL is the live public hostname (reth after R-0017).
+# Staging fortel2-replica-reth-rpc is suspended 2026-09-12.
 # optimism_syncStatus is not on the public allowlist — infer L1-origin
 # progress from L2 block timestamps when the node RPC is unreachable.
 # The lag gate requires live op-node safe_l2; it does not treat the
 # sequencer EL (unsafe) tip as safe.
 set -euo pipefail
 
-REPLICA="${REPLICA_L2_RPC_URL:-https://fortel2-replica-reth-rpc.onrender.com}"
+REPLICA="${REPLICA_L2_RPC_URL:-https://fortel2-replica-rpc.onrender.com}"
 LIVE="${LIVE_L2_RPC_URL:-http://127.0.0.1:9545}"
 LIVE_NODE="${LIVE_NODE_RPC_URL:-http://127.0.0.1:9547}"
 MAX_SAFE_LAG="${REPLICA_MAX_SAFE_LAG:-12}" # ~2 L1 epochs * 6 L2 blocks/epoch

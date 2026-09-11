@@ -2,7 +2,7 @@
 # Phase B: write-reject + admin_/debug_ refusal, then allowlist p95 + error rate.
 set -euo pipefail
 
-URL="${REPLICA_L2_RPC_URL:-https://fortel2-replica-reth-rpc.onrender.com}"
+URL="${REPLICA_L2_RPC_URL:-https://fortel2-replica-rpc.onrender.com}"
 N="${LOAD_N:-40}"
 export URL N
 
