@@ -11,7 +11,7 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 
 Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. Live `./Dockerfile` stays main's `op-geth:v1.101702.2` image (R-0013) so a main deploy cannot swap the live EL.
 
-**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 10 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth pserv `fortel2-replica` (50 GB) stays up as the 24 h rollback target until the operator suspends it and staging `fortel2-replica-reth-rpc` on 2026-09-12 after 17:25Z. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
+**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 10 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth pserv `fortel2-replica` (50 GB disk retained) and staging `fortel2-replica-reth-rpc` were **suspended 2026-09-12** after a clean 24 h window (ForteL2 D-0129); neither is deleted before Task 9. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
@@ -85,7 +85,7 @@ Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-repl
 | `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Staging gateway (`srv-dagr42tbedkc73c5mp80`). Suspend with geth on 2026-09-12 after 17:25Z. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
 | `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000` (R-0017). |
 
-Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. Rollback for 24 h = both env values back to `http://fortel2-replica:10000`. Disk follow-up: grow `fortel2-replica-reth` to ≈25 GB before 2026-10-20. Neither geth nor the staging gateway is deleted before Task 9.
+Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. The 24 h window passed clean; geth and the staging gateway were suspended 2026-09-12 (D-0129). Rollback from here = resume `fortel2-replica` (geth) and set both env values back to `http://fortel2-replica:10000`. Disk follow-up: grow `fortel2-replica-reth` to ≈25 GB before 2026-10-20. Neither geth nor the staging gateway is deleted before Task 9.
 
 ### Snapshot bootstrap (R-0014 / D-0123)
 
