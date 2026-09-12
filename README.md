@@ -11,7 +11,7 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 
 Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. Live `./Dockerfile` stays main's `op-geth:v1.101702.2` image (R-0013) so a main deploy cannot swap the live EL.
 
-**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 10 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth pserv `fortel2-replica` (50 GB) stays up as the 24 h rollback target until the operator suspends it and staging `fortel2-replica-reth-rpc` on 2026-09-12 after 17:25Z. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
+**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 10 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth pserv `fortel2-replica` (50 GB disk retained) and staging `fortel2-replica-reth-rpc` were **suspended 2026-09-12** after a clean 24 h window (ForteL2 D-0129); neither is deleted before Task 9. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
@@ -50,7 +50,7 @@ curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
 
 The live public read is op-reth behind `fortel2-replica-rpc` (R-0017). The geth Private Service (`fortel2-replica`, `srv-d9fsgi3rjlhs73ceh6tg`, Oregon env `evm-d9h424715fvs73cq2gl0`, 50 GB) is the rollback target until Task 9. Public reads are two diskless Web Services on that same network (ForteL2 D-0031): `https://fortel2-replica-rpc.onrender.com` (L1-derived, upstream `http://fortel2-replica-reth:10000`) and `https://fortel2-sequencer-rpc.onrender.com` (sequencer tip). SettlementOS reads at `http://fortel2-replica-reth:10000`.
 
-Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). The EL listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed. Live public and SOS private read are op-reth (`fortel2-replica-reth`); the geth pserv is rollback-only until it is suspended.
+Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). The EL listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed. Live public and SOS private read are op-reth (`fortel2-replica-reth`); the geth pserv is suspended (2026-09-12, D-0129), rollback-only, not deleted before Task 9.
 
 | Fact | Detail |
 |---|---|
@@ -80,12 +80,12 @@ Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-repl
 
 | Service | Type | Disk | Role |
 |---|---|---|---|
-| `fortel2-replica` | pserv (geth, rollback) | `fortel2-replica-data` 50 GB | `./Dockerfile` (op-geth v1.101702.2). Running until suspended 2026-09-12 after 17:25Z. 24 h rollback target (`http://fortel2-replica:10000`). Do not point this service at `Dockerfile.reth`. |
+| `fortel2-replica` | pserv (geth, rollback) | `fortel2-replica-data` 50 GB | `./Dockerfile` (op-geth v1.101702.2). **Suspended 2026-09-12** (D-0129), disk retained. Rollback target only (`http://fortel2-replica:10000`) — see the rollback procedure below. Do not point this service at `Dockerfile.reth`. |
 | `fortel2-replica-reth` | pserv (live EL) | `fortel2-replica-reth-data` 10 GB | `Dockerfile.reth`. op-reth archive (`RETH_ARCHIVE=1`, omit `--full`). Live EL behind `fortel2-replica-rpc` and SOS (`http://fortel2-replica-reth:10000`). Grow disk to ≈25 GB before 2026-10-20. |
-| `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Staging gateway (`srv-dagr42tbedkc73c5mp80`). Suspend with geth on 2026-09-12 after 17:25Z. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
+| `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Staging gateway (`srv-dagr42tbedkc73c5mp80`). **Suspended 2026-09-12** with geth (D-0129). Resume only as the verification door for a rollback. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
 | `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000` (R-0017). |
 
-Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. Rollback for 24 h = both env values back to `http://fortel2-replica:10000`. Disk follow-up: grow `fortel2-replica-reth` to ≈25 GB before 2026-10-20. Neither geth nor the staging gateway is deleted before Task 9.
+Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. The 24 h window passed clean; geth and the staging gateway were suspended 2026-09-12 (D-0129). Rollback from here is gated on catch-up, because a resumed geth datadir is behind by the whole suspension interval and a passing `eth_blockNumber` does not prove it is current: (1) resume `fortel2-replica` (geth); (2) resume `fortel2-replica-reth-rpc` and set its `REPLICA_UPSTREAM=http://fortel2-replica:10000` so geth has a verification door; (3) from the Mac run `REPLICA_L2_RPC_URL=https://fortel2-replica-reth-rpc.onrender.com ./scripts/replica-sync-check.sh` until lag vs live `safe_l2` is ≤ 12, then `CANDIDATE_RPC=https://fortel2-replica-reth-rpc.onrender.com CHECK_RECEIPTS=0 ./scripts/verify-reth-parity.sh` must PASS (geth is `--full`-class, so receipt parity is not expected); (4) only then set `fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL` back to `http://fortel2-replica:10000`. Disk follow-up: grow `fortel2-replica-reth` to ≈25 GB before 2026-10-20. Neither geth nor the staging gateway is deleted before Task 9.
 
 ### Snapshot bootstrap (R-0014 / D-0123)
 
@@ -260,7 +260,7 @@ Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on 
 
 ## Render
 
-**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-reth + op-node (+ optional L1 router) in one container. Live reth stays Standard (Q5: RSS peak 724 MB of 2 GiB, R-0017). The geth pserv remains Wave 1 on Standard (R-0012) until it is suspended. Pinned op-reth defaults `--engine.cross-block-cache-size` to 4096 MB — that OOMs Standard. Set `RETH_CROSS_BLOCK_CACHE_MB=256` (R-0013). Mini archive RSS was 1.4 GB (D-0122); the Render reth replica is archive (`RETH_ARCHIVE=1`), not `--full`.
+**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-reth + op-node (+ optional L1 router) in one container. Live reth stays Standard (Q5: RSS peak 724 MB of 2 GiB, R-0017). The geth pserv is suspended (2026-09-12, D-0129); if resumed for rollback it runs Wave 1 on Standard (R-0012). Pinned op-reth defaults `--engine.cross-block-cache-size` to 4096 MB — that OOMs Standard. Set `RETH_CROSS_BLOCK_CACHE_MB=256` (R-0013). Mini archive RSS was 1.4 GB (D-0122); the Render reth replica is archive (`RETH_ARCHIVE=1`), not `--full`.
 
 **OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. The usual 2 GB killer is op-node’s upstream `--l1.cache-size=900` (full L1 receipts), not the Python filter. Wave 1 (PR #39) is already in the tables below: `L1_CACHE_SIZE=128`, `L1_MAX_CONCURRENCY=2`, `L1_RPC_MAX_BATCH_SIZE=5`, `GETH_FDLIMIT=4096`, `--cache.noprefetch`. Measured 2026-08-17: catch-up RSS stayed **256–478 MB** for 12h after Wave 1 (Wave 0 peak was 2,125 MB, then exit 137).
 
