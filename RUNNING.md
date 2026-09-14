@@ -4,7 +4,7 @@ How to clone this repo and run a read-only ForteL2 verifier on a laptop or VPS.
 
 The only external thing you must supply is an Ethereum **Sepolia L1 RPC URL** — chain config and pinned images are already in the repo. No sequencer, batcher, or proposer keys.
 
-This is **not** the hosted Render node. Local compose publishes raw op-reth / op-node. The method filter, public URLs, and L1 schedule router are the single-container Render image — see `README.md` if you meant to call those instead.
+This is **not** the hosted Render node. Local compose publishes raw op-reth / op-node on **loopback only** (`127.0.0.1:9545` / `127.0.0.1:9547`). There is no method filter and no allowlist. The method filter, public URLs, and L1 schedule router are the single-container Render image — see `README.md` if you meant to call those instead.
 
 ## What you need
 
@@ -18,13 +18,27 @@ This is **not** the hosted Render node. Local compose publishes raw op-reth / op
 ```bash
 git clone https://github.com/StephenForte/fortel2-replica.git
 cd fortel2-replica
+```
+
+**Verify the clone is the operator's chain** before you start. Hashes are published in `README.md` §Chain identity.
+
+```bash
+# macOS
+shasum -a 256 config/genesis.json config/rollup.json
+# Linux
+# sha256sum config/genesis.json config/rollup.json
+```
+
+The two 64-hex digests must match the `config/genesis.json` and `config/rollup.json` rows in that table. If either differs, stop. You do not have chain 852 as the operator runs it.
+
+```bash
 cp .env.example .env
 # optional: edit L1_RPC_URL if you have your own Sepolia endpoint
 openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 docker compose up -d
 ```
 
-`docker compose up` pulls the pinned images (op-reth + op-node by digest), `op-reth init`s the datadir from `config/genesis.json` on first run (refuses chain 901), then starts op-reth `--full` + op-node `--l2.enginekind=reth`. Host ports are `9545` (L2 execution RPC) and `9547` (op-node RPC). Compose only reads `L1_RPC_URL` (required), plus optional `L1_BLOCK_TIME`, `L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`, `L1_RPC_KIND`, `RETH_CROSS_BLOCK_CACHE_MB`, and `RETH_RPC_CACHE_MAX_BLOCKS`. Everything else in `.env.example` is Render-only and ignored here.
+`docker compose up` pulls the pinned images (op-reth + op-node by digest), `op-reth init`s the datadir from `config/genesis.json` on first run (refuses chain 901), then starts op-reth `--full` + op-node `--l2.enginekind=reth`. Host ports are loopback `127.0.0.1:9545` (L2 execution RPC) and `127.0.0.1:9547` (op-node RPC). Compose only reads `L1_RPC_URL` (required), plus optional `L1_BLOCK_TIME`, `L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`, `L1_CACHE_SIZE`, `L1_MAX_CONCURRENCY`, `L1_RPC_MAX_BATCH_SIZE`, `L1_RPC_KIND`, `RETH_CROSS_BLOCK_CACHE_MB`, and `RETH_RPC_CACHE_MAX_BLOCKS`. Everything else in `.env.example` is Render-only and ignored here.
 
 The container's op-reth must report `Reth Version: 2.3.0-dev` commit `9384bc53…` (same binary lineage as the Mini pin). The single-container image asserts that at start.
 
@@ -38,10 +52,44 @@ curl -s http://127.0.0.1:9545 -H 'content-type: application/json' \
 
 curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"optimism_syncStatus","params":[]}' | jq \
-  '{current_l1:.result.current_l1.number, head_l1:.result.head_l1.number, safe_l2:.result.safe_l2.number}'
+  '{current_l1:.result.current_l1.number, head_l1:.result.head_l1.number, safe_l2:.result.safe_l2.number, unsafe_l2:.result.unsafe_l2.number}'
 ```
 
 `jq` is optional. Foundry `cast` is optional too — if you have it, the same checks are `cast chain-id` / `cast block-number` on `:9545` and `cast rpc optimism_syncStatus` on `:9547`.
+
+## A healthy node vs a stalled one
+
+`docker compose ps` showing `Up` is not enough. A stalled node answers `eth_chainId` the same way a working one does.
+
+**Catching up (normal, not stalled).** `docker compose logs -f op-node` repeats `Advancing bq origin` as `current_l1` climbs toward `head_l1`. `safe_l2` / `unsafe_l2` stay `0` until derivation reaches the L1 blocks where the sequencer posted batches. That lag is expected and can last a long time from genesis.
+
+**Healthy after catch-up.** `unsafe_l2` (and then `safe_l2`) leave `0` and keep climbing. Local `eth_blockNumber` on `:9545` advances. Compare it to the operator's public replica:
+
+```bash
+curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+```
+
+While you are still deriving, your tip is behind. Once caught up, it should track that public head — both sit ~3 minutes behind the sequencer, and both pause new L2 progress during the sequencer sleep window (**23:45–03:00** `America/Los_Angeles`). Hash-equal blocks at the same number mean you are on the same chain.
+
+**Stalled.** `current_l1` is not climbing, or `current_l1` has reached `head_l1` but `safe_l2` stays `0` for hours after that, or your L2 head is frozen while the public endpoint keeps moving. Typical causes: PublicNode returning 0 receipts (D-0105), or genesis/rollup that do not match `README.md` §Chain identity.
+
+## Reach the RPC from another machine (opt-in)
+
+The default `ports:` publish is loopback. A process on this machine can use `http://127.0.0.1:9545`; nothing else on the network can. That is the intended default on a laptop and on a VPS.
+
+Compose does **not** run the method filter. Opening the ports is unauthenticated L2 JSON-RPC (`eth` / `net` / `web3` on op-reth, plus op-node RPC) with no allowlist.
+
+To listen on all interfaces, edit the two `ports:` lines in `docker-compose.yml` and drop the `127.0.0.1:` prefix, then recreate the containers (`docker compose up -d`):
+
+    ports:
+      - "9545:8545"      # all interfaces — unauthenticated L2 RPC on every NIC
+    ports:
+      - "9547:9545"
+
+Do **not** change `--http.addr`, `--ws.addr`, `--rpc.addr`, or `--authrpc.addr` inside the `command:` lists. Those are the in-container bind. They must stay `0.0.0.0` so op-node can reach op-reth at `http://op-reth:8551` on the compose network. Setting them to `127.0.0.1` makes the node look "up" and still unreachable from op-node.
+
+If you publish past loopback, put a firewall or reverse proxy in front. Do not assume Docker's publish is a security boundary.
 
 ## What to expect
 

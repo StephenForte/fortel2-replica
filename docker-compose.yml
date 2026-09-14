@@ -3,6 +3,8 @@
 #   openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 #   docker compose up -d
 # EL http://127.0.0.1:9545  op-node http://127.0.0.1:9547
+# Host publishes are loopback only. In-container --*.addr stay 0.0.0.0
+# so op-node can reach op-reth on the compose network. See RUNNING.md.
 # Compose reads L1_RPC_URL (required), L1_BLOCK_TIME, L1_HTTP_POLL_INTERVAL,
 # L1_RPC_RATE_LIMIT, L1_CACHE_SIZE, L1_MAX_CONCURRENCY, L1_RPC_MAX_BATCH_SIZE,
 # L1_RPC_KIND, RETH_CROSS_BLOCK_CACHE_MB, RETH_RPC_CACHE_MAX_BLOCKS.
@@ -46,7 +48,7 @@ services:
       - --engine.cross-block-cache-size=${RETH_CROSS_BLOCK_CACHE_MB:-256}
       - --rpc-cache.max-blocks=${RETH_RPC_CACHE_MAX_BLOCKS:-256}
     ports:
-      - "9545:8545"
+      - "127.0.0.1:9545:8545"
 
   op-node:
     image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a
@@ -87,7 +89,7 @@ services:
       - --rpc.port=9545
       - --log.level=info
     ports:
-      - "9547:9545"
+      - "127.0.0.1:9547:9545"
 
 volumes:
   reth-data:
