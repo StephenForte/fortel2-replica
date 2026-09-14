@@ -19,7 +19,14 @@ Handing this to a friend? See [`RUNNING.md`](./RUNNING.md) for a full walkthroug
 
 ## Chain identity
 
-These are the artifacts a clone must match before `docker compose up`. Recompute with `shasum -a 256 config/genesis.json config/rollup.json` (`sha256sum` on Linux). If any value differs, you do not have the chain the operator runs — stop and refresh `config/` from this repo.
+These are the artifacts a clone must match before `docker compose up`. Verify with a command that **fails closed** — it exits non-zero on mismatch instead of printing digests for you to eyeball:
+
+```bash
+cd config && shasum -a 256 -c SHA256SUMS   # macOS
+cd config && sha256sum -c SHA256SUMS       # Linux
+```
+
+If it does not print `OK` for both files you do not have the chain the operator runs — stop and refresh `config/` from this repo. This catches a modified or partial clone; it cannot catch a wholly stale one, since the sums would be stale too. For that, compare the table below against this README on the repo page, and watch for the redeploy gate.
 
 | Artifact | Value |
 |---|---|

@@ -1,0 +1,8 @@
+# Artifact digests for ForteL2 chain 852. Verify BEFORE `docker compose up`:
+#   cd config && shasum -a 256 -c SHA256SUMS     # macOS
+#   cd config && sha256sum -c SHA256SUMS         # Linux
+# Exits non-zero on mismatch. This catches a modified or partial clone; it
+# cannot catch a wholly stale one (the sums would be stale too) — for that,
+# compare against README.md on the repo page, and see the redeploy gate.
+f4f91c1aed566549585ab9b46ddcec4c1af73b6c695b1f60826806badd861ac1  genesis.json
+e8bc0be97911b7de8df3c1e9a4e51cd5dc5981a757427ceb3ad7beaddebc3c69  rollup.json

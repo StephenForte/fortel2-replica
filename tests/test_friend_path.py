@@ -352,6 +352,68 @@ class FriendPathTests(unittest.TestCase):
         self.assertIn("852", readme)
         self.assertIn("0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d", readme)
 
+    def test_sha256sums_is_checkable_and_matches_config(self):
+        """config/SHA256SUMS must be usable with `shasum -c` and stay in sync.
+
+        The friend runbook's verification step is only fail-closed if this file
+        is both parseable by shasum/sha256sum AND correct. A stale entry here
+        would exit 0 against the wrong artifact, which is worse than no check.
+        """
+        sums_path = ROOT / "config" / "SHA256SUMS"
+        self.assertTrue(sums_path.exists(), "config/SHA256SUMS is missing")
+        entries = {}
+        for line in sums_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.lstrip().startswith("#"):
+                continue
+            # GNU/BSD format is "<64 hex><two spaces><name>"; anything else
+            # would make `shasum -c` report a malformed line and pass anyway.
+            match = re.fullmatch(r"([0-9a-f]{64})  (\S+)", line)
+            self.assertIsNotNone(match, f"not a checkable sums line: {line!r}")
+            entries[match.group(2)] = match.group(1)
+
+        self.assertEqual(
+            {"genesis.json", "rollup.json"},
+            set(entries),
+            "SHA256SUMS must cover exactly the two published artifacts",
+        )
+        self.assertEqual(entries["genesis.json"], sha256_file(GENESIS))
+        self.assertEqual(entries["rollup.json"], sha256_file(ROLLUP))
+
+        # Paths are relative to config/, so `cd config && shasum -c SHA256SUMS`
+        # resolves them. An absolute or ../-prefixed path would break that.
+        for name in entries:
+            self.assertNotIn("/", name, f"{name} must be relative to config/")
+
+    def test_runbooks_use_the_checking_form_not_the_printing_form(self):
+        """`shasum -a 256 <file>` prints digests; only -c exits non-zero.
+
+        Both platform lines are checked, not just one: a doc that reverted its
+        macOS line while keeping the Linux one is broken for macOS readers, and
+        an "at least one match" assertion would pass it.
+        """
+        for doc in (README, ROOT / "RUNNING.md"):
+            text = doc.read_text(encoding="utf-8")
+            if "SHA256SUMS" not in text:
+                continue
+            for form in (r"shasum -a 256 -c SHA256SUMS", r"sha256sum -c SHA256SUMS"):
+                self.assertRegex(
+                    text,
+                    form,
+                    f"{doc.name} is missing the checking form: {form}",
+                )
+            # The printing form against the artifacts themselves exits 0 even
+            # when they are wrong, so it must not appear as the verify step.
+            for printing in (
+                r"shasum -a 256 (config/)?genesis\.json",
+                r"(?<!# )sha256sum (config/)?genesis\.json",
+            ):
+                self.assertNotRegex(
+                    text,
+                    printing,
+                    f"{doc.name} still shows the printing form as verification",
+                )
+
+
 
 if __name__ == "__main__":
     unittest.main()
