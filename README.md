@@ -17,9 +17,21 @@ Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-re
 
 Handing this to a friend? See [`RUNNING.md`](./RUNNING.md) for a full walkthrough of running your own node.
 
+## Chain identity
+
+These are the artifacts a clone must match before `docker compose up`. Recompute with `shasum -a 256 config/genesis.json config/rollup.json` (`sha256sum` on Linux). If any value differs, you do not have the chain the operator runs — stop and refresh `config/` from this repo.
+
+| Artifact | Value |
+|---|---|
+| `l2_chain_id` | **852** (`eth_chainId` → `0x354`) |
+| `config/genesis.json` | `f4f91c1aed566549585ab9b46ddcec4c1af73b6c695b1f60826806badd861ac1` |
+| `config/rollup.json` | `e8bc0be97911b7de8df3c1e9a4e51cd5dc5981a757427ceb3ad7beaddebc3c69` |
+| `genesis.l2.hash` | `0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d` |
+| `genesis.l1` | `11545587` / `0xaf5518e27683473d8bcc776fadc48c2af9ef1d9881ed0f62c5e3a9ffd25c0800` |
+
 ## Quick start (laptop / VPS)
 
-Needs Docker Compose and ~2 GB RAM. Foundry (`cast`) is optional. This path is **raw** op-reth + op-node on the host — not the Render method filter. Local smoke on publicnode may stall (D-0105: 0 receipts); use a receipts-capable Sepolia URL for a real sync.
+Needs Docker Compose and ~2 GB RAM. Foundry (`cast`) is optional. This path is **raw** op-reth + op-node on **loopback** — not the Render method filter. Local smoke on publicnode may stall (D-0105: 0 receipts); use a receipts-capable Sepolia URL for a real sync. To publish past loopback, see [`RUNNING.md`](./RUNNING.md).
 
 ```bash
 git clone https://github.com/StephenForte/fortel2-replica.git
@@ -31,8 +43,8 @@ openssl rand -hex 32 > jwt.txt && chmod 600 jwt.txt
 docker compose up -d
 ```
 
-- L2 execution RPC: `http://127.0.0.1:9545`
-- op-node RPC: `http://127.0.0.1:9547`
+- L2 execution RPC: `http://127.0.0.1:9545` (loopback only)
+- op-node RPC: `http://127.0.0.1:9547` (loopback only)
 
 ```bash
 curl -s http://127.0.0.1:9545 -H 'content-type: application/json' \
