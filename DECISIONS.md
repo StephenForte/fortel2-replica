@@ -459,7 +459,32 @@ Phase C executed 17:16–17:25Z as **two env edits** to `http://fortel2-replica-
 
 **Not this decision.** Suspending or deleting any service (operator, 2026-09-12); the disk grow (operator, before 2026-10-20); ForteL2 docs (planner, PR #214); Task 8 (`fortel2-node`) and Task 9 (geth removal).
 
-Next free R-id is **R-0019**.
+Next free R-id is **R-0020**.
+
+## R-0019 — Task 9: the geth EL path is deleted from the repo and from Render; the interlock it removed was replaced with a broader one
+
+*2026-09-14 · implements ForteL2 op-reth migration Task 9 (repo side). Planner-verified 2026-09-14 (PR #56, main `1b2624b`).*
+
+**What went.** `Dockerfile` (59 lines), `entrypoint.sh` (406), `healthcheck.sh` (23), and the `fortel2-replica` service + `fortel2-replica-data` disk blocks in `render.yaml`. Then the operator deleted, by hand, the two suspended Render services: `fortel2-replica` (`srv-d9fsgi3rjlhs73ceh6tg`, geth pserv, **50 GB** disk `dsk-d9g1mmsm0tmc73degtrg`) and the staging gateway `fortel2-replica-reth-rpc` (`srv-dagr42tbedkc73c5mp80`). Both confirmed absent from the workspace afterwards. op-geth has not been the live EL since 2026-09-02; the services had been suspended since 2026-09-12 (ForteL2 D-0129).
+
+**Verified after the deletions, not before:** public read `https://fortel2-replica-rpc.onrender.com` answers `web3_clientVersion = reth/v2.3.0-9384bc5`, tip 982723; SettlementOS `/api/networks` 200. Nothing depended on either deleted service.
+
+**The interlock question was the whole risk.** `tests/test_render_yaml.py::test_live_dockerfile_is_main_geth_pin` existed to stop a merge starting reth on that 50 GB disk (R-0013). Deleting it is correct here because the disk went in the same change **and** because `autoDeploy` was already `off` on that service — the door it guarded was shut before the PR. What matters is that its intent was replaced, and it was, by a guard that covers more ground than the original: `test_no_op_geth_image_pin_in_active_paths`, `test_no_service_points_at_retired_root_dockerfile`, `test_retired_geth_files_are_absent`, and `test_render_yaml_service_set` (an exact service set, so a stray service added later is caught — the old test only asserted one named block was present).
+
+**Planner mutation results, six of them, three beyond what the worker ran.** Re-adding a pserv at `./Dockerfile` → 2 tests red. An op-geth pin in `docker-compose.yml` → red. **An op-geth pin in `Dockerfile.reth`** — the file that builds the live service — → 2 tests red. **Resurrecting the deleted files** → 2 tests red. **`--l2.enginekind=geth`** → red, caught by the pin test despite its name saying "image pin". Compose `L1_RPC_KIND` drifting from `.env.example` → red, keyed off both files so either side failing is caught. Gate: 118 tests, 3 failures, 6 skipped against a 115/3/6 baseline; the three are the `test_snapshot_reth_state` pid guard tripping on the live Mac sequencer, unrelated and green in CI.
+
+**Also in #56:** `docker-compose.yml` resolved `${L1_RPC_KIND:-quicknode}` while `.env.example` shipped `standard` — the mismatch #53 fixed in the template, surviving in a second place for any friend who writes their own `.env`. Now aligned and tested. `render.yaml`'s `fortel2-replica-reth-data` was declared 20 GB against a live 10 GB; set to match live on the reasoning that the Blueprint is never applied (D-0128), so the value is documentation and should not document a size that does not exist.
+
+**Task 9's own precondition was NOT met, and this is recorded rather than glossed.** Its Instructions say to end the window only "after Mac + Render observation and **at least one friend clean sync**". No friend has synced; there are two candidates expected the week of 2026-09-21, one of whom already has a Render account. Task 8's `Clean-room deploy` verification is likewise unrun, because no host in the loop has Docker — not the worker's, not the planner's. The operator decided to proceed on the repo side and then delete the services. That is a legitimate operator call on a learning chain whose geth fallback had been suspended for two days and was growing staler by the hour, but it is a deviation from the written gate, not satisfaction of it.
+
+**Reversibility, stated plainly because it is now asymmetric.** The deleted files are recoverable from git at `3ffd56f`. The Render service and its 50 GB disk are not: if next week's friend sync exposes a reth-path problem, rollback means a new disk and a full resync from genesis or a snapshot, not reattaching what was there. Nothing about the reth path changed in this PR — the edits to `Dockerfile.reth` and `entrypoint-reth.sh` were comment-only, verified by diff, with no pin, digest, `COPY`, or restore logic moved.
+
+**Open, found in review and not fixed here:** `gateway/Dockerfile:15` still carries `REPLICA_UPSTREAM=http://fortel2-replica:10000` as an **image default** — pointing at the service just deleted. It is dormant today: the live `fortel2-replica-rpc` has that env set explicitly to `http://fortel2-replica-reth:10000` (D-0128), which is why the post-deletion probe returns reth. The hazard is latent: any future gateway deploy that loses the env var now falls back to a host that no longer resolves, and public read goes down. It was out of #56's permitted scope because the planner's brief put `gateway/` off-limits — a scoping error, since that default was part of the geth surface. Needs its own change.
+
+**The disk follow-up is closed, ahead of its date.** In the same dashboard session the operator resized `fortel2-replica-reth`'s disk (`dsk-dagqucfqj5pc73fdnkbg`, same id — resized, not replaced) from **10 GB to 50 GB**. R-0017 asked for ≈25 GB before **2026-10-20**; Render offers fixed sizes and 25 is not one, so 50 is the next step up. At the Q5 growth rate of ≈170 MB/day that is years of headroom rather than weeks, and the dated follow-up no longer needs tracking. Render disks cannot be shrunk, so the trade is a permanently larger disk line on the bill for never revisiting this. `render.yaml` is corrected to 50 in this entry's PR — it had drifted the moment the resize landed, hours after #56 set it to match a live 10 GB.
+
+**Not this decision.** Growing or costing the reth disk; the `gateway/Dockerfile` default; ForteL2-side PRD and AGENTS updates (planner); friend onboarding instructions for the Render path (planner, next); recruiting.
+
 
 ## R-0018 — Friend path hardened: compose publishes loopback only, and the chain artifacts are published with hashes
 
