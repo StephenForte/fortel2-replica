@@ -393,8 +393,15 @@ class FriendPathTests(unittest.TestCase):
         """
         for doc in (README, ROOT / "RUNNING.md"):
             text = doc.read_text(encoding="utf-8")
-            if "SHA256SUMS" not in text:
-                continue
+            # Assert presence rather than skipping: a doc that dropped
+            # SHA256SUMS and reverted to the printing form would otherwise skip
+            # every assertion below, so the test would pass for exactly the
+            # complete rollback it exists to prevent (Codex/Bugbot on #55).
+            self.assertIn(
+                "SHA256SUMS",
+                text,
+                f"{doc.name} no longer references SHA256SUMS at all",
+            )
             for form in (r"shasum -a 256 -c SHA256SUMS", r"sha256sum -c SHA256SUMS"):
                 self.assertRegex(
                     text,

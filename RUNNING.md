@@ -24,9 +24,9 @@ cd fortel2-replica
 
 ```bash
 # macOS
-cd config && shasum -a 256 -c SHA256SUMS && cd ..
+( cd config && shasum -a 256 -c SHA256SUMS )
 # Linux
-# cd config && sha256sum -c SHA256SUMS && cd ..
+# ( cd config && sha256sum -c SHA256SUMS )
 ```
 
 Both files must print `OK`. If either does not, stop — you do not have chain 852 as the operator runs it. The expected digests are also in `README.md` §Chain identity for reference.
