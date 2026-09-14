@@ -20,16 +20,18 @@ git clone https://github.com/StephenForte/fortel2-replica.git
 cd fortel2-replica
 ```
 
-**Verify the clone is the operator's chain** before you start. Hashes are published in `README.md` §Chain identity.
+**Verify the clone is the operator's chain** before you start. This **fails closed** — non-zero exit on mismatch, rather than printing digests for you to compare by eye.
 
 ```bash
 # macOS
-shasum -a 256 config/genesis.json config/rollup.json
+( cd config && shasum -a 256 -c SHA256SUMS )
 # Linux
-# sha256sum config/genesis.json config/rollup.json
+# ( cd config && sha256sum -c SHA256SUMS )
 ```
 
-The two 64-hex digests must match the `config/genesis.json` and `config/rollup.json` rows in that table. If either differs, stop. You do not have chain 852 as the operator runs it.
+Both files must print `OK`. If either does not, stop — you do not have chain 852 as the operator runs it. The expected digests are also in `README.md` §Chain identity for reference.
+
+This catches a modified or partial clone. It cannot catch a wholly **stale** one, because `SHA256SUMS` would be stale with it; a stale clone shows up instead when your derived hashes stop matching the operator's endpoint (see *A healthy node vs a stalled one*), and after a redeploy gate you re-clone anyway.
 
 ```bash
 cp .env.example .env
