@@ -1086,16 +1086,6 @@ printf '%064d\n' 0
         self.assertEqual(1, result.returncode)
         self.assertIn("RETH_SNAPSHOT_FORCE=1 requires RETH_SNAPSHOT_URL", result.stderr)
 
-    def test_live_geth_entrypoint_never_restores_snapshot(self):
-        geth = (ROOT / "entrypoint.sh").read_text(encoding="utf-8")
-        docker = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-        self.assertNotIn("RETH_SNAPSHOT", geth)
-        self.assertNotIn("restore_reth_snapshot", geth)
-        self.assertNotIn("op-reth", geth)
-        self.assertIn("op-geth", docker)
-        self.assertNotIn("RETH_SNAPSHOT", docker)
-
-
 class HealthcheckTests(unittest.TestCase):
     def run_healthcheck(self, env):
         return subprocess.run(

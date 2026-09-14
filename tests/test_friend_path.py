@@ -224,6 +224,16 @@ def env_example_assignments(text: str) -> dict[str, str]:
     return values
 
 
+def compose_interpolation_defaults(compose_text: str, key: str) -> set[str]:
+    """Return every ${KEY:-fallback} default for key in compose (code only)."""
+    found = set()
+    pattern = re.compile(rf"\$\{{{re.escape(key)}:-([^}}]+)\}}")
+    for raw in compose_text.splitlines():
+        code = raw.split("#", 1)[0]
+        found.update(pattern.findall(code))
+    return found
+
+
 def kind_for_url(url: str) -> str:
     host = (urlparse(url).hostname or "").lower()
     for suffix, kind in KIND_BY_HOST_SUFFIX:
@@ -342,6 +352,23 @@ class FriendPathTests(unittest.TestCase):
         self.assertTrue(url, "L1_RPC_URL missing from .env.example")
         self.assertTrue(kind, "L1_RPC_KIND missing from .env.example")
         self.assertEqual(kind_for_url(url), kind)
+
+    def test_compose_l1_rpc_kind_fallback_matches_env_example(self):
+        # A friend who writes .env without L1_RPC_KIND must get the same
+        # kind .env.example ships. Hardcoding "standard" here would let
+        # both files drift together. Key the assertion off both files.
+        values = env_example_assignments(ENV_EXAMPLE.read_text(encoding="utf-8"))
+        example_kind = values.get("L1_RPC_KIND")
+        self.assertTrue(example_kind, "L1_RPC_KIND missing from .env.example")
+        defaults = compose_interpolation_defaults(
+            COMPOSE.read_text(encoding="utf-8"),
+            "L1_RPC_KIND",
+        )
+        self.assertTrue(
+            defaults,
+            "docker-compose.yml has no ${L1_RPC_KIND:-...} fallback",
+        )
+        self.assertEqual({example_kind}, defaults)
 
     def test_readme_published_hashes_match_config_files(self):
         readme = README.read_text(encoding="utf-8")

@@ -1,7 +1,6 @@
 # ForteL2 verifier — stock op-reth + op-node (chain 852 / Sepolia L1).
-# Task 7 image for pserv `fortel2-replica-reth` only. The live geth pserv
-# keeps building `./Dockerfile` (main's op-geth pin). Do not point
-# `fortel2-replica` at this file.
+# Image for pserv `fortel2-replica-reth` only. Do not point a Web
+# Service at this file (that would boot a second public verifier).
 #
 # Images pinned by immutable digest (ForteL2 Task 1 / D-0109). Tag strings
 # are comments only — do not float off the digest. The container's op-reth

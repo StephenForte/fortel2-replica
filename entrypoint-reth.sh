@@ -58,7 +58,7 @@ FORTEL2_EL_READY_FILE="${FORTEL2_EL_READY_FILE:-/tmp/fortel2-el-ready}"
 rm -f "$FORTEL2_EL_READY_FILE"
 FILTER_PID=""
 # Optional first-boot snapshot (R-0014 / D-0123). Only this reth entrypoint
-# restores; live geth ./Dockerfile / entrypoint.sh never grow this path.
+# restores.
 # RETH_SNAPSHOT_URL + RETH_SNAPSHOT_SHA256 are operator-set. FORCE=1 is a
 # one-shot replace of an existing db/ after a validated extract (paused 68 %
 # disk) — also drops reth.toml (persisted prune config); unset after. A
@@ -311,7 +311,7 @@ fi
 
 # R-0014 / R-0015: bootstrap from a stopped-EL snapshot instead of re-deriving
 # from genesis. Pin + 852 genesis hash-check already ran (fail-fast). Restore
-# never writes jwt.txt (fresh in-container) and never runs on live geth.
+# never writes jwt.txt (fresh in-container). This path lives only here.
 # FORCE replace also drops reth.toml so a fresh datadir cannot inherit a
 # prior --full prune config.
 snapshot_force_enabled() {

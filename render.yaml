@@ -1,116 +1,58 @@
-# Render Blueprint — ForteL2 L2 verifier (op-reth Task 7 + frozen live geth).
+# Render Blueprint — ForteL2 L2 verifier (op-reth).
 #
-# LIVE geth (Oregon, Dashboard-created, unattached): Private Service
-# `fortel2-replica` with a 50 GB disk at /data. That first `services:` entry
-# is a frozen snapshot of the live env (R-0008 / R-0012). Do NOT re-apply
-# it as a **new** Blueprint onto the live Oregon pserv. Render cannot
-# reattach the live 50 GB disk. A new apply of that entry (`type: pserv` /
-# `sizeGB: 20`) would create a second empty-disk replica named the same
-# and a full L1 resync. Keep deploying the *existing* geth image onto this
-# frozen pserv (rollback target until Task 9). Phase C (R-0017) was env
-# repoint, not an image change. See README "Do not convert this service
-# to Web" and "Going public" / "Revert".
+# Do NOT re-apply this file as a new Blueprint onto the live Oregon
+# environment. Live `fortel2-replica-reth` is Dashboard-created and
+# unattached (D-0128 / R-0008). A new apply creates empty-disk
+# services and a full L1 resync — it does not attach the live disk.
+# Keep deploying the *existing* pserv. See README "Do not convert
+# this service to Web" and "Going public".
 #
-# Task 7 ADDITIONS (operator-applied, R-0013 / R-0017): `fortel2-replica-reth`
-# (pserv; Blueprint sizeGB: 20 is greenfield, live dashboard disk is
-# 10 GB — D-0127 / #49; grow to ≈25 GB before 2026-10-20; do not re-apply to
-# "fix" it) and diskless staging gateway `fortel2-replica-reth-rpc`
-# (suspend 2026-09-12 after 17:25Z). Add these objects; never mutate the live
-# entry, its disk name, or `fortel2-replica-rpc`. Phase C executed as two
-# env edits to http://fortel2-replica-reth:10000 — not a rename-swap.
-# Render private hostnames are immutable slugs; renaming moves no traffic.
+# Declared objects (operator-applied, R-0013 / R-0017):
+# `fortel2-replica-reth` (pserv; live dashboard disk is 10 GB —
+# D-0127 / #49; grow to ≈25 GB before 2026-10-20 as a dashboard
+# resize, not a Blueprint apply) and diskless staging gateway
+# `fortel2-replica-reth-rpc` (suspend 2026-09-12 after 17:25Z).
+# Never mutate disk name `fortel2-replica-reth-data` or
+# Dashboard-created `fortel2-replica-rpc`. Phase C executed as
+# two env edits to http://fortel2-replica-reth:10000 — not a
+# rename-swap. Render private hostnames are immutable slugs;
+# renaming moves no traffic.
 #
-# sizeGB: 20 on the live entry is the greenfield minimum, not the live
-# disk. Do not "fix" live to 20. Raising 20→50 on a *new* apply still
-# creates an empty 50 GB volume.
+# Public URL (live): Dashboard Web Service `fortel2-replica-rpc`
+# (no disk), Dockerfile `./gateway/Dockerfile`, context `./gateway`,
+# same Oregon env, upstream http://fortel2-replica-reth:10000
+# (R-0017). Sequencer tip: `fortel2-sequencer-rpc`
+# (`sequencer-read/start.sh`). Do not point a Web Service at
+# `Dockerfile.reth` (that boots a second public verifier). Do not
+# attach `fortel2-replica-rpc` to this Blueprint (R-0008).
 #
-# Public URL (live): Dashboard Web Service `fortel2-replica-rpc` (no disk),
-# Dockerfile `./gateway/Dockerfile`, context `./gateway`, same Oregon env,
-# upstream http://fortel2-replica-reth:10000 (R-0017). Rollback = env back to
-# http://fortel2-replica:10000. Sequencer tip: `fortel2-sequencer-rpc`
-# (`sequencer-read/start.sh`). Do not point a Web Service at ./Dockerfile.
-# Do not attach `fortel2-replica-rpc` to this Blueprint (R-0008).
+# Greenfield replica only: New → Blueprint → this repo (then the
+# service stays Blueprint-managed). Live services are
+# Dashboard-created and unattached. On Blueprint sync, envVars
+# with `value:` are applied/updated. Keys with `sync: false`
+# (`L1_RPC_URL`) are prompted only on first create; later syncs
+# ignore them — set/rotate those secrets in the dashboard.
 #
-# Greenfield replica only: New → Blueprint → this repo (then the service
-# stays Blueprint-managed). Live services are Dashboard-created and
-# unattached. On Blueprint sync, envVars with `value:` are applied/updated.
-# Keys with `sync: false` (L1_RPC_URL, JWT_SECRET) are prompted only on
-# first create; later syncs ignore them — set/rotate those secrets in the
-# dashboard.
+# If you instead create a Private Service from the dashboard (not
+# via this Blueprint), it is unattached to render.yaml — paste the
+# README checklist.
 #
-# If you instead create a Private Service from the dashboard (not via this
-# Blueprint), it is unattached to render.yaml — paste the README checklist.
-#
-# Credit schedule (observe): L1_RPC_SCHEDULE=business → QuickNode 09:00–17:00
-# America/Los_Angeles, publicnode overnight. Overrides:
+# Credit schedule (observe): L1_RPC_SCHEDULE=business → QuickNode
+# 09:00–17:00 America/Los_Angeles, publicnode overnight. Overrides:
 #   L1_RPC_FORCE=public|metered  or  L1_USE_PUBLIC_RPC=1
-# Memory policy: Wave 1 on Standard (R-0012). Do not apply this file onto the
-# live pserv. Wave 2 is dashboard env only after a measured 1.6–1.9 GB peak.
+# Memory policy: Standard (R-0017 Q5). Do not apply this file onto
+# the live pserv.
 #
-# Dashboard replica: New → Private Service → Runtime Docker → root Dockerfile.
-# Attach a persistent disk at /data (≥20 GB; live is 50 GB).
+# Dashboard replica: New → Private Service → Runtime Docker →
+# Dockerfile.reth. Attach a persistent disk at /data (live is 10 GB;
+# grow to ≈25 GB before 2026-10-20).
 
 services:
-  - type: pserv
-    name: fortel2-replica
-    runtime: docker
-    plan: standard
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    region: oregon
-    # Filter answers GET / with {"ok":true,...} for Render's private-network probe.
-    healthCheckPath: /
-    disk:
-      name: fortel2-replica-data
-      mountPath: /data
-      sizeGB: 20
-    envVars:
-      - key: L1_RPC_URL
-        sync: false
-      - key: JWT_SECRET
-        sync: false
-      - key: L1_BLOCK_TIME
-        value: "12"
-      - key: GETH_CACHE_MB
-        value: "128"
-      - key: GETH_FDLIMIT
-        value: "4096"
-      # Go soft caps — keep geth + op-node under Standard (2GB) during derivation bursts
-      - key: GETH_GOMEMLIMIT
-        value: 700MiB
-      - key: OP_NODE_GOMEMLIMIT
-        value: 768MiB
-      # Shrink op-node L1 receipt cache (upstream default 900 OOMs 2GB during catch-up)
-      - key: L1_CACHE_SIZE
-        value: "128"
-      - key: L1_MAX_CONCURRENCY
-        value: "2"
-      - key: L1_RPC_MAX_BATCH_SIZE
-        value: "5"
-      - key: TZ
-        value: America/Los_Angeles
-      # business = 09:00–17:00 QuickNode (L1_RPC_URL), else public overnight
-      - key: L1_RPC_SCHEDULE
-        value: business
-      - key: L1_USE_PUBLIC_RPC
-        value: "0"
-      - key: L1_RPC_PUBLIC_URL
-        value: https://ethereum-sepolia-rpc.publicnode.com
-      - key: L1_RPC_BUSINESS_START
-        value: "9"
-      - key: L1_RPC_BUSINESS_END
-        value: "17"
-      # Soft self-throttle (publicnode + QuickNode)
-      - key: L1_HTTP_POLL_INTERVAL
-        value: "24s"
-      - key: L1_RPC_RATE_LIMIT
-        value: "5"
-
-  # --- Task 7 (R-0013): NEW objects. Operator-applied. Do not touch the live
-  # entry above. Initial sync is L1_RPC_FORCE=metered (D-0105: publicnode
-  # returns 0 receipts). JWT is generated in-container — do not paste the
-  # Mac's or the old replica's JWT_SECRET. Memory is measured in Phase B
-  # before any plan change; Standard 2 GB is the starting plan.
+  # --- Task 7 (R-0013): operator-applied. Initial sync is
+  # L1_RPC_FORCE=metered (D-0105: publicnode returns 0 receipts). JWT is
+  # generated in-container — do not paste the Mac's JWT_SECRET.
+  # Memory is measured in Phase B before any plan change; Standard
+  # 2 GB is the starting plan.
   - type: pserv
     name: fortel2-replica-reth
     runtime: docker
@@ -123,7 +65,11 @@ services:
     disk:
       name: fortel2-replica-reth-data
       mountPath: /data
-      sizeGB: 20
+      # Live dashboard disk is 10 GB (D-0127 / #49). This value is
+      # documentation: the Blueprint is never applied (D-0128).
+      # Standing follow-up: grow to ≈25 GB before 2026-10-20 (R-0017)
+      # as a dashboard resize, not a Blueprint apply.
+      sizeGB: 10
     envVars:
       - key: L1_RPC_URL
         sync: false
@@ -173,7 +119,6 @@ services:
       # current db/static_files/rocksdb is removed only after download/hash/extract
       # succeed. Then UNSET FORCE after the restore boot. After restore, switch
       # L1_RPC_FORCE to public (tip-follow; publicnode prunes old receipts).
-      # Live geth never grows this path.
       # Archive mode (D-0126 / R-0015): operator dashboard RETH_ARCHIVE=1 before
       # restore so op-reth omits --full and retains historical receipts/logs.
       # Also deletes $DATA_DIR/reth.toml if present — a prior --full boot
