@@ -16,20 +16,20 @@ The scheduled check is the Cursor Cloud Agent **Daily replica health** (04:00 Pa
 
 ## 1. Render memory (replica)
 
-Service: `fortel2-replica` (`srv-d9fsgi3rjlhs73ceh6tg`) in workspace `tea-d98533l7vvec738vva90`, Standard 2 GB plan.
+Service: `fortel2-replica-reth` (`srv-dagquc7qj5pc73fdnjsg`) in workspace `tea-d98533l7vvec738vva90`, Standard 2 GB plan. Live EL is op-reth (`Dockerfile.reth`).
 
 - Fetch last-24h `memory_usage`, `cpu_usage`, and `memory_limit`.
 - Fetch recent deploys and scan logs for OOM / killed / exit 137.
-- Note the live instance and whether L2 is still catching up (`Imported new potential chain segment age=`).
-- Score only the current instance after the latest restart. Ignore older instances in the same 24h window unless they OOM'd after Wave 1 knobs were on.
+- Note the live instance and whether L2 is still catching up.
+- Score only the current instance after the latest restart. Ignore older instances in the same 24h window unless they OOM'd after the current knobs were on.
 
-Wave 2 decision (suggest only, do not implement). Match R-0012: measured catch-up **peak** only. A projected linear climb to 2 GB is not a GO.
+Wave 2 decision (suggest only, do not implement). Match R-0017: measured catch-up **peak** only. A projected linear climb to 2 GB is not a GO. Q5 peak was 724 MB.
 
 - **NO-GO:** peak RSS under 1,600 MB, L2 still advancing, no kill, CPU not pegged.
-- **GO Wave 2:** sustained 1,600–1,900 MB, CPU under 70%. Suggested env only: `GETH_CACHE_MB=64`, `GETH_GOMEMLIMIT=512MiB`, `OP_NODE_GOMEMLIMIT=512MiB`, `GOGC=50`. Revert if CPU pegs.
-- **Skip Wave 2 → Pro 4 GB:** peak ≥2,000 MB or another OOM after Wave 1.
+- **GO Wave 2:** sustained 1,600–1,900 MB, CPU under 70%. Suggested env only: `RETH_CROSS_BLOCK_CACHE_MB` already 256 (do not raise); `OP_NODE_GOMEMLIMIT=512MiB`. Revert if CPU pegs. `GETH_*` knobs do nothing on op-reth.
+- **Skip Wave 2 → Pro 4 GB:** peak ≥2,000 MB or another OOM after current knobs.
 
-Wave 1 is already live (`L1_CACHE_SIZE=128`, `GETH_FDLIMIT=4096`, noprefetch, `GOMEMLIMIT` 700/768). Do not reopen Wave 2 unless today's catch-up peak is 1,600–1,900 MB.
+Do not reopen a geth Wave 2 (`GETH_CACHE_MB` / `GETH_GOMEMLIMIT`). The geth EL path is retired.
 
 ## 2. QuickNode usage (two endpoints)
 

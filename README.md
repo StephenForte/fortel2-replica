@@ -9,9 +9,9 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 | op-reth | L2 execution (local `--full`; Render replica archive via `RETH_ARCHIVE=1`; no proofs store) |
 | op-node | Verifier — derives L2 from L1 batches (`--l2.enginekind=reth`) |
 
-Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. Live `./Dockerfile` stays main's `op-geth:v1.101702.2` image (R-0013) so a main deploy cannot swap the live EL.
+Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. There is no root `./Dockerfile` and no op-geth start path.
 
-**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 10 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth pserv `fortel2-replica` (50 GB disk retained) and staging `fortel2-replica-reth-rpc` were **suspended 2026-09-12** after a clean 24 h window (ForteL2 D-0129); neither is deleted before Task 9. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
+**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 10 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth EL surface is retired in this repo (Task 9). The suspended geth pserv `fortel2-replica` remains on Render for the operator to delete by hand after merge. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
@@ -69,13 +69,13 @@ curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
 
 ## Read RPC (live: Private Service)
 
-The live public read is op-reth behind `fortel2-replica-rpc` (R-0017). The geth Private Service (`fortel2-replica`, `srv-d9fsgi3rjlhs73ceh6tg`, Oregon env `evm-d9h424715fvs73cq2gl0`, 50 GB) is the rollback target until Task 9. Public reads are two diskless Web Services on that same network (ForteL2 D-0031): `https://fortel2-replica-rpc.onrender.com` (L1-derived, upstream `http://fortel2-replica-reth:10000`) and `https://fortel2-sequencer-rpc.onrender.com` (sequencer tip). SettlementOS reads at `http://fortel2-replica-reth:10000`.
+The live public read is op-reth behind `fortel2-replica-rpc` (R-0017). Public reads are two diskless Web Services on that same network (ForteL2 D-0031): `https://fortel2-replica-rpc.onrender.com` (L1-derived, upstream `http://fortel2-replica-reth:10000`) and `https://fortel2-sequencer-rpc.onrender.com` (sequencer tip). SettlementOS reads at `http://fortel2-replica-reth:10000`.
 
-Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). The EL listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed. Live public and SOS private read are op-reth (`fortel2-replica-reth`); the geth pserv is suspended (2026-09-12, D-0129), rollback-only, not deleted before Task 9.
+Clients on that network hit a **method-filter** on Render’s published `PORT` (default **10000**). The EL listens on loopback only (`127.0.0.1:8546`); op-node RPC is loopback-only (`127.0.0.1:9545`) and must never be exposed. Live public and SOS private read are op-reth (`fortel2-replica-reth`). The geth EL path is retired in this repo; the suspended Render pserv `fortel2-replica` is deleted by the operator after merge.
 
 | Fact | Detail |
 |---|---|
-| URL | Private live: `http://fortel2-replica-reth:10000`. Public replica: `https://fortel2-replica-rpc.onrender.com` (diskless gateway — see [Going public](#going-public)). Rollback private: `http://fortel2-replica:10000` (geth). Do not convert either replica. |
+| URL | Private live: `http://fortel2-replica-reth:10000`. Public replica: `https://fortel2-replica-rpc.onrender.com` (diskless gateway — see [Going public](#going-public)). Do not convert the replica pserv to Web. |
 | Surface | Read-only JSON-RPC allowlist (`eth` / `net` / `web3` reads + log/block filters) |
 | Writes | `eth_sendRawTransaction` is **rejected** (`-32601 method not allowed`) |
 | Lag | ~3 minutes behind the sequencer is **normal** — the replica derives from L1 batches, not P2P tip-follow |
@@ -87,26 +87,25 @@ Filter source: vendored from ForteL2 `scripts/rpc-method-filter.py` (see header 
 
 ### Do not convert this service to Web
 
-Render cannot flip Private ↔ Web in place, and **cannot reattach `/data` to a new service**. The live disk is **50 GB**. Do not apply `render.yaml` as a **new** Blueprint onto the live Oregon pserv (`type: pserv` / `sizeGB: 20` would create a second replica with an empty disk and a full L1 resync).
+Render cannot flip Private ↔ Web in place, and **cannot reattach `/data` to a new service**. The live reth disk is **10 GB** (grow to ≈25 GB before 2026-10-20). Do not apply `render.yaml` as a **new** Blueprint onto the live Oregon pserv (that would create a second replica with an empty disk and a full L1 resync — D-0128).
 
-A public URL is a **second, diskless** Web Service that proxies to a Private Service — not a new EL disk. See [Going public](#going-public). Live public `fortel2-replica-rpc` now upstreams `http://fortel2-replica-reth:10000` (R-0017). Staging `fortel2-replica-reth-rpc` is verification-only and is suspended with geth on 2026-09-12 after 17:25Z.
+A public URL is a **second, diskless** Web Service that proxies to a Private Service — not a new EL disk. See [Going public](#going-public). Live public `fortel2-replica-rpc` now upstreams `http://fortel2-replica-reth:10000` (R-0017). Staging `fortel2-replica-reth-rpc` is verification-only and is suspended 2026-09-12 after 17:25Z.
 
 ### Revert
 
-If a mistaken public replica (Web Service + its own disk) is created: delete that extra service. Recreating `fortel2-replica` or `fortel2-replica-reth` still means a **new disk and a full resync** — do not do that to “go private again.” To take a public gateway down, delete or suspend only `fortel2-replica-rpc` (or disable its custom domain). There is no `render.yaml` entry to remove for the live gateway — it was never declared there (R-0008). SettlementOS reads `http://fortel2-replica-reth:10000`. Phase C rollback (24 h) is both env values back to `http://fortel2-replica:10000` — not a rename.
+If a mistaken public replica (Web Service + its own disk) is created: delete that extra service. Recreating `fortel2-replica-reth` still means a **new disk and a full resync** — do not do that to “go private again.” To take a public gateway down, delete or suspend only `fortel2-replica-rpc` (or disable its custom domain). There is no `render.yaml` entry to remove for the live gateway — it was never declared there (R-0008). SettlementOS reads `http://fortel2-replica-reth:10000`. There is no repo-supported rollback to geth: the geth EL files are gone.
 
 ## Task 7 — op-reth replica (R-0013 / R-0017)
 
-Operator-applied Blueprint additions. Do **not** re-apply the live `fortel2-replica` entry. Phase C is executed (env repoint). Never rename services: Render private hostnames are immutable slugs.
+Operator-applied Blueprint additions. Do **not** re-apply this file onto the live Oregon environment (D-0128). Phase C is executed (env repoint). Never rename services: Render private hostnames are immutable slugs.
 
 | Service | Type | Disk | Role |
 |---|---|---|---|
-| `fortel2-replica` | pserv (geth, rollback) | `fortel2-replica-data` 50 GB | `./Dockerfile` (op-geth v1.101702.2). **Suspended 2026-09-12** (D-0129), disk retained. Rollback target only (`http://fortel2-replica:10000`) — see the rollback procedure below. Do not point this service at `Dockerfile.reth`. |
 | `fortel2-replica-reth` | pserv (live EL) | `fortel2-replica-reth-data` 10 GB | `Dockerfile.reth`. op-reth archive (`RETH_ARCHIVE=1`, omit `--full`). Live EL behind `fortel2-replica-rpc` and SOS (`http://fortel2-replica-reth:10000`). Grow disk to ≈25 GB before 2026-10-20. |
-| `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Staging gateway (`srv-dagr42tbedkc73c5mp80`). **Suspended 2026-09-12** with geth (D-0129). Resume only as the verification door for a rollback. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
-| `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000` (R-0017). |
+| `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Staging gateway (`srv-dagr42tbedkc73c5mp80`). **Suspended 2026-09-12** (D-0129). `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
+| `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000` (R-0017). Not in this Blueprint. |
 
-Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. The 24 h window passed clean; geth and the staging gateway were suspended 2026-09-12 (D-0129). Rollback from here is gated on catch-up, because a resumed geth datadir is behind by the whole suspension interval and a passing `eth_blockNumber` does not prove it is current: (1) resume `fortel2-replica` (geth); (2) resume `fortel2-replica-reth-rpc` and set its `REPLICA_UPSTREAM=http://fortel2-replica:10000` so geth has a verification door; (3) from the Mac run `REPLICA_L2_RPC_URL=https://fortel2-replica-reth-rpc.onrender.com ./scripts/replica-sync-check.sh` until lag vs live `safe_l2` is ≤ 12, then `CANDIDATE_RPC=https://fortel2-replica-reth-rpc.onrender.com CHECK_RECEIPTS=0 ./scripts/verify-reth-parity.sh` must PASS (geth is `--full`-class, so receipt parity is not expected); (4) only then set `fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL` back to `http://fortel2-replica:10000`. Disk follow-up: grow `fortel2-replica-reth` to ≈25 GB before 2026-10-20. Neither geth nor the staging gateway is deleted before Task 9.
+Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. The 24 h window passed clean. The geth EL files are gone from this repo; the operator deletes the suspended Render pserv `fortel2-replica` and its 50 GB disk by hand after merge. Disk follow-up: grow `fortel2-replica-reth` to ≈25 GB before 2026-10-20.
 
 ### Snapshot bootstrap (R-0014 / D-0123)
 
@@ -152,43 +151,43 @@ The script refuses if the op-reth pid is alive. It packs `db/` + `static_files/`
 | `RETH_SNAPSHOT_FORCE` | `1` once to replace the paused 68 % `db/` + `static_files/` + `rocksdb/`; **unset after that boot** |
 | `L1_RPC_FORCE` | `public` after restore (tip-follow) |
 
-First restore boot logs: pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip. `FORCE` replaces `db/` + `static_files/` + `rocksdb/` on this pserv **only after** extract succeeds; it never touches live geth. A FORCE failure leaves the paused derive in place.
+First restore boot logs: pin ok → genesis ok → download → sha256 ok → restore ok → op-node deriving near tip. `FORCE` replaces `db/` + `static_files/` + `rocksdb/` on this pserv **only after** extract succeeds. A FORCE failure leaves the paused derive in place.
 
 History in the tarball is a copy of the sequencer. Independent derivation of that history was Task 3. From the snapshot onward this replica derives from L1. Friends (Task 8) reuse the same tarball + restore path.
 
 ## Going public
 
-Keep the live Private Services and their disks. Public replica reads go through the diskless Web Service `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`), which reverse-proxies to `http://fortel2-replica-reth:10000` (R-0017) and rate-limits. SettlementOS stays on the private reth slug. The table below is that service's config — recreate from it only in a new environment. Rollback for 24 h is env back to `http://fortel2-replica:10000`, not a rename.
+Keep the live Private Service and its disk. Public replica reads go through the diskless Web Service `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`), which reverse-proxies to `http://fortel2-replica-reth:10000` (R-0017) and rate-limits. SettlementOS stays on the private reth slug. The table below is that service's config — recreate from it only in a new environment.
 
-**Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). Geth rollback image is `./Dockerfile` (unchanged). Live EL image is `Dockerfile.reth`. Pointing a Web Service at either replica path would boot a **second public verifier**. Staging `fortel2-replica-reth-rpc` is declared in `render.yaml` (R-0013) and is suspended 2026-09-12; live `fortel2-replica-rpc` stays Dashboard-created.
+**Repo first, then Dashboard.** The gateway image is `./gateway/Dockerfile` (build context `./gateway`; see [`gateway/README.md`](./gateway/README.md)). Live EL image is `Dockerfile.reth`. Pointing a Web Service at `Dockerfile.reth` would boot a **second public verifier**. Staging `fortel2-replica-reth-rpc` is declared in `render.yaml` (R-0013) and is suspended 2026-09-12; live `fortel2-replica-rpc` stays Dashboard-created.
 
 This section is the operator's entire configuration path. Gateway env is **not synced from `render.yaml`** — the gateway is not declared there (R-0008). Changing a key in the Dashboard means editing the table below too; nothing will catch the drift.
 
 ### Dashboard
 
-Same GitHub repo, **second** service, same Oregon env as `fortel2-replica`. Live as `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`). Dashboard-created and unattached — do not attach it (or the replica) to this Blueprint.
+Same GitHub repo, **second** service, same Oregon env as `fortel2-replica-reth`. Live as `fortel2-replica-rpc` (`https://fortel2-replica-rpc.onrender.com`). Dashboard-created and unattached — do not attach it (or the replica) to this Blueprint.
 
 | Field | Value |
 |---|---|
-| Create | **New → Web Service** (not **New → Blueprint**). A Blueprint apply cannot add a service into the existing Oregon environment alongside the unattached live pserv — it creates its own services, which is a second replica plus a gateway pointed at that new replica, not at the live 50 GB node (R-0008 / ForteL2 D-0031). |
+| Create | **New → Web Service** (not **New → Blueprint**). A Blueprint apply cannot add a service into the existing Oregon environment alongside the unattached live pserv — it creates its own services, which is a second replica plus a gateway pointed at that new replica, not at the live node (R-0008 / ForteL2 D-0031). |
 | Repo | `StephenForte/fortel2-replica` |
 | Name | `fortel2-replica-rpc` (never reuse `fortel2-replica`) |
 | Region | **Oregon** (private DNS fails across regions) |
 | Disk | **None** |
-| Dockerfile path | `./gateway/Dockerfile` (not `./Dockerfile`) |
+| Dockerfile path | `./gateway/Dockerfile` (not `Dockerfile.reth`) |
 | Docker build context | `./gateway` |
 | Health Check Path | `/healthz` |
 | Env | Paste every row of the table below **except** `PORT`. Render injects `PORT`; do not set it. |
 | Plan | Starter or higher (Free spins down after 15 minutes) |
 
-If the first deploy fails because `gateway/` is missing from the tracked branch: leave Dockerfile Path as `./gateway/Dockerfile` and wait for that path to land. Do not “fix” that by switching back to `./Dockerfile`.
+If the first deploy fails because `gateway/` is missing from the tracked branch: leave Dockerfile Path as `./gateway/Dockerfile` and wait for that path to land. Do not “fix” that by switching to `Dockerfile.reth`.
 
 Gateway env (R-0005). This table is the authoritative operator copy — paste into **Environment**.
 
 | Key | Default | Meaning |
 |---|---|---|
 | `PORT` | Render-injected | nginx listen port (not declared in `render.yaml`) |
-| `REPLICA_UPSTREAM` | `http://fortel2-replica-reth:10000` | live upstream (R-0017). Rollback = `http://fortel2-replica:10000`. Image default in `gateway/` is still the geth slug; Dashboard env is authoritative. |
+| `REPLICA_UPSTREAM` | `http://fortel2-replica-reth:10000` | live upstream (R-0017). Image default in `gateway/` still names the old geth slug; Dashboard env is authoritative. |
 | `RPC_RATE` | `20r/s` | `limit_req_zone` rate |
 | `RPC_BURST` | `40` | `limit_req` burst |
 | `RPC_REAL_IP_HEADER` | `CF-Connecting-IP` | header carrying the client IP. Render's edge is always Cloudflare; this is the default, not an optional override (R-0006 / R-0010). Set `X-Forwarded-For` only if you need the chain. |
@@ -220,8 +219,8 @@ curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/j
 # writes still rejected
 curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_sendRawTransaction","params":["0x"]}'
-# private geth slug (rollback only; live private is fortel2-replica-reth:10000)
-curl -s http://fortel2-replica:10000 -H 'content-type: application/json' \
+# private live slug
+curl -s http://fortel2-replica-reth:10000 -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
 ```
 
@@ -235,11 +234,11 @@ A third diskless Web Service (`fortel2-sequencer-rpc`, `https://fortel2-sequence
 
 ### Dashboard
 
-Same GitHub repo, **third** service, same Oregon env. Live as `fortel2-sequencer-rpc`. Dashboard-created — **New → Web Service**, unattached (R-0008). Python native, not Docker (the replica `Dockerfile` would boot a second verifier).
+Same GitHub repo, **third** service, same Oregon env. Live as `fortel2-sequencer-rpc`. Dashboard-created — **New → Web Service**, unattached (R-0008). Python native, not Docker (pointing this Web Service at `Dockerfile.reth` would boot a second verifier).
 
 | Field | Value |
 |---|---|
-| Create | **New → Web Service** (not Blueprint, not the replica Dockerfile) |
+| Create | **New → Web Service** (not Blueprint, not `Dockerfile.reth`) |
 | Repo | `StephenForte/fortel2-replica` |
 | Name | `fortel2-sequencer-rpc` (never reuse `fortel2-replica` or `fortel2-replica-rpc`) |
 | Region | **Oregon** |
@@ -281,39 +280,39 @@ Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on 
 
 ## Render
 
-**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-reth + op-node (+ optional L1 router) in one container. Live reth stays Standard (Q5: RSS peak 724 MB of 2 GiB, R-0017). The geth pserv is suspended (2026-09-12, D-0129); if resumed for rollback it runs Wave 1 on Standard (R-0012). Pinned op-reth defaults `--engine.cross-block-cache-size` to 4096 MB — that OOMs Standard. Set `RETH_CROSS_BLOCK_CACHE_MB=256` (R-0013). Mini archive RSS was 1.4 GB (D-0122); the Render reth replica is archive (`RETH_ARCHIVE=1`), not `--full`.
+**RAM:** Render **Starter (512MB) will OOM**. Use at least **Standard (~2GB)** for op-reth + op-node (+ optional L1 router) in one container. Live reth stays Standard (Q5: RSS peak 724 MB of 2 GiB, R-0017). Pinned op-reth defaults `--engine.cross-block-cache-size` to 4096 MB — that OOMs Standard. Set `RETH_CROSS_BLOCK_CACHE_MB=256` (R-0013). Mini archive RSS was 1.4 GB (D-0122); the Render reth replica is archive (`RETH_ARCHIVE=1`), not `--full`.
 
-**OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while geth applies them. The usual 2 GB killer is op-node’s upstream `--l1.cache-size=900` (full L1 receipts), not the Python filter. Wave 1 (PR #39) is already in the tables below: `L1_CACHE_SIZE=128`, `L1_MAX_CONCURRENCY=2`, `L1_RPC_MAX_BATCH_SIZE=5`, `GETH_FDLIMIT=4096`, `--cache.noprefetch`. Measured 2026-08-17: catch-up RSS stayed **256–478 MB** for 12h after Wave 1 (Wave 0 peak was 2,125 MB, then exit 137).
+**OOM during derivation:** Logs like `decoded singular batch from channel` during L1 catch-up are normal but memory-heavy — op-node decodes batches in bursts while the EL applies them. The usual 2 GB killer is op-node’s upstream `--l1.cache-size=900` (full L1 receipts), not the Python filter. Live knobs: `L1_CACHE_SIZE=128`, `L1_MAX_CONCURRENCY=2`, `L1_RPC_MAX_BATCH_SIZE=5`, `RETH_CROSS_BLOCK_CACHE_MB=256`. Q5 (R-0017) peak RSS was 724 MB.
 
-If it OOMs again (exit 137 / “Ran out of memory”), confirm the plan is Standard (not Starter) and Wave 1 knobs are actually on the **dashboard** (this service is unattached — `render.yaml` does not sync). Then score a catch-up window (L2 `age` still hours/days, ignore the first 10 minutes after a deploy):
+If it OOMs again (exit 137 / “Ran out of memory”), confirm the plan is Standard (not Starter) and the knobs are actually on the **dashboard** (this service is unattached — `render.yaml` does not sync). Then score a catch-up window (L2 `age` still hours/days, ignore the first 10 minutes after a deploy):
 
 | Peak RSS while catching up | Do |
 |---|---|
-| Under 1,600 MB | Nothing. Wave 1 is holding. |
-| Sustained 1,600–1,900 MB, CPU &lt; 70% | **Wave 2** env only: `GETH_CACHE_MB=64`, `GETH_GOMEMLIMIT=512MiB`, `OP_NODE_GOMEMLIMIT=512MiB`, `GOGC=50`. Revert if CPU pegs. |
-| ≥2,000 MB or another 137 after Wave 1 | Skip Wave 2 → **Pro (4 GB)**. |
+| Under 1,600 MB | Nothing. Current knobs are holding. |
+| Sustained 1,600–1,900 MB, CPU &lt; 70% | **Wave 2** env only: `OP_NODE_GOMEMLIMIT=512MiB`. Do not raise `RETH_CROSS_BLOCK_CACHE_MB`. `GETH_*` knobs do nothing on op-reth. Revert if CPU pegs. |
+| ≥2,000 MB or another 137 | Skip Wave 2 → **Pro (4 GB)**. |
 
-Never set `L1_CACHE_SIZE=0` (op-node expands that to ~2400). Do not tighten `GOMEMLIMIT` until the L1 cache is already 128.
+Never set `L1_CACHE_SIZE=0` (op-node expands that to ~2400). Do not tighten `OP_NODE_GOMEMLIMIT` until the L1 cache is already 128.
 
 **Daily check:** Cloud Agent **Daily replica health** (04:00 Pacific) reads last-24h replica RSS and QuickNode credits on **L2_Render** (this replica) vs **L2_mini** (sequencer). Warn if either endpoint or combined credits exceed ~3M/day. It uses Cloud Render plus QuickNode (skill `.cursor/skills/daily-replica-health`). The verdict is the automation's run transcript. It suggests Wave 2 — it does not change env or deploy. Do not run a local overnight loop.
 
 ### Blueprint vs dashboard-created services
 
-`render.yaml` is the canonical copy of the **replica's** env values and a reference for a **greenfield** replica. It is **not** the deployment mechanism for anything that currently exists. Live `fortel2-replica`, `fortel2-replica-rpc`, and `fortel2-sequencer-rpc` are Dashboard-created and **unattached** to any Blueprint, permanently and by design (R-0008). Do not apply this file as a new Blueprint onto the live Oregon environment — that creates a second replica with an empty disk, not a gateway in front of the live node.
+`render.yaml` is the canonical copy of the **replica's** env values and a reference for a **greenfield** replica. It is **not** the deployment mechanism for anything that currently exists. Live `fortel2-replica-reth`, `fortel2-replica-rpc`, and `fortel2-sequencer-rpc` are Dashboard-created and **unattached** to any Blueprint, permanently and by design (R-0008). Do not apply this file as a new Blueprint onto the live Oregon environment — that creates a second replica with an empty disk, not a gateway in front of the live node.
 
 The `sync: false` / Blueprint-sync mechanics below stay accurate, but they describe a path nobody live is on. They matter only if you ever stand up a *new* private replica from **New → Blueprint** (not this live one, and not as a way to add the gateway).
 
 **If a service is attached to this Blueprint** (greenfield replica only):
 
 - Env vars with a literal `value:` in `render.yaml` are created/updated on each Blueprint sync.
-- Keys with `sync: false` (`L1_RPC_URL`, `JWT_SECRET`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
+- Keys with `sync: false` (`L1_RPC_URL`) are prompted **only on first create**. Later syncs ignore them — set or rotate those secrets in the dashboard (**Environment**).
 - Dashboard edits that conflict with Blueprint `value:` fields are overwritten on the next sync.
 
 **Dashboard-created (unattached):** the live replica, the replica gateway, and the sequencer-read door. **New → Private Service** (replica) or **New → Web Service** (gateway / sequencer-read) without going through this Blueprint is not managed by `render.yaml`. Git pushes / Manual Deploy do **not** apply Blueprint env changes — paste the replica tables below into **Environment**, then redeploy. Gateway env is the table in [Going public](#going-public); sequencer-read env is the table in [Public sequencer reads](#public-sequencer-reads).
 
 Genesis + rollup are **baked into the image** from `config/` — no secret-file upload needed.
 
-Live `fortel2-replica` is the geth Private Service (rollback-only until Task 9). **Do not deploy this op-reth image onto it.** Live EL is `fortel2-replica-reth` on its own disk. A public URL is a **separate diskless Web Service** ([Going public](#going-public)), not a second copy of this replica. Staging `fortel2-replica-reth-rpc` is suspended with geth on 2026-09-12 after 17:25Z.
+Live EL is `fortel2-replica-reth` on its own disk. A public URL is a **separate diskless Web Service** ([Going public](#going-public)), not a second copy of this replica. Staging `fortel2-replica-reth-rpc` is suspended 2026-09-12 after 17:25Z. Do not point a Web Service at `Dockerfile.reth`.
 
 #### Required secrets (`sync: false` in Blueprint)
 
@@ -329,10 +328,7 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 | Variable | Value |
 |---|---|
 | `L1_BLOCK_TIME` | `12` |
-| `GETH_CACHE_MB` | `128` (live geth only; ignored by op-reth) |
-| `GETH_FDLIMIT` | `4096` (live geth only) |
-| `GETH_GOMEMLIMIT` | `700MiB` (live geth only) |
-| `RETH_CROSS_BLOCK_CACHE_MB` | `256` (new reth pserv — replaces `GETH_CACHE_MB`) |
+| `RETH_CROSS_BLOCK_CACHE_MB` | `256` |
 | `RETH_RPC_CACHE_MAX_BLOCKS` | `256` |
 | `OP_NODE_GOMEMLIMIT` | `768MiB` |
 | `L1_RPC_KIND` | `quicknode` (reth pserv; after snapshot restore use `L1_RPC_FORCE=public`) |
@@ -351,7 +347,7 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 
 **What they do:**
 
-- **Memory (live geth `GETH_*` / R-0012; new reth `RETH_*` / R-0013):** Keep the EL + op-node under the 2 GB cgroup during L1 derivation bursts. `L1_CACHE_SIZE` must stay a positive integer — `0` expands op-node’s cache to ~2400 L1 blocks and will OOM Standard. `GETH_GOMEMLIMIT` does nothing on op-reth (Rust).
+- **Memory (`RETH_*` / R-0013 / R-0017):** Keep the EL + op-node under the 2 GB cgroup during L1 derivation bursts. `L1_CACHE_SIZE` must stay a positive integer — `0` expands op-node’s cache to ~2400 L1 blocks and will OOM Standard. `GETH_*` knobs do nothing on op-reth (Rust).
 - **L1 schedule (`L1_RPC_SCHEDULE`, `TZ`, `L1_RPC_*`):** QuickNode **09:00–17:00** Pacific, publicnode overnight via in-container router (no op-node restart at cutover).
 - **Credit throttle (`L1_HTTP_POLL_INTERVAL`, `L1_RPC_RATE_LIMIT`):** slow L1 polling to limit QuickNode burn.
 
@@ -364,23 +360,22 @@ On a Blueprint-managed service these come from sync. On a dashboard-created serv
 | `RETH_ARCHIVE` | `1` on `fortel2-replica-reth` **before** snapshot restore (D-0126). Omits `--full` (archive) and removes a stale `reth.toml` prune section. Unset/0 keeps `--full`. Never Blueprint-sync. |
 | `RETH_SNAPSHOT_URL` | HTTPS URL of `fortel2-852-reth-snapshot-<L2head>.tar.zst` (R-0014). Empty = init from genesis |
 | `RETH_SNAPSHOT_SHA256` | Required when URL is set. Refuse restore on mismatch |
-| `RETH_SNAPSHOT_FORCE` | `1` once to replace an existing `db/` on `fortel2-replica-reth`. Unset after that boot. Never on live geth |
-| `GETH_READY_TIMEOUT_SECS` | live geth only — wait forever for geth IPC during slow disk recovery |
+| `RETH_SNAPSHOT_FORCE` | `1` once to replace an existing `db/` on `fortel2-replica-reth`. Unset after that boot. |
 | `RETH_READY_TIMEOUT_SECS` | `0` (default) — wait forever for op-reth HTTP during slow disk recovery |
 
 #### Manual Private Service checklist (unattached only)
 
-For a **new** replica somewhere else — not the live Oregon node, and not a substitute for [Going public](#going-public). The live `fortel2-replica` already exists; running this checklist in that environment creates a second disk and a full L1 resync.
+For a **new** replica somewhere else — not the live Oregon node, and not a substitute for [Going public](#going-public). The live `fortel2-replica-reth` already exists; running this checklist in that environment creates a second disk and a full L1 resync.
 
-1. **New → Private Service**. Runtime: **Docker**. Dockerfile path: `./Dockerfile` (repo root). Do **not** choose Web here — that would be a public replica with its own disk.
+1. **New → Private Service**. Runtime: **Docker**. Dockerfile path: `./Dockerfile.reth` (repo root). Do **not** choose Web here — that would be a public replica with its own disk.
 2. **Plan:** Standard (2 GB RAM) or Pro — not Starter.
-3. Attach a **persistent disk** at `/data` (≥ 20 GB, per `render.yaml`; live geth is **50 GB**). This checklist deploys the root `./Dockerfile` (op-geth). The Task 7 reth service is separate: `fortel2-replica-reth-data` is 10 GB and grew 1.1 → 1.2 GB over 18.1 h (≈170 MB/day, R-0017 / D-0128); grow to ≈25 GB before 2026-10-20.
+3. Attach a **persistent disk** at `/data`. Live `fortel2-replica-reth-data` is **10 GB** and grew 1.1 → 1.2 GB over 18.1 h (≈170 MB/day, R-0017 / D-0128); grow to ≈25 GB before 2026-10-20. Greenfield: start ≥ 10 GB.
 4. Set secrets + recommended env vars from the tables above.
 5. Deploy / restart after dashboard env edits.
 
-**Web Shell tip:** the live geth image has no `curl`. Use dashboard **Shell** with `python3`/`urllib` against `http://127.0.0.1:$PORT` (filter) or `http://127.0.0.1:8546` (loopback EL). The Task 7 reth image (`Dockerfile.reth`) includes `curl` + `zstd` for snapshot restore only. op-node is `http://127.0.0.1:9545` (loopback only). Do not print `L1_RPC_URL` or the JWT.
+**Web Shell tip:** the reth image (`Dockerfile.reth`) includes `curl` + `zstd` for snapshot restore. Use dashboard **Shell** against `http://127.0.0.1:$PORT` (filter) or `http://127.0.0.1:8546` (loopback EL). op-node is `http://127.0.0.1:9545` (loopback only). Do not print `L1_RPC_URL` or the JWT.
 
-**Health check / long recovery:** until `entrypoint.sh` marks the EL ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful loopback `eth_blockNumber`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot. Render’s HTTP `healthCheckPath: /` hits the method filter once it is up.
+**Health check / long recovery:** until `entrypoint-reth.sh` marks the EL ready (`/tmp/fortel2-el-ready`), the image `HEALTHCHECK` fails so Docker keeps `health=starting` for the 5m `start-period` (a passing probe would mark `healthy` immediately). After readiness, probes require a successful loopback `eth_blockNumber`. If constrained disks regularly need longer than 5m to open the datadir, raise `HEALTHCHECK --start-period` so recovery is not marked `unhealthy` mid-boot. Render’s HTTP `healthCheckPath: /` hits the method filter once it is up.
 
 **QuickNode:** Prefer a dedicated endpoint token for this replica (**L2_Render**, not **L2_mini** / the Mac mini sequencer URL). Render outbound IPs are CIDR ranges (not stably allowlistable on QuickNode’s per-IP whitelist) — rotate the URL if leaked. Daytime schedule uses that endpoint; overnight / `L1_RPC_FORCE=public` / `L1_USE_PUBLIC_RPC=1` use publicnode. Treat ~**3 million credits/day** (per endpoint or combined) as the warn line — the daily automation flags it. L2_mini is usually the burner (`eth_getBlockByNumber`, `eth_blobBaseFee`, `eth_maxPriorityFeePerGas`); replica derivation on L2_Render should stay well under.
 

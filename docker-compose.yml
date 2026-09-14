@@ -12,7 +12,7 @@
 #
 # Official op-reth / op-node images are distroless (no /bin/sh). Init + start
 # stay in the command list so we do not need a shell on the EL image.
-# Render reth image (do not use ./Dockerfile — that stays the live geth pin):
+# Render image (Dockerfile.reth). Do not point a Web Service at it:
 #   docker compose --profile render build replica-reth
 
 services:
@@ -65,11 +65,11 @@ services:
       L1_CACHE_SIZE: ${L1_CACHE_SIZE:-128}
       L1_MAX_CONCURRENCY: ${L1_MAX_CONCURRENCY:-2}
       L1_RPC_MAX_BATCH_SIZE: ${L1_RPC_MAX_BATCH_SIZE:-5}
-      L1_RPC_KIND: ${L1_RPC_KIND:-quicknode}
+      L1_RPC_KIND: ${L1_RPC_KIND:-standard}
     command:
       - op-node
       - --l1=${L1_RPC_URL}
-      - --l1.rpckind=${L1_RPC_KIND:-quicknode}
+      - --l1.rpckind=${L1_RPC_KIND:-standard}
       - --l1.trustrpc=true
       - --l1.http-poll-interval=${L1_HTTP_POLL_INTERVAL:-24s}
       - --l1.rpc-rate-limit=${L1_RPC_RATE_LIMIT:-5}
