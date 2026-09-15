@@ -15,7 +15,7 @@ Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-re
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
-Handing this to a friend? See [`RUNNING.md`](./RUNNING.md) for a full walkthrough of running your own node.
+Handing this to a friend? See [`RUNNING.md`](./RUNNING.md) for laptop, VPS, or **your own** Render account (a Private Service — not this project's live replica), and for a parity command that compares your node to a reference without trusting it.
 
 ## Chain identity
 
@@ -66,6 +66,8 @@ curl -s http://127.0.0.1:9547 -H 'content-type: application/json' \
 ```
 
 `current_l1` should climb toward `head_l1` right away. `safe_l2` staying `0` until derivation reaches posted batches is normal. Full walkthrough: [`RUNNING.md`](./RUNNING.md).
+
+On **Render** instead of a laptop? Your own **Private Service**, not the operator's replica — [`RUNNING.md`](./RUNNING.md) §On Render. Check headers against a reference without trusting it: `./scripts/check-friend-parity.sh`.
 
 ## Read RPC (live: Private Service)
 

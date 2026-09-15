@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Sampled safe-block parity — live public replica RPC vs Mac sequencer EL.
+# Friend nodes: scripts/check-friend-parity.sh (own node vs an untrusted
+# reference). This script's defaults and receipt path are operator-only.
 # Default CANDIDATE is the live public hostname (reth after R-0017).
 # Staging fortel2-replica-reth-rpc is suspended 2026-09-12. optimism_syncStatus
 # is not on the allowlist; overlap high-water is min(replica EL tip, live EL tip).

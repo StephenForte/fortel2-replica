@@ -1,10 +1,10 @@
 # Running a ForteL2 replica node
 
-How to clone this repo and run a read-only ForteL2 verifier on a laptop or VPS.
+How to clone this repo and run a read-only ForteL2 verifier on a laptop, a VPS, or **your own** Render account.
 
 The only external thing you must supply is an Ethereum **Sepolia L1 RPC URL** — chain config and pinned images are already in the repo. No sequencer, batcher, or proposer keys.
 
-This is **not** the hosted Render node. Local compose publishes raw op-reth / op-node on **loopback only** (`127.0.0.1:9545` / `127.0.0.1:9547`). There is no method filter and no allowlist. The method filter, public URLs, and L1 schedule router are the single-container Render image — see `README.md` if you meant to call those instead.
+Laptop and VPS use `docker compose` and publish raw op-reth / op-node on **loopback only** (`127.0.0.1:9545` / `127.0.0.1:9547`). That compose path has no method filter and no allowlist. A node on Render is a **Private Service of yours** — see *On Render* below. It is not the operator's replica, not a public URL, and not a copy of the operator's gateway / archive / snapshot / L1-schedule setup.
 
 ## What you need
 
@@ -92,6 +92,73 @@ To listen on all interfaces, edit the two `ports:` lines in `docker-compose.yml`
 Do **not** change `--http.addr`, `--ws.addr`, `--rpc.addr`, or `--authrpc.addr` inside the `command:` lists. Those are the in-container bind. They must stay `0.0.0.0` so op-node can reach op-reth at `http://op-reth:8551` on the compose network. Setting them to `127.0.0.1` makes the node look "up" and still unreachable from op-node.
 
 If you publish past loopback, put a firewall or reverse proxy in front. Do not assume Docker's publish is a security boundary.
+
+## On Render
+
+This is **your** node on **your** Render account. It is not the operator's replica. Do not copy the operator's public hostname, gateway, archive flag, snapshot restore, or L1 schedule — those are a different deployment.
+
+**Service type: Private Service.** A Private Service has no public URL. Only Dashboard **Shell**, logs, and other services in *your* Render account can reach it. That is the same exposure question as the laptop publish: this image answers JSON-RPC, and a Web Service would put an unauthenticated L2 RPC on the internet. The operator's public hostname is a diskless gateway in front of a Private Service; that gateway is not this path.
+
+**How you check it is working:** Dashboard → **Shell**. The image listens on Render's `PORT` (often `10000`). You cannot curl this service from a laptop — that is the point of Private Service.
+
+```bash
+curl -s http://127.0.0.1:${PORT:-10000} -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
+# → {"result":"0x354"} = 852
+
+curl -s http://127.0.0.1:9545 -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"optimism_syncStatus","params":[]}'
+```
+
+Logs should show origin advancing (`current_l1` climbing toward `head_l1`), same as *A healthy node vs a stalled one* above. `safe_l2` staying `0` until derivation reaches posted batches is normal.
+
+**Plan:** Standard (~2 GB RAM). Starter (512 MB) will OOM — same figure as *What you need* and the Render RAM note in `README.md`.
+
+**Disk:** **10 GB** at `/data`. D-0122 sizing for `--full` state is ≈1–2 GB. Render disks come in fixed steps; sizes seen in this project are 1, 10, 20, and 50 GB (25 GB is not offered — R-0019). 1 GB is below the `--full` state. 10 GB is the next step that fits it. 20 GB and 50 GB are what the operator used for an **archive** node, not a `--full` measurement. `--full` growth after catch-up has **not been measured**; do not use the archive rate of ≈170 MB/day (R-0017 Q5) for this disk.
+
+**Do not set `RETH_ARCHIVE`.** Unset means `--full` (the image default). `RETH_ARCHIVE=1` omits `--full` and is how the operator keeps public-read history; it turns a 1–2 GB node into one that grows ≈170 MB/day (R-0017 Q5, an archive rate). A pruned `--full` datadir cannot be un-pruned.
+
+### Create it
+
+Dashboard only — **New → Private Service**, not **New → Blueprint**, not **New → Web Service**.
+
+1. Runtime: **Docker**. Dockerfile path: `./Dockerfile.reth` (repository root). This is the image the repo already builds; leave operator-only env unset.
+2. Plan: **Standard**.
+3. Persistent disk: mount `/data`, size **10 GB**.
+4. Health Check Path: `/`.
+5. Environment — only what this node needs. The image already defaults the memory caches (`RETH_CROSS_BLOCK_CACHE_MB=256`; pinned op-reth's 4096 MB default OOMs Standard).
+
+| Key | Value |
+|---|---|
+| `L1_RPC_URL` | Your Sepolia HTTPS endpoint. PublicNode is smoke-test only (D-0105). |
+| `L1_RPC_KIND` | Must match that URL (`standard` for PublicNode, `quicknode` for QuickNode). The image default is `quicknode`; a PublicNode URL with that default is the same provider-pair mismatch compose already fixed. |
+
+Deploy. After env edits, Manual Deploy or restart so the container picks them up. Catch-up is the same as laptop: `current_l1` climbs immediately; `safe_l2` stays `0` until derivation reaches posted batches.
+
+To compare headers against a reference once the node answers `eth_chainId`, see *Check against a reference* below. The parity script is not baked into the image — copy `scripts/check-friend-parity.sh` and `scripts/check_friend_parity.py` plus `scripts/parity_compare.py` into the Shell session, then:
+
+```bash
+NODE_RPC=http://127.0.0.1:${PORT:-10000} bash check-friend-parity.sh
+```
+
+## Check against a reference (untrusted)
+
+The reference RPC is a **comparator**, not the chain. Use it to detect divergence. It must not decide what the chain is, and it must never be written into your datadir.
+
+```bash
+# laptop / VPS — node on loopback
+./scripts/check-friend-parity.sh
+```
+
+Default `NODE_RPC` is `http://127.0.0.1:9545`. Default `REFERENCE_RPC` is the operator's public endpoint, for convenience only; the wording and exit codes still treat it as untrusted. Override either:
+
+```bash
+NODE_RPC=http://127.0.0.1:9545 REFERENCE_RPC=https://example.invalid ./scripts/check-friend-parity.sh
+```
+
+A mismatch prints **DIVERGENCE: you and this reference disagree** and exits non-zero. That is not a verdict against your node. Do not wipe a datadir on the say-so of a reference. The command is read-only: it never writes, never feeds the reference into derivation, and never suggests `debug_setHead`.
+
+Ambiguity is also a non-zero exit with a **named** error, not a pass: `REFERENCE_UNREACHABLE`, `REFERENCE_NULL`, or `REFERENCE_CHAIN_ID`.
 
 ## What to expect
 
