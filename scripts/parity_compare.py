@@ -42,18 +42,39 @@ def norm_hash(v: Any) -> str | None:
     return "0x" + s[2:].zfill(64)
 
 
+REQUIRED_BLOCK_FIELDS: tuple[str, ...] = (
+    "number",
+    "hash",
+    "parentHash",
+    "stateRoot",
+    "receiptsRoot",
+)
+
+
 def block_fields(block: Any) -> dict[str, Any] | None:
-    if not block:
+    """Return compared header fields, or None if any required field is missing.
+
+    An untrusted comparator can return a nonempty but incomplete object
+    (for example ``{"number":"0x0"}``). Missing hashes must not compare
+    equal as ``None == None`` and print MATCH.
+    """
+    if not isinstance(block, dict) or not block:
         return None
     txs = block.get("transactions") or []
-    return {
-        "number": hx(block.get("number")),
-        "hash": norm_hash(block.get("hash")),
-        "parentHash": norm_hash(block.get("parentHash")),
-        "stateRoot": norm_hash(block.get("stateRoot")),
-        "receiptsRoot": norm_hash(block.get("receiptsRoot")),
-        "txCount": len(txs) if isinstance(txs, list) else 0,
-    }
+    try:
+        fields = {
+            "number": hx(block.get("number")),
+            "hash": norm_hash(block.get("hash")),
+            "parentHash": norm_hash(block.get("parentHash")),
+            "stateRoot": norm_hash(block.get("stateRoot")),
+            "receiptsRoot": norm_hash(block.get("receiptsRoot")),
+            "txCount": len(txs) if isinstance(txs, list) else 0,
+        }
+    except (TypeError, ValueError):
+        return None
+    if any(fields[name] is None for name in REQUIRED_BLOCK_FIELDS):
+        return None
+    return fields
 
 
 def mismatched_fields(left: dict[str, Any], right: dict[str, Any]) -> list[str]:

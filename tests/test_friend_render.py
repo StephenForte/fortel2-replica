@@ -6,8 +6,10 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -186,6 +188,46 @@ class FriendParityFailClosedTests(unittest.TestCase):
         self.assertNotIn("DIVERGENCE", result.stderr)
         self.assertNotIn("debug_setHead", result.stdout)
 
+    def test_incomplete_blocks_do_not_match(self):
+        incomplete = {"number": "0x0"}
+        rpc = ScriptedRpc(
+            {
+                self.NODE: {
+                    "eth_chainId": hex(852),
+                    "eth_blockNumber": hex(0),
+                    ("eth_getBlockByNumber", 0): incomplete,
+                },
+                self.REF: {
+                    "eth_chainId": hex(852),
+                    "eth_blockNumber": hex(0),
+                    ("eth_getBlockByNumber", 0): incomplete,
+                },
+            }
+        )
+        result = check_friend_parity.run_check(self.NODE, self.REF, rpc=rpc)
+        self.assertNotEqual(0, result.exit_code)
+        self.assertIn("REFERENCE_NULL", result.stderr)
+        self.assertNotIn(" MATCH", result.stdout)
+        self.assertNotIn("no divergence", result.stdout)
+
+    def test_malformed_node_head_is_node_null(self):
+        rpc = ScriptedRpc(
+            {
+                self.NODE: {
+                    "eth_chainId": hex(852),
+                    "eth_blockNumber": "not-a-quantity",
+                },
+                self.REF: {
+                    "eth_chainId": hex(852),
+                    "eth_blockNumber": hex(0),
+                },
+            }
+        )
+        result = check_friend_parity.run_check(self.NODE, self.REF, rpc=rpc)
+        self.assertNotEqual(0, result.exit_code)
+        self.assertIn("NODE_NULL", result.stderr)
+        self.assertNotIn("REFERENCE_NULL", result.stderr)
+
 
 def _jsonrpc_server(result_for: dict):
     """Serve programmed JSON-RPC results on a free loopback port."""
@@ -316,6 +358,41 @@ class FriendParityHttpTests(unittest.TestCase):
         self.assertEqual(0, proc.returncode, proc.stderr + proc.stdout)
         self.assertIn("no divergence", proc.stdout)
 
+    def test_wrapper_runs_when_three_files_are_colocated(self):
+        genesis = _block(0, GENESIS_HASH)
+        url, server = _jsonrpc_server(
+            {
+                "eth_chainId": hex(852),
+                "eth_blockNumber": hex(0),
+                "eth_getBlockByNumber": genesis,
+            }
+        )
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                dest = Path(tmp)
+                for name in (
+                    "check-friend-parity.sh",
+                    "check_friend_parity.py",
+                    "parity_compare.py",
+                ):
+                    shutil.copy(SCRIPTS / name, dest / name)
+                env = os.environ.copy()
+                env["NODE_RPC"] = url
+                env["REFERENCE_RPC"] = url
+                env.pop("PYTHONPATH", None)
+                proc = subprocess.run(
+                    ["bash", str(dest / "check-friend-parity.sh")],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    check=False,
+                )
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(0, proc.returncode, proc.stderr + proc.stdout)
+        self.assertIn("no divergence", proc.stdout)
+
     def test_wrapper_names_unreachable_reference(self):
         env = os.environ.copy()
         env["NODE_RPC"] = "http://127.0.0.1:1"
@@ -402,6 +479,7 @@ class FriendRenderDocsTests(unittest.TestCase):
         self.assertIn("Private Service", section)
         self.assertIn("not **New → Web Service**", section)
         self.assertIn("Shell", section)
+        self.assertIn("same directory", section)
 
     def test_friend_parity_is_documented_as_untrusted(self):
         section = _heading_section(

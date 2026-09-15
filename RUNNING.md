@@ -135,7 +135,7 @@ Dashboard only — **New → Private Service**, not **New → Blueprint**, not *
 
 Deploy. After env edits, Manual Deploy or restart so the container picks them up. Catch-up is the same as laptop: `current_l1` climbs immediately; `safe_l2` stays `0` until derivation reaches posted batches.
 
-To compare headers against a reference once the node answers `eth_chainId`, see *Check against a reference* below. The parity script is not baked into the image — copy `scripts/check-friend-parity.sh` and `scripts/check_friend_parity.py` plus `scripts/parity_compare.py` into the Shell session, then:
+To compare headers against a reference once the node answers `eth_chainId`, see *Check against a reference* below. The parity script is not baked into the image. Copy these three files into the **same directory** in the Shell session (`check-friend-parity.sh`, `check_friend_parity.py`, `parity_compare.py`), then:
 
 ```bash
 NODE_RPC=http://127.0.0.1:${PORT:-10000} bash check-friend-parity.sh

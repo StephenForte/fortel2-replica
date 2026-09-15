@@ -177,9 +177,12 @@ def run_check(
         return _fail(3, "NODE_NULL", "eth_blockNumber returned null")
     try:
         ref_head = hx(ref_head_raw)
-        node_head = hx(node_head_raw)
     except (TypeError, ValueError) as exc:
         return _fail(3, "REFERENCE_NULL", f"eth_blockNumber not a number: {exc}")
+    try:
+        node_head = hx(node_head_raw)
+    except (TypeError, ValueError) as exc:
+        return _fail(3, "NODE_NULL", f"eth_blockNumber not a number: {exc}")
     if ref_head is None:
         return _fail(3, "REFERENCE_NULL", "eth_blockNumber returned null")
     if node_head is None:
