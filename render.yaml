@@ -130,8 +130,13 @@ services:
       # in this Blueprint (a synced 0 would prune a restored archive datadir).
       # reth has no --archive flag. FORCE restore also drops reth.toml (jwt kept).
 
-  # Staging gateway — verification-only; suspend 2026-09-12 after 17:25Z
-  # (R-0017). REPLICA_UPSTREAM is a literal (R-0004): never fromService.
+  # Gateway REFERENCE — this service no longer exists. `fortel2-replica-reth-rpc`
+  # was verification-only, suspended 2026-09-12 and DELETED 2026-09-14 (R-0019).
+  # The live public gateway `fortel2-replica-rpc` is dashboard-created and is not
+  # in this Blueprint. This block is kept as the one in-repo record of how a
+  # gateway is configured; do not read it as current state, and note the
+  # Blueprint is never applied (D-0128) so it creates nothing.
+  # REPLICA_UPSTREAM is a literal (R-0004): never fromService.
   - type: web
     name: fortel2-replica-reth-rpc
     runtime: docker

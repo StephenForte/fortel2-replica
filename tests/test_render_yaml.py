@@ -206,6 +206,34 @@ class RenderYamlTests(unittest.TestCase):
             r"^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$",
         )
 
+    def test_gateway_default_upstream_matches_blueprint(self):
+        """The image default must name a host that still exists.
+
+        Every deployed gateway sets REPLICA_UPSTREAM explicitly, so this
+        default is only reached when that env var is lost — which is exactly
+        when a wrong value is hardest to diagnose. It pointed at
+        `fortel2-replica` until 2026-09-14, a host deleted with the geth pserv
+        (R-0019); the fallback would have failed to resolve and taken public
+        read down. Keyed off the Blueprint rather than a hardcoded string so
+        the two cannot drift apart.
+        """
+        dockerfile = (ROOT / "gateway" / "Dockerfile").read_text(encoding="utf-8")
+        match = re.search(r"REPLICA_UPSTREAM=(\S+?)\s*\\", dockerfile)
+        self.assertIsNotNone(match, "no REPLICA_UPSTREAM default in gateway/Dockerfile")
+        default = match.group(1)
+
+        blueprint = re.findall(
+            r"- key: REPLICA_UPSTREAM\s*\n\s*value: (\S+)", self.text
+        )
+        self.assertTrue(blueprint, "no REPLICA_UPSTREAM value in render.yaml")
+        self.assertIn(
+            default,
+            blueprint,
+            f"gateway default {default!r} is not a REPLICA_UPSTREAM the Blueprint uses",
+        )
+        # Belt and braces: never the retired geth slug, whatever else changes.
+        self.assertNotIn("//fortel2-replica:", default)
+
 
 if __name__ == "__main__":
     unittest.main()
