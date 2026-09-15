@@ -65,11 +65,14 @@ services:
     disk:
       name: fortel2-replica-reth-data
       mountPath: /data
-      # Live dashboard disk is 10 GB (D-0127 / #49). This value is
-      # documentation: the Blueprint is never applied (D-0128).
-      # Standing follow-up: grow to ≈25 GB before 2026-10-20 (R-0017)
-      # as a dashboard resize, not a Blueprint apply.
-      sizeGB: 10
+      # Live dashboard disk is 50 GB, resized from 10 on 2026-09-14
+      # (R-0019). The R-0017 follow-up asked for ≈25 GB before
+      # 2026-10-20; Render offers fixed sizes and 25 is not one, so 50
+      # is the next step up. That follow-up is CLOSED — at ≈170 MB/day
+      # (R-0017 Q5) this is years of headroom, not weeks.
+      # This value is documentation: the Blueprint is never applied
+      # (D-0128). Resizes are a dashboard action, never a Blueprint apply.
+      sizeGB: 50
     envVars:
       - key: L1_RPC_URL
         sync: false
@@ -127,8 +130,13 @@ services:
       # in this Blueprint (a synced 0 would prune a restored archive datadir).
       # reth has no --archive flag. FORCE restore also drops reth.toml (jwt kept).
 
-  # Staging gateway — verification-only; suspend 2026-09-12 after 17:25Z
-  # (R-0017). REPLICA_UPSTREAM is a literal (R-0004): never fromService.
+  # Gateway REFERENCE — this service no longer exists. `fortel2-replica-reth-rpc`
+  # was verification-only, suspended 2026-09-12 and DELETED 2026-09-14 (R-0019).
+  # The live public gateway `fortel2-replica-rpc` is dashboard-created and is not
+  # in this Blueprint. This block is kept as the one in-repo record of how a
+  # gateway is configured; do not read it as current state, and note the
+  # Blueprint is never applied (D-0128) so it creates nothing.
+  # REPLICA_UPSTREAM is a literal (R-0004): never fromService.
   - type: web
     name: fortel2-replica-reth-rpc
     runtime: docker

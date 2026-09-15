@@ -8,11 +8,16 @@
 FROM nginxinc/nginx-unprivileged:1.30.4-alpine
 
 # Contract defaults. Render injects PORT; the rest are overridable at runtime.
+# REPLICA_UPSTREAM's default is load-bearing even though every deployed gateway
+# sets it explicitly: it is what a deploy falls back to if that env var is ever
+# lost. It pointed at `fortel2-replica` until 2026-09-14 — a host deleted with
+# the geth pserv (R-0019) — so the fallback would have failed to resolve and
+# taken public read down. It now names the live EL.
 # RPC_REAL_IP_HEADER defaults to CF-Connecting-IP: every Render Web Service
 # terminates through Cloudflare first (platform edge, not optional orange-cloud).
 # X-Forwarded-For's rightmost hop is therefore a CF PoP, not the client.
 ENV PORT=10000 \
-    REPLICA_UPSTREAM=http://fortel2-replica:10000 \
+    REPLICA_UPSTREAM=http://fortel2-replica-reth:10000 \
     RPC_RATE=20r/s \
     RPC_BURST=40 \
     RPC_REAL_IP_HEADER=CF-Connecting-IP \

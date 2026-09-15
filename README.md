@@ -11,7 +11,7 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 
 Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. There is no root `./Dockerfile` and no op-geth start path.
 
-**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 10 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth EL surface is retired in this repo (Task 9). The suspended geth pserv `fortel2-replica` remains on Render for the operator to delete by hand after merge. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
+**Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 50 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth EL surface is retired in this repo and deleted from Render (Task 9 / R-0019, 2026-09-14). The suspended geth pserv `fortel2-replica` remains on Render for the operator to delete by hand after merge. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
 
 **Status (Phase 3):** Operator-verified on Render against a fresh Phase 2b cutover — matching L2 block hashes with the Mac sequencer. Genesis/rollup in `config/` must stay in lockstep with ForteL2 after any Sepolia redeploy.
 
@@ -105,7 +105,7 @@ Operator-applied Blueprint additions. Do **not** re-apply this file onto the liv
 | `fortel2-replica-reth-rpc` | web (staging, diskless) | none | Staging gateway (`srv-dagr42tbedkc73c5mp80`). **Suspended 2026-09-12** (D-0129). `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000`. |
 | `fortel2-replica-rpc` | web (live, Dashboard) | none | Public hostname. `REPLICA_UPSTREAM=http://fortel2-replica-reth:10000` (R-0017). Not in this Blueprint. |
 
-Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. The 24 h window passed clean. The geth EL files are gone from this repo; the operator deletes the suspended Render pserv `fortel2-replica` and its 50 GB disk by hand after merge. Disk follow-up: grow `fortel2-replica-reth` to ≈25 GB before 2026-10-20.
+Phase C executed 2026-09-11 17:16–17:25Z as two env edits to `http://fortel2-replica-reth:10000` (`fortel2-replica-rpc` `REPLICA_UPSTREAM` and SOS `FORTEL2_SEPOLIA_READ_RPC_URL`). A rename-swap does not move traffic (slugs are immutable) and was reverted so names stay equal to slugs. The 24 h window passed clean. The geth EL files are gone from this repo, and the suspended pserv `fortel2-replica` plus its 50 GB disk and the staging gateway `fortel2-replica-reth-rpc` were deleted from Render on 2026-09-14 (R-0019). Public read was re-verified after: `reth/v2.3.0-9384bc5`, tip 982723, SOS 200. The disk follow-up is **closed** — `fortel2-replica-reth` was resized 10 → 50 GB the same day (Render has fixed sizes; 25 is not one).
 
 ### Snapshot bootstrap (R-0014 / D-0123)
 
