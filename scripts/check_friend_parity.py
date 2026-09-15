@@ -40,6 +40,9 @@ DIVERGENCE_NOT_VERDICT = (
 )
 
 
+ALLOWED_RPC_SCHEMES = frozenset({"http", "https"})
+
+
 class RpcError(Exception):
     def __init__(self, kind: str, message: str):
         self.kind = kind
@@ -54,12 +57,24 @@ class CheckResult:
     lines: list[str] = field(default_factory=list)
 
 
+def require_http_url(url: str) -> None:
+    """Reject non-http(s) URLs so urllib cannot be pointed at file:// etc."""
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in ALLOWED_RPC_SCHEMES or not parsed.hostname:
+        raise RpcError(
+            "unreachable",
+            f"URL scheme must be http or https with a host "
+            f"(got {parsed.scheme or '<empty>'!r})",
+        )
+
+
 def rpc_urllib(
     url: str,
     method: str,
     params: list[Any],
     timeout: float = 30,
 ) -> Any:
+    require_http_url(url)
     payload = json.dumps(
         {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
     ).encode()
@@ -67,6 +82,9 @@ def rpc_urllib(
         url, data=payload, headers={"Content-Type": "application/json"}
     )
     try:
+        # Scheme allowlisted above; NODE_RPC / REFERENCE_RPC are local flags,
+        # never request-controlled. Same class as l1_rpc_router.require_http_url.
+        # nosemgrep: python.lang.security.audit.dynamic-urllib-use-detected.dynamic-urllib-use-detected
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
@@ -128,8 +146,14 @@ def run_check(
     ref_url = reference_rpc.rstrip("/")
     call = rpc or rpc_urllib
 
-    if not urlparse(node_url).scheme or not urlparse(ref_url).scheme:
-        return _fail(2, "REFERENCE_UNREACHABLE", "NODE_RPC and REFERENCE_RPC must be http(s) URLs")
+    for url, side in ((ref_url, "reference"), (node_url, "node")):
+        parsed = urlparse(url)
+        if parsed.scheme.lower() not in ALLOWED_RPC_SCHEMES or not parsed.hostname:
+            return _fail(
+                2,
+                _named(side, "unreachable"),
+                "URL scheme must be http or https with a host",
+            )
 
     ref_chain = _call(call, ref_url, "eth_chainId", [], "reference")
     if isinstance(ref_chain, CheckResult):

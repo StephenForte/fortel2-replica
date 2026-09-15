@@ -228,6 +228,31 @@ class FriendParityFailClosedTests(unittest.TestCase):
         self.assertIn("NODE_NULL", result.stderr)
         self.assertNotIn("REFERENCE_NULL", result.stderr)
 
+    def test_file_scheme_reference_is_named_unreachable(self):
+        result = check_friend_parity.run_check(
+            "http://127.0.0.1:9545",
+            "file:///etc/passwd",
+        )
+        self.assertNotEqual(0, result.exit_code)
+        self.assertIn("REFERENCE_UNREACHABLE", result.stderr)
+        self.assertNotIn("REFERENCE_NULL", result.stderr)
+        self.assertNotIn("DIVERGENCE", result.stderr)
+
+    def test_file_scheme_node_is_named_unreachable(self):
+        result = check_friend_parity.run_check(
+            "file:///etc/passwd",
+            "http://127.0.0.1:18545",
+        )
+        self.assertNotEqual(0, result.exit_code)
+        self.assertIn("NODE_UNREACHABLE", result.stderr)
+        self.assertNotIn("REFERENCE_UNREACHABLE", result.stderr)
+
+    def test_rpc_urllib_rejects_file_scheme_before_open(self):
+        with self.assertRaises(check_friend_parity.RpcError) as raised:
+            check_friend_parity.rpc_urllib("file:///etc/passwd", "eth_chainId", [])
+        self.assertEqual("unreachable", raised.exception.kind)
+        self.assertIn("http or https", str(raised.exception))
+
 
 def _jsonrpc_server(result_for: dict):
     """Serve programmed JSON-RPC results on a free loopback port."""
