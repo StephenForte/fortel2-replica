@@ -726,9 +726,18 @@ class GatewayDockerTests(unittest.TestCase):
         cid = None
         try:
             cid, url = self._run_gateway(up_port)
-            status, _body, _hdrs = _http("GET", f"{url}/status?qid=7&x=1")
+            status, _body, _hdrs = _http("GET", f"{url}/probe?qid=7&x=1")
             self.assertEqual(200, status)
-            self.assertIn("GET /status?qid=7&x=1", _DummyFilter.hits)
+            self.assertIn("GET /probe?qid=7&x=1", _DummyFilter.hits)
+
+            # /status is the gateway's own static page, never the upstream.
+            status, body, hdrs = _http("GET", f"{url}/status")
+            self.assertEqual(200, status)
+            self.assertIn(b"<title>ForteL2 Pipeline Health</title>", body)
+            low = {k.lower(): v for k, v in hdrs.items()}
+            self.assertTrue(low.get("content-type", "").startswith("text/html"), hdrs)
+            self.assertIn("connect-src 'self'", low.get("content-security-policy", ""))
+            self.assertFalse([h for h in _DummyFilter.hits if " /status" in h], _DummyFilter.hits)
 
             status, _body, _hdrs = _http("POST", f"{url}/rpc?foo=bar", CHAIN_ID_REQ)
             self.assertEqual(200, status)
