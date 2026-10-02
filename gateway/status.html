@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ForteL2 Pipeline Health</title>
+<!--
+  Live counterpart of ForteL2 data/pipeline-health.json (scripts/pipeline-snapshot.py).
+  Same panels, same verdict rules, computed in the browser from public reads:
+    replica   — this origin, POST /  (method filter behind the gateway)
+    sequencer — https://fortel2-sequencer-rpc.onrender.com (filtered tip, R-0009)
+    L1        — https://ethereum-sepolia-rpc.publicnode.com (free; never QuickNode)
+  Served as a static file by gateway/nginx.conf.template `location = /status`.
+  The CSP there lists exactly these three origins; change both together.
+  Addresses below must match config/rollup.json (tests/test_gateway_config.py).
+-->
+<style>
+:root {
+  --bg: #f7f7f5; --card: #ffffff; --ink: #1b1b1a; --muted: #6b6b66; --line: #e4e3df;
+  --ok: #1f7a4a; --ok-bg: #e5f3ea; --warn: #9a6400; --warn-bg: #fbf0d9;
+  --bad: #b3261e; --bad-bg: #fbe5e3; --idle: #6b6b66; --idle-bg: #eeeeeb;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --card: #1d1d1b; --ink: #ecebe6; --muted: #9b9a93; --line: #2e2e2b;
+    --ok: #6fcf97; --ok-bg: #1b3326; --warn: #f2c14e; --warn-bg: #3a2f14;
+    --bad: #ff8a80; --bad-bg: #3d1d1a; --idle: #9b9a93; --idle-bg: #262624;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 20px; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); font-size: 13px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; min-width: 0; }
+.card h2 { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 0 0 10px; }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; }
+dt { color: var(--muted); font-size: 13px; }
+dd { margin: 0; font-family: var(--mono); font-size: 13px; text-align: right; overflow-wrap: anywhere; }
+.pill { font: 600 11px/1 system-ui, sans-serif; text-transform: none; letter-spacing: 0.02em;
+  padding: 4px 8px; border-radius: 999px; background: var(--idle-bg); color: var(--idle); white-space: nowrap; }
+.pill.ok { background: var(--ok-bg); color: var(--ok); }
+.pill.warn { background: var(--warn-bg); color: var(--warn); }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--idle); margin-right: 6px; }
+.dot.live { background: var(--ok); }
+.dot.err { background: var(--bad); }
+a { color: inherit; }
+.errors { margin-top: 14px; color: var(--bad); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+details { margin-top: 14px; }
+summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+pre { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px;
+  overflow-x: auto; font: 12px/1.4 var(--mono); }
+footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>ForteL2 pipeline health</h1>
+    <span class="sub"><span class="dot" id="live-dot"></span><span id="live-text">starting…</span></span>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Sequencer <span class="pill" id="seq-pill">–</span></h2>
+      <dl>
+        <dt>Unsafe</dt><dd id="seq-unsafe">–</dd>
+        <dt>Safe</dt><dd id="seq-safe">–</dd>
+        <dt>Finalized</dt><dd id="seq-finalized">–</dd>
+        <dt>Unsafe − safe</dt><dd id="seq-lag">–</dd>
+        <dt>Block interval</dt><dd id="seq-interval">–</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>Replica <span class="pill" id="rep-pill">–</span></h2>
+      <dl>
+        <dt>Head (derived)</dt><dd id="rep-latest">–</dd>
+        <dt>Safe</dt><dd id="rep-safe">–</dd>
+        <dt>Finalized</dt><dd id="rep-finalized">–</dd>
+        <dt>Behind sequencer tip</dt><dd id="rep-behind">–</dd>
+        <dt>vs sequencer safe</dt><dd id="rep-vs-safe">–</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>Batcher <span class="pill" id="bat-pill">–</span></h2>
+      <dl>
+        <dt>L1 scan</dt><dd id="bat-scan">–</dd>
+        <dt>Posts in window</dt><dd id="bat-count">–</dd>
+        <dt>Last post</dt><dd id="bat-last">–</dd>
+        <dt>Cadence</dt><dd id="bat-cadence">–</dd>
+        <dt>Last tx</dt><dd id="bat-hash">–</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>Proposer <span class="pill" id="pro-pill">–</span></h2>
+      <dl>
+        <dt>Games</dt><dd id="pro-count">–</dd>
+        <dt>Latest game</dt><dd id="pro-latest">–</dd>
+        <dt>Interval</dt><dd id="pro-interval">–</dd>
+        <dt>Overdue after</dt><dd id="pro-threshold">–</dd>
+        <dt>Proxy</dt><dd id="pro-proxy">–</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>Aggregate <span class="pill" id="agg-pill">–</span></h2>
+      <dl>
+        <dt>Window</dt><dd id="agg-window">–</dd>
+        <dt>Blocks (non-empty)</dt><dd id="agg-blocks">–</dd>
+        <dt>Transactions</dt><dd id="agg-tx">–</dd>
+        <dt>Tx / min</dt><dd id="agg-rate">–</dd>
+        <dt>Mempool</dt><dd id="agg-mempool">not public</dd>
+      </dl>
+    </section>
+
+    <section class="card">
+      <h2>Dev sleep <span class="pill" id="sleep-pill">–</span></h2>
+      <dl>
+        <dt>Window (Pacific)</dt><dd id="sleep-window">–</dd>
+        <dt>Now (Pacific)</dt><dd id="sleep-now">–</dd>
+      </dl>
+    </section>
+  </div>
+
+  <div class="errors" id="errors"></div>
+
+  <details>
+    <summary>Live JSON (pipeline-health.json shape)</summary>
+    <pre id="json">{}</pre>
+  </details>
+
+  <footer>
+    Reads only public endpoints. Polling pauses while this tab is hidden.
+    Mempool (<code>txpool_status</code>) is not exposed on public read, so that field stays unavailable here.
+  </footer>
+</main>
+
+<script>
+"use strict";
+
+// Keep in sync with config/rollup.json and ForteL2 pipeline-snapshot.py.
+const CFG = {
+  replica: "/",
+  sequencer: "https://fortel2-sequencer-rpc.onrender.com",
+  l1: "https://ethereum-sepolia-rpc.publicnode.com",
+  l1ChainId: 11155111,
+  l2ChainId: 852,
+  batcher: "0x3d54fd6353cd66d143fb94d178c9eeb1ae98a31d",
+  inbox: "0x007238ac625e3e5369739fa5b9cdbf61320b237c",
+  factory: "0x67f9e427c716586ecc0dc0b62baa8cd05e43262f",
+  proposerIntervalSec: 8 * 3600,
+  proposerGraceSec: 2 * 3600,       // D-0142
+  l1ScanBlocks: 60,                 // D-0141
+  l2WindowBlocks: 15,
+  devSleep: { startMin: 23 * 60 + 45, endMin: 15, tz: "America/Los_Angeles" }, // D-0144 defaults
+  poll: { l2Ms: 4000, l1Ms: 12000, proposerMs: 60000 },
+};
+
+const S = {
+  seq: null, rep: null, l2Blocks: new Map(), l1Blocks: new Map(), l1Tip: null,
+  proposer: null, errors: {}, lastOk: null,
+};
+
+// ---------- RPC ----------
+let rpcId = 0;
+async function rpcBatch(url, calls) {
+  const body = calls.map(([method, params]) => ({ jsonrpc: "2.0", id: ++rpcId, method, params }));
+  const res = await fetch(url, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify(body), cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`${url} HTTP ${res.status}`);
+  const out = await res.json();
+  if (!Array.isArray(out)) throw new Error(`${url}: ${out?.error?.message || "non-batch reply"}`);
+  const byId = new Map(out.map((r) => [r.id, r]));
+  return body.map((req) => {
+    const r = byId.get(req.id);
+    if (!r) throw new Error(`${url}: missing reply for ${req.method}`);
+    if (r.error) throw new Error(`${url} ${req.method}: ${r.error.message}`);
+    return r.result;
+  });
+}
+const hex = (v) => (v == null ? null : parseInt(v, 16));
+const toHex = (n) => "0x" + n.toString(16);
+const nowSec = () => Date.now() / 1000;
+
+// ---------- pollers ----------
+function headOf(b) { return b ? { number: hex(b.number), timestamp: hex(b.timestamp) } : null; }
+
+async function pollL2() {
+  const tags = ["latest", "safe", "finalized"].map((t) => ["eth_getBlockByNumber", [t, false]]);
+  const [seqRes, repRes] = await Promise.allSettled([
+    rpcBatch(CFG.sequencer, tags), rpcBatch(CFG.replica, tags),
+  ]);
+  if (seqRes.status === "fulfilled") {
+    const [u, s, f] = seqRes.value.map(headOf);
+    S.seq = { unsafe: u, safe: s, finalized: f, at: nowSec() };
+    delete S.errors.sequencer;
+    await fillL2Window(u.number);
+  } else S.errors.sequencer = String(seqRes.reason.message || seqRes.reason);
+  if (repRes.status === "fulfilled") {
+    const [l, s, f] = repRes.value.map(headOf);
+    S.rep = { latest: l, safe: s, finalized: f, at: nowSec() };
+    delete S.errors.replica;
+  } else S.errors.replica = String(repRes.reason.message || repRes.reason);
+  if (seqRes.status === "rejected" && repRes.status === "rejected") throw new Error("both L2 reads failed");
+}
+
+async function fillL2Window(tip) {
+  const lo = Math.max(0, tip - CFG.l2WindowBlocks + 1);
+  for (const n of S.l2Blocks.keys()) if (n < lo || n > tip) S.l2Blocks.delete(n);
+  const missing = [];
+  for (let n = lo; n <= tip; n++) if (!S.l2Blocks.has(n)) missing.push(n);
+  if (!missing.length) return;
+  const got = await rpcBatch(CFG.sequencer, missing.map((n) => ["eth_getBlockByNumber", [toHex(n), false]]));
+  got.forEach((b, i) => {
+    if (b) S.l2Blocks.set(missing[i], { ts: hex(b.timestamp), txs: (b.transactions || []).length });
+  });
+}
+
+async function pollBatcher() {
+  const [tipHex] = await rpcBatch(CFG.l1, [["eth_blockNumber", []]]);
+  const tip = hex(tipHex);
+  const lo = Math.max(0, tip - CFG.l1ScanBlocks + 1);
+  for (const n of S.l1Blocks.keys()) if (n < lo) S.l1Blocks.delete(n);
+  const missing = [];
+  for (let n = lo; n <= tip; n++) if (!S.l1Blocks.has(n)) missing.push(n);
+  // Full-tx blocks are large; small sequential chunks keep publicnode happy.
+  for (let i = 0; i < missing.length; i += 6) {
+    const chunk = missing.slice(i, i + 6);
+    const got = await rpcBatch(CFG.l1, chunk.map((n) => ["eth_getBlockByNumber", [toHex(n), true]]));
+    got.forEach((b, j) => {
+      if (!b) return;
+      const posts = (b.transactions || [])
+        .filter((tx) => (tx.from || "").toLowerCase() === CFG.batcher && (tx.to || "").toLowerCase() === CFG.inbox)
+        .map((tx) => tx.hash);
+      S.l1Blocks.set(chunk[j], { ts: hex(b.timestamp), posts });
+    });
+  }
+  S.l1Tip = tip;
+  delete S.errors.l1_batcher;
+}
+
+async function pollProposer() {
+  const [countHex] = await rpcBatch(CFG.l1, [["eth_call", [{ to: CFG.factory, data: "0x4d1975b4" }, "latest"]]]);
+  const count = hex(countHex) || 0;
+  let latest = null;
+  if (count > 0) {
+    const idx = count - 1;
+    const data = "0xbb8aa1fc" + idx.toString(16).padStart(64, "0");
+    const [raw] = await rpcBatch(CFG.l1, [["eth_call", [{ to: CFG.factory, data }, "latest"]]]);
+    if (raw && raw.length >= 2 + 64 * 3) {
+      const h = raw.slice(2);
+      latest = {
+        index: idx, game_type: parseInt(h.slice(0, 64), 16),
+        timestamp: parseInt(h.slice(64, 128), 16), proxy: "0x" + h.slice(128 + 24, 192),
+      };
+    }
+  }
+  S.proposer = { count, latest };
+  delete S.errors.l1_proposer;
+}
+
+// ---------- dev sleep (D-0144) ----------
+const PT_HHMM = new Intl.DateTimeFormat("en-US", {
+  timeZone: CFG.devSleep.tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+function pacificMinutes(tsSec) {
+  const parts = PT_HHMM.formatToParts(new Date(tsSec * 1000));
+  const g = (t) => parseInt(parts.find((p) => p.type === t).value, 10);
+  return g("hour") * 60 + g("minute");
+}
+function inSleep(tsSec) {
+  const m = pacificMinutes(tsSec), { startMin: a, endMin: b } = CFG.devSleep;
+  return a <= b ? m >= a && m < b : m >= a || m < b;
+}
+// Seconds in [lo, hi] outside the nightly window, sampled per minute. Same
+// intent as awake_seconds_between(): the proposer clock pauses while the stack sleeps.
+function awakeSecondsBetween(lo, hi) {
+  if (hi <= lo) return 0;
+  let asleep = 0;
+  for (let t = lo; t < hi; t += 60) if (inSleep(t)) asleep += Math.min(60, hi - t);
+  return Math.max(0, hi - lo - asleep);
+}
+
+// ---------- derive pipeline-health.json shape ----------
+const age = (ts, now) => (ts == null ? null : Math.max(0, Math.round(now - ts)));
+
+function build() {
+  const now = nowSec();
+  const errors = Object.entries(S.errors).map(([k, v]) => `${k}: ${v}`);
+
+  let sequencer = null;
+  if (S.seq) {
+    const { unsafe: u, safe: s, finalized: f } = S.seq;
+    const recent = [...S.l2Blocks.entries()].sort((a, b) => a[0] - b[0]).slice(-5);
+    const gaps = [];
+    for (let i = 1; i < recent.length; i++) {
+      const d = recent[i][1].ts - recent[i - 1][1].ts;
+      if (d > 0) gaps.push(d);
+    }
+    sequencer = {
+      unsafe: u.number, safe: s.number, finalized: f.number,
+      lag_unsafe_safe: u.number - s.number,
+      unsafe_age_sec: age(u.timestamp, now), safe_age_sec: age(s.timestamp, now),
+      finalized_age_sec: age(f.timestamp, now),
+      recent_block_interval_sec: gaps.length ? +(gaps.reduce((a, b) => a + b, 0) / gaps.length).toFixed(2) : null,
+      l2_tip: u.number,
+    };
+  }
+
+  let replica = null;
+  if (S.rep) {
+    const { latest: l, safe: s, finalized: f } = S.rep;
+    replica = {
+      latest: l.number, safe: s.number, finalized: f.number,
+      latest_age_sec: age(l.timestamp, now),
+      behind_sequencer_tip: sequencer ? sequencer.unsafe - l.number : null,
+      behind_sequencer_safe: sequencer ? sequencer.safe - l.number : null,
+    };
+  }
+
+  let batcher = null;
+  if (S.l1Tip != null) {
+    const posts = [];
+    for (const [n, b] of S.l1Blocks) for (const h of b.posts) posts.push({ n, ts: b.ts, h });
+    posts.sort((a, b) => b.n - a.n);
+    const gaps = [];
+    for (let i = 0; i + 1 < posts.length; i++) if (posts[i].ts > posts[i + 1].ts) gaps.push(posts[i].ts - posts[i + 1].ts);
+    batcher = {
+      scan_from: Math.max(0, S.l1Tip - CFG.l1ScanBlocks + 1), scan_to: S.l1Tip,
+      post_count: posts.length,
+      last_hash: posts[0]?.h ?? null, last_age_sec: posts[0] ? age(posts[0].ts, now) : null,
+      cadence_sec: gaps.length ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : null,
+      batcher: CFG.batcher, inbox: CFG.inbox,
+      verdict: posts.length > 0 ? "healthy" : "no-posts",
+    };
+  }
+
+  let proposer = null;
+  if (S.proposer) {
+    const { count, latest } = S.proposer;
+    let verdict = "unknown";
+    if (count && latest) {
+      verdict = awakeSecondsBetween(latest.timestamp, now) > CFG.proposerIntervalSec + CFG.proposerGraceSec
+        ? "overdue" : "healthy";
+    }
+    proposer = {
+      factory: CFG.factory, game_count: count,
+      latest: latest ? { ...latest, age_sec: age(latest.timestamp, now) } : null,
+      interval_sec: CFG.proposerIntervalSec, verdict,
+    };
+  } else if (S.errors.l1_proposer) {
+    proposer = { factory: CFG.factory, game_count: 0, latest: null, interval_sec: CFG.proposerIntervalSec, verdict: "unknown" };
+  }
+
+  let aggregate = null;
+  if (S.l2Blocks.size) {
+    const blocks = [...S.l2Blocks.entries()].sort((a, b) => a[0] - b[0]);
+    const txs = blocks.reduce((a, [, b]) => a + b.txs, 0);
+    const empty = blocks.filter(([, b]) => b.txs === 0).length;
+    const win = blocks.length >= 2 ? blocks[blocks.length - 1][1].ts - blocks[0][1].ts : null;
+    aggregate = {
+      scan_from: blocks[0][0], scan_to: blocks[blocks.length - 1][0],
+      block_count: blocks.length, empty_blocks: empty, non_empty_blocks: blocks.length - empty,
+      tx_count: txs, window_sec: win,
+      tx_per_min: win > 0 ? +((txs / win) * 60).toFixed(2) : null,
+      mempool: { ok: false, error: "txpool_status is not exposed on public read" },
+    };
+  }
+
+  const hhmm = (m) => `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+  return {
+    captured_at: new Date(now * 1000).toISOString().replace(/\.\d+Z$/, "Z"),
+    mode: "sepolia",
+    source: "live",
+    chain: { l1: CFG.l1ChainId, l2: CFG.l2ChainId },
+    rpc: { l1: CFG.l1, l2: CFG.sequencer, replica: location.origin + CFG.replica },
+    sequencer, replica, batcher, proposer, aggregate, errors,
+    devSleep: {
+      startLocal: hhmm(CFG.devSleep.startMin), endLocal: hhmm(CFG.devSleep.endMin),
+      tz: CFG.devSleep.tz, source: "default", active: inSleep(now),
+    },
+  };
+}
+
+// ---------- render ----------
+const $ = (id) => document.getElementById(id);
+const fmtN = (n) => (n == null ? "–" : n.toLocaleString("en-US"));
+function fmtAge(s) {
+  if (s == null) return "–";
+  if (s < 90) return `${s}s ago`;
+  if (s < 5400) return `${Math.round(s / 60)}m ago`;
+  return `${(s / 3600).toFixed(1)}h ago`;
+}
+function fmtDur(s) {
+  if (s == null) return "–";
+  if (s < 120) return `${s}s`;
+  if (s < 7200) return `${Math.round(s / 60)}m`;
+  return `${+(s / 3600).toFixed(1)}h`;
+}
+const short = (h) => (h ? `${h.slice(0, 10)}…${h.slice(-6)}` : "–");
+function set(id, text) { $(id).textContent = text; }
+function pill(id, cls, text) { const el = $(id); el.className = "pill " + (cls || ""); el.textContent = text; }
+
+function render() {
+  const d = build();
+  const sleeping = d.devSleep.active;
+
+  if (d.sequencer) {
+    const q = d.sequencer;
+    set("seq-unsafe", `${fmtN(q.unsafe)} · ${fmtAge(q.unsafe_age_sec)}`);
+    set("seq-safe", `${fmtN(q.safe)} · ${fmtAge(q.safe_age_sec)}`);
+    set("seq-finalized", `${fmtN(q.finalized)} · ${fmtAge(q.finalized_age_sec)}`);
+    set("seq-lag", `${fmtN(q.lag_unsafe_safe)} blocks`);
+    set("seq-interval", q.recent_block_interval_sec == null ? "–" : `${q.recent_block_interval_sec}s`);
+    if (q.unsafe_age_sec <= 30) pill("seq-pill", "ok", "producing");
+    else if (sleeping) pill("seq-pill", "", "sleeping");
+    else pill("seq-pill", q.unsafe_age_sec <= 300 ? "warn" : "bad", "stalled");
+  } else pill("seq-pill", S.errors.sequencer ? "bad" : "", S.errors.sequencer ? "unreachable" : "–");
+
+  if (d.replica) {
+    const r = d.replica;
+    set("rep-latest", `${fmtN(r.latest)} · ${fmtAge(r.latest_age_sec)}`);
+    set("rep-safe", fmtN(r.safe));
+    set("rep-finalized", fmtN(r.finalized));
+    set("rep-behind", r.behind_sequencer_tip == null ? "–" : `${fmtN(r.behind_sequencer_tip)} blocks`);
+    set("rep-vs-safe", r.behind_sequencer_safe == null ? "–"
+      : r.behind_sequencer_safe <= 0 ? "caught up" : `${fmtN(r.behind_sequencer_safe)} behind`);
+    // Replica derives from L1, so ~a batch cycle behind the tip is normal.
+    if (r.latest_age_sec <= 900) pill("rep-pill", "ok", "following");
+    else if (sleeping) pill("rep-pill", "", "sleeping");
+    else pill("rep-pill", r.latest_age_sec <= 1800 ? "warn" : "bad", "behind");
+  } else pill("rep-pill", S.errors.replica ? "bad" : "", S.errors.replica ? "unreachable" : "–");
+
+  if (d.batcher) {
+    const b = d.batcher;
+    set("bat-scan", `${fmtN(b.scan_from)}–${fmtN(b.scan_to)}`);
+    set("bat-count", String(b.post_count));
+    set("bat-last", fmtAge(b.last_age_sec));
+    set("bat-cadence", fmtDur(b.cadence_sec));
+    set("bat-hash", short(b.last_hash));
+    pill("bat-pill", b.verdict === "healthy" ? "ok" : sleeping ? "" : "bad", b.verdict);
+  } else pill("bat-pill", S.errors.l1_batcher ? "bad" : "", S.errors.l1_batcher ? "L1 error" : "scanning…");
+
+  if (d.proposer) {
+    const p = d.proposer;
+    set("pro-count", fmtN(p.game_count));
+    set("pro-latest", p.latest ? `#${p.latest.index} · ${fmtAge(p.latest.age_sec)}` : "–");
+    set("pro-interval", fmtDur(p.interval_sec));
+    set("pro-threshold", fmtDur(CFG.proposerIntervalSec + CFG.proposerGraceSec) + " awake");
+    set("pro-proxy", short(p.latest?.proxy));
+    pill("pro-pill", { healthy: "ok", overdue: "bad", unknown: "warn" }[p.verdict], p.verdict);
+  }
+
+  if (d.aggregate) {
+    const a = d.aggregate;
+    set("agg-window", `${fmtN(a.scan_from)}–${fmtN(a.scan_to)} · ${fmtDur(a.window_sec)}`);
+    set("agg-blocks", `${a.block_count} (${a.non_empty_blocks})`);
+    set("agg-tx", fmtN(a.tx_count));
+    set("agg-rate", a.tx_per_min == null ? "–" : String(a.tx_per_min));
+    pill("agg-pill", a.tx_count > 0 ? "ok" : "", a.tx_count > 0 ? "traffic" : "idle");
+  }
+
+  set("sleep-window", `${d.devSleep.startLocal}–${d.devSleep.endLocal}`);
+  set("sleep-now", new Intl.DateTimeFormat("en-US", {
+    timeZone: CFG.devSleep.tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  }).format(new Date()));
+  pill("sleep-pill", sleeping ? "warn" : "ok", sleeping ? "in window" : "awake");
+
+  set("errors", d.errors.join("\n"));
+  const fresh = S.lastOk && Date.now() - S.lastOk < 15000;
+  $("live-dot").className = "dot " + (document.hidden ? "" : fresh ? "live" : "err");
+  set("live-text", document.hidden ? "paused (tab hidden)"
+    : fresh ? `live · updated ${new Date(S.lastOk).toLocaleTimeString()}` : "waiting for data…");
+  set("json", JSON.stringify(d, null, 2));
+}
+
+// ---------- scheduling ----------
+function loop(fn, ms, errKey) {
+  let running = false;
+  const tick = async () => {
+    if (document.hidden || running) return;
+    running = true;
+    try { await fn(); S.lastOk = Date.now(); }
+    catch (e) { if (errKey) S.errors[errKey] = String(e.message || e); }
+    finally { running = false; render(); }
+  };
+  tick();
+  setInterval(tick, ms);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
+}
+loop(pollL2, CFG.poll.l2Ms, null);
+loop(pollBatcher, CFG.poll.l1Ms, "l1_batcher");
+loop(pollProposer, CFG.poll.proposerMs, "l1_proposer");
+setInterval(render, 1000);
+document.addEventListener("visibilitychange", render);
+</script>
+</body>
+</html>

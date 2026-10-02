@@ -215,6 +215,7 @@ First version limits HTTP requests per IP only (R-0007). There is no method-leve
 ```bash
 # health check
 curl -sS https://fortel2-replica-rpc.onrender.com/healthz
+curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' https://fortel2-replica-rpc.onrender.com/status   # 200 text/html; open in a browser for live health
 # chain id 852
 curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
