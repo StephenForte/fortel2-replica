@@ -72,7 +72,7 @@ curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/j
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
 ```
 
-While you are still deriving, your tip is behind. Once caught up, it should track that public head — both sit ~3 minutes behind the sequencer, and both pause new L2 progress during the sequencer sleep window (**23:45–03:00** `America/Los_Angeles`). Hash-equal blocks at the same number mean you are on the same chain.
+While you are still deriving, your tip is behind. Once caught up, it should track that public head — both sit ~3 minutes behind the sequencer, and both pause new L2 progress during the sequencer sleep window (**23:45–00:15** `America/Los_Angeles`). Hash-equal blocks at the same number mean you are on the same chain.
 
 **Stalled.** `current_l1` is not climbing, or `current_l1` has reached `head_l1` but `safe_l2` stays `0` for hours after that, or your L2 head is frozen while the public endpoint keeps moving. Typical causes: PublicNode returning 0 receipts (D-0105), or genesis/rollup that do not match `README.md` §Chain identity.
 
