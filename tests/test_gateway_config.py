@@ -493,6 +493,60 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertIn("no nameserver", got.stderr)
 
 
+class StatusPageTests(unittest.TestCase):
+    """Static live-health page served by the gateway at /status."""
+
+    PAGE = GATEWAY / "status.html"
+
+    def _cfg_origins(self) -> set[str]:
+        html = self.PAGE.read_text(encoding="utf-8")
+        return set(re.findall(r'^\s*(?:sequencer|l1):\s*"(https://[^"/]+)"', html, re.M))
+
+    def test_location_serves_static_file_not_proxy(self):
+        block = _block(render_gateway_conf(), "location = /status")
+        self.assertIn("alias /usr/share/nginx/html/status.html;", block)
+        self.assertIn("default_type text/html;", block)
+        self.assertIn("limit_req zone=rpc", block)
+        self.assertNotIn("proxy_pass", block)
+
+    def test_dockerfile_copies_page_outside_templates(self):
+        df = DOCKERFILE.read_text(encoding="utf-8")
+        self.assertIn("COPY status.html /usr/share/nginx/html/status.html", df)
+        self.assertNotIn("status.html /etc/nginx/templates", df)
+
+    def test_csp_connect_src_matches_page_origins(self):
+        block = _block(render_gateway_conf(), "location = /status")
+        csp = re.search(r'Content-Security-Policy "([^"]*)"', block)
+        self.assertIsNotNone(csp, block)
+        connect = re.search(r"connect-src ([^;]*)", csp.group(1)).group(1).split()
+        origins = self._cfg_origins()
+        self.assertEqual({"https://fortel2-sequencer-rpc.onrender.com",
+                          "https://ethereum-sepolia-rpc.publicnode.com"}, origins)
+        self.assertEqual({"'self'"} | origins, set(connect))
+        self.assertIn("default-src 'none'", csp.group(1))
+
+    def test_page_never_uses_metered_l1(self):
+        html = self.PAGE.read_text(encoding="utf-8").lower()
+        self.assertNotIn("quiknode", html)
+        self.assertNotIn("quicknode.pro", html)
+
+    def test_addresses_match_rollup_config(self):
+        import json
+
+        rollup = json.loads((ROOT / "config" / "rollup.json").read_text(encoding="utf-8"))
+        html = self.PAGE.read_text(encoding="utf-8")
+
+        def cfg(key: str) -> str:
+            m = re.search(rf'^\s*{key}:\s*"?([0-9a-fx_ ]+?)"?,', html, re.M)
+            self.assertIsNotNone(m, key)
+            return m.group(1)
+
+        self.assertEqual(rollup["batch_inbox_address"].lower(), cfg("inbox"))
+        self.assertEqual(rollup["genesis"]["system_config"]["batcherAddr"].lower(), cfg("batcher"))
+        self.assertEqual(str(rollup["l1_chain_id"]), cfg("l1ChainId"))
+        self.assertEqual(str(rollup["l2_chain_id"]), cfg("l2ChainId"))
+
+
 class GatewayDockerTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -672,9 +726,18 @@ class GatewayDockerTests(unittest.TestCase):
         cid = None
         try:
             cid, url = self._run_gateway(up_port)
-            status, _body, _hdrs = _http("GET", f"{url}/status?qid=7&x=1")
+            status, _body, _hdrs = _http("GET", f"{url}/probe?qid=7&x=1")
             self.assertEqual(200, status)
-            self.assertIn("GET /status?qid=7&x=1", _DummyFilter.hits)
+            self.assertIn("GET /probe?qid=7&x=1", _DummyFilter.hits)
+
+            # /status is the gateway's own static page, never the upstream.
+            status, body, hdrs = _http("GET", f"{url}/status")
+            self.assertEqual(200, status)
+            self.assertIn(b"<title>ForteL2 Pipeline Health</title>", body)
+            low = {k.lower(): v for k, v in hdrs.items()}
+            self.assertTrue(low.get("content-type", "").startswith("text/html"), hdrs)
+            self.assertIn("connect-src 'self'", low.get("content-security-policy", ""))
+            self.assertFalse([h for h in _DummyFilter.hits if " /status" in h], _DummyFilter.hits)
 
             status, _body, _hdrs = _http("POST", f"{url}/rpc?foo=bar", CHAIN_ID_REQ)
             self.assertEqual(200, status)

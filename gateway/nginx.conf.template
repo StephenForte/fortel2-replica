@@ -123,6 +123,20 @@ server {
         return 200 "ok\n";
     }
 
+    # Live pipeline health page (static; the browser does the polling).
+    # Served here, not by the replica, so it costs the pserv nothing beyond
+    # the JSON-RPC reads the page makes against the proxied root below.
+    # connect-src must list every origin status.html fetches (its CFG block).
+    location = /status {
+        limit_req zone=rpc burst=${RPC_BURST} nodelay;
+        default_type text/html;
+        charset utf-8;
+        alias /usr/share/nginx/html/status.html;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https://fortel2-sequencer-rpc.onrender.com https://ethereum-sepolia-rpc.publicnode.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+    }
+
     # Everything else, including GET /, goes to the replica method filter.
     # CORS is owned by the filter — do not add, hide, or rewrite it here.
     location / {

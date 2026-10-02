@@ -30,6 +30,9 @@ ENV PORT=10000 \
 # NGINX_REPLICA_UPSTREAM are visible to 20-envsubst. Must sort before 20-.
 COPY --chmod=755 14-resolvers-from-resolv.conf.envsh /docker-entrypoint.d/14-resolvers-from-resolv.conf.envsh
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# Static live-health page for `location = /status`. Not a template: envsubst
+# never touches it, so its JS `${...}` strings stay intact.
+COPY status.html /usr/share/nginx/html/status.html
 
 EXPOSE 10000
 

@@ -17,6 +17,23 @@ Upstream is `$REPLICA_UPSTREAM` (default `http://fortel2-replica:10000`).
 `GET /healthz` is answered locally (200, `ok\n`) and is not rate-limited.
 `GET /` still proxies through to the filter's `{"ok":true,...}` body.
 
+`GET /status` is a static live pipeline-health page (`status.html`). It
+shows the same panels as ForteL2 `data/pipeline-health.json` (sequencer,
+batcher, proposer, aggregate, dev sleep), plus a replica panel, and
+updates every few seconds. The browser does all the polling:
+
+| Source | Origin | Used for |
+|---|---|---|
+| replica | this gateway, `POST /` | replica head / safe / finalized |
+| sequencer | `https://fortel2-sequencer-rpc.onrender.com` | unsafe / safe / finalized, last 15 blocks |
+| L1 | `https://ethereum-sepolia-rpc.publicnode.com` | batcher posts (60-block scan), dispute-game factory |
+
+The page never uses QuickNode, so it costs no L1 credits. Polling stops
+while the tab is hidden. `txpool_status` is not public, so the mempool
+field is always unavailable. The `Content-Security-Policy` on
+`location = /status` lists these origins; change it together with the
+`CFG` block in `status.html` (a test checks they match).
+
 ## Env (contract)
 
 | Variable | Default | Meaning |

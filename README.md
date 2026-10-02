@@ -81,7 +81,7 @@ Clients on that network hit a **method-filter** on Render’s published `PORT` (
 | Surface | Read-only JSON-RPC allowlist (`eth` / `net` / `web3` reads + log/block filters) |
 | Writes | `eth_sendRawTransaction` is **rejected** (`-32601 method not allowed`) |
 | Lag | ~3 minutes behind the sequencer is **normal** — the replica derives from L1 batches, not P2P tip-follow |
-| Nightly window | Sequencer sleeps **23:45–03:00** `America/Los_Angeles`. The replica keeps serving whatever tip it already derived; new L2 progress pauses until the sequencer posts batches again after wake |
+| Nightly window | Sequencer sleeps **23:45–00:15** `America/Los_Angeles`. The replica keeps serving whatever tip it already derived; new L2 progress pauses until the sequencer posts batches again after wake |
 | Filters | `eth_newFilter` / `eth_newBlockFilter` IDs are in-memory and die on every deploy/restart — clients must re-create on filter-not-found (not an outage) |
 | Rate limiting | On the replica itself: Render platform DDoS only — **no per-RPC / per-IP request rate limit** on Standard. Do **not** add an in-process limiter to `rpc-method-filter.py`. Per-IP limits belong on the diskless public gateway (and optional Cloudflare). |
 
@@ -215,6 +215,7 @@ First version limits HTTP requests per IP only (R-0007). There is no method-leve
 ```bash
 # health check
 curl -sS https://fortel2-replica-rpc.onrender.com/healthz
+curl -sS -o /dev/null -w '%{http_code} %{content_type}\n' https://fortel2-replica-rpc.onrender.com/status   # 200 text/html; open in a browser for live health
 # chain id 852
 curl -s https://fortel2-replica-rpc.onrender.com -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
@@ -226,7 +227,7 @@ curl -s http://fortel2-replica-reth:10000 -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
 ```
 
-Expect a healthy `/healthz`, `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTransaction`, and HTTP `429` under a burst. Lag and the sequencer sleep window are the same as the private replica (~3 minutes behind; 23:45–03:00 Pacific).
+Expect a healthy `/healthz`, `result: "0x354"` on reads, `-32601 method not allowed` on `eth_sendRawTransaction`, and HTTP `429` under a burst. Lag and the sequencer sleep window are the same as the private replica (~3 minutes behind; 23:45–00:15 Pacific).
 
 ## Public sequencer reads
 
@@ -278,7 +279,7 @@ curl -s https://fortel2-sequencer-rpc.onrender.com -H 'content-type: application
 
 Expect `{"ok":true,...}`, `result: "0x354"`, and `-32601 method not allowed` on the write. Tip reads should match the sequencer, not the replica head.
 
-**Rate limit.** None in-process (R-0003). Render platform DDoS only until a `gateway/` nginx is put in front. The sequencer sleep window is **23:45–03:00** `America/Los_Angeles` — this door 502s/403s then; the explorer falls back to the replica.
+**Rate limit.** None in-process (R-0003). Render platform DDoS only until a `gateway/` nginx is put in front. The sequencer sleep window is **23:45–00:15** `America/Los_Angeles` — this door 502s/403s then; the explorer falls back to the replica.
 
 ## Render
 
