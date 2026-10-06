@@ -154,7 +154,7 @@ class RenderYamlTests(unittest.TestCase):
             docker,
         )
         self.assertIn(
-            "op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a",
+            "op-node:v1.19.8@sha256:adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11",
             docker,
         )
         self.assertIn(
@@ -181,6 +181,20 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("entrypoint-reth.sh", ci)
         self.assertNotIn("entrypoint.sh\n", ci)
         self.assertNotIn("healthcheck.sh\n", ci)
+
+    def test_op_node_pin_rejects_pre_glamsterdam(self):
+        # v1.19.2 cannot hash Glamsterdam headers (blockAccessListHash / slotNumber).
+        old_tag = "op-node:v1.19.2"
+        old_digest = "3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a"
+        new_pin = (
+            "op-node:v1.19.8@sha256:"
+            "adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11"
+        )
+        for path in (ROOT / "Dockerfile.reth", ROOT / "docker-compose.yml"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn(old_tag, text, path.name)
+            self.assertNotIn(old_digest, text, path.name)
+            self.assertIn(new_pin, text, path.name)
 
     def test_reth_runtime_base_is_not_bookworm(self):
         # Official op-reth is wolfi-linked (glibc 2.38+/CXXABI_1.3.15).

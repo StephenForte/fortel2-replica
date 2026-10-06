@@ -70,6 +70,10 @@ RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
 # Task 1 pin (D-0109). Tag op-reth/v2.3.3 is not the --version string.
 PIN_RETH_VERSION='2.3.0-dev'
 PIN_RETH_COMMIT='9384bc53d8c0c77e59cac83fdaaf3b372c6d2216'
+# R-0021 / ForteL2 D-0147. Measured `op-node --version` of the pinned image:
+#   op-node version v1.19.8-9f76a9d2-1790167011
+PIN_OP_NODE_VERSION='v1.19.8'
+PIN_OP_NODE_COMMIT='9f76a9d2'
 EXPECTED_L2_CHAIN_ID='852'
 EXPECTED_GENESIS_HASH='0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d'
 
@@ -258,6 +262,34 @@ case "$RETH_VER" in
     ;;
 esac
 echo "op-reth pin ok: Reth Version: ${PIN_RETH_VERSION} commit ${PIN_RETH_COMMIT}"
+
+# Fail closed unless op-node is the Glamsterdam pin. v1.19.8 must not match
+# v1.19.80: the character after the version is non-digit, or the version ends
+# the text. The pin-ok line is printed later, next to the op-node start, so a
+# boot that never launches op-node does not claim the pin.
+if ! command -v op-node >/dev/null 2>&1; then
+  echo "ERROR: op-node binary not found on PATH" >&2
+  exit 1
+fi
+NODE_VER="$(op-node --version 2>&1 || true)"
+case "$NODE_VER" in
+  *"${PIN_OP_NODE_VERSION}"[!0-9]*|*"${PIN_OP_NODE_VERSION}") ;;
+  *)
+    echo "ERROR: op-node pin mismatch" >&2
+    echo "  expected: op-node version ${PIN_OP_NODE_VERSION}-${PIN_OP_NODE_COMMIT}-… (no digit after ${PIN_OP_NODE_VERSION})" >&2
+    echo "  got: $(printf '%s' "$NODE_VER" | tr '\n' ' ')" >&2
+    exit 1
+    ;;
+esac
+case "$NODE_VER" in
+  *"${PIN_OP_NODE_COMMIT}"*) ;;
+  *)
+    echo "ERROR: op-node pin mismatch" >&2
+    echo "  expected: op-node version ${PIN_OP_NODE_VERSION}-${PIN_OP_NODE_COMMIT}-… (no digit after ${PIN_OP_NODE_VERSION})" >&2
+    echo "  got: $(printf '%s' "$NODE_VER" | tr '\n' ' ')" >&2
+    exit 1
+    ;;
+esac
 
 # Hash-check baked-in 852 artifacts; refuse 901 / any other genesis.
 if ! python3 - "$GENESIS" "$ROLLUP" "$EXPECTED_L2_CHAIN_ID" "$EXPECTED_GENESIS_HASH" <<'PY'
@@ -662,6 +694,7 @@ fi
 
 NODE_MEM_LOG=""
 [ -n "$OP_NODE_GOMEMLIMIT" ] && NODE_MEM_LOG=" gomemlimit=${OP_NODE_GOMEMLIMIT}"
+echo "op-node pin ok: ${PIN_OP_NODE_VERSION} commit ${PIN_OP_NODE_COMMIT}"
 echo "Starting op-node (L1 derivation / verifier; mode=${L1_RPC_MODE} l1=${L1_RPC_LOG} rpckind=${L1_RPC_KIND} poll=${L1_HTTP_POLL} rpc-rate-limit=${L1_RPC_RATE_LIMIT} l1-cache=${L1_CACHE_SIZE} max-concurrency=${L1_MAX_CONCURRENCY} rpc-max-batch=${L1_RPC_MAX_BATCH_SIZE}${NODE_MEM_LOG})"
 env ${OP_NODE_GOMEMLIMIT:+GOMEMLIMIT=$OP_NODE_GOMEMLIMIT} op-node \
   --l1="$L1_RPC_URL" \

@@ -6,6 +6,9 @@
 # are comments only — do not float off the digest. The container's op-reth
 # must report `Reth Version: 2.3.0-dev` commit 9384bc53…; entrypoint asserts
 # that and fails closed otherwise. Tag op-reth/v2.3.3 ≠ the reported version.
+# op-node must report `op-node version v1.19.8-9f76a9d2-…` (R-0021 /
+# ForteL2 D-0147). The entrypoint asserts that version with no trailing
+# digit, and commit 9f76a9d2, and fails closed otherwise.
 #
 # OP Labs op-node images are distroless (no /bin/sh, no apt). Do not RUN
 # shell commands on that image — copy binaries into an Ubuntu 24.04 runtime
@@ -15,7 +18,7 @@
 # op-geth is not in this image.
 
 FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c AS reth
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a AS node
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.8@sha256:adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11 AS node
 
 FROM ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254
 
