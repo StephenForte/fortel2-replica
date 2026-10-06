@@ -47,7 +47,7 @@ Open **https://fortel2-replica-rpc.onrender.com/status** in a browser. The page 
 Report in this shape (truncate hashes `0xabcd…1234`; mempool on this page is never public):
 
 ```
-Verdict: HEALTHY. Batcher and proposer verdicts are both “healthy” and the errors list is empty.
+Verdict: HEALTHY. Sequencer “producing”, replica “following”, batcher and proposer both “healthy”, errors list empty.
 Captured: 2026-10-02 12:00 UTC (5:00 AM PT), mode sepolia, L1 11155111 / L2 852.
 Heads: unsafe 1,754,558 / safe 1,754,505 / finalized 1,753,875. Observation: unsafe–safe lag 53 blocks (safe head 106 s old) against a 300 s batch cadence.
 Replica: derived head …, vs sequencer safe caught up | N behind; N blocks behind tip (one batch cycle is normal).
@@ -58,7 +58,7 @@ Dev sleep: awake | in window (23:45–00:15 PT).
 Errors: none.
 ```
 
-Overall **HEALTHY** only when batcher and proposer are both `healthy` and `errors` is empty. Otherwise name the failing pill and the error strings. Do not treat replica tip lag of about one batch cadence as unhealthy.
+Overall **HEALTHY** only when all four hold: the sequencer pill is `producing`, the replica pill is `following`, batcher and proposer are both `healthy`, and `errors` is empty. A replica or sequencer that still answers RPC but has stopped advancing shows `behind` / `stalled` with **no** entry in `errors`, while batcher and proposer can stay healthy (2026-10-06: both heads froze for hours on a Sepolia fork). So never call HEALTHY from batcher, proposer and `errors` alone. Otherwise name the failing pill and the error strings. Replica lag of about one batch cadence is normal and already inside `following` (head age ≤ 900 s), so it is not a failure.
 
 ## Output
 
@@ -79,7 +79,7 @@ Wave 2 suggest-only (R-0017, peak only): NO-GO under 1,600 MB; GO 1,600–1,900 
 
 3. Open https://fortel2-replica-rpc.onrender.com/status in a browser. Wait until it is live (pills not "–"). Read Live JSON. Report exactly like this (truncate hashes; mempool is not public on this page):
 
-Verdict: HEALTHY. Batcher and proposer verdicts are both “healthy” and the errors list is empty.
+Verdict: HEALTHY. Sequencer “producing”, replica “following”, batcher and proposer both “healthy”, errors list empty.
 Captured: <UTC> (<PT>), mode sepolia, L1 11155111 / L2 852.
 Heads: unsafe … / safe … / finalized …. Observation: unsafe–safe lag N blocks (safe head Ns old) against the batch cadence.
 Replica: derived head …; vs sequencer safe …; N blocks behind tip (one batch cycle is normal).
@@ -89,5 +89,5 @@ Aggregate: N empty / N non-empty blocks, N txs, N tx/min, mempool not public.
 Dev sleep: awake | in window (23:45–00:15 PT).
 Errors: none.
 
-HEALTHY only if batcher and proposer are healthy and errors is empty. Post the full verdict in this chat.
+HEALTHY only if the sequencer pill is "producing", the replica pill is "following", batcher and proposer are healthy, and errors is empty. A "behind" replica or "stalled" sequencer is never HEALTHY even when errors is empty. Post the full verdict in this chat.
 ```
