@@ -9,7 +9,7 @@ This is now **its own project** — split out of the ForteL2 monorepo into a sel
 | op-reth | L2 execution (local `--full`; Render replica archive via `RETH_ARCHIVE=1`; no proofs store) |
 | op-node | Verifier — derives L2 from L1 batches (`--l2.enginekind=reth`) |
 
-Pinned images (immutable digest, D-0109 / R-0013): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.2`. That entrypoint fails closed if the binary is not that pin. There is no root `./Dockerfile` and no op-geth start path.
+Pinned images (immutable digest, D-0109 / R-0013 / R-0021): `Dockerfile.reth` uses `op-reth:v2.3.3` (`Reth Version: 2.3.0-dev` commit `9384bc53…`) and `op-node:v1.19.8` (`op-node version v1.19.8-9f76a9d2-…`). That entrypoint fails closed if either binary is not that pin. There is no root `./Dockerfile` and no op-geth start path.
 
 **Task 7 (done through Phase C, R-0017):** public read and SOS private read serve op-reth via env repoint — not a rename-swap. `fortel2-replica-reth` (`Dockerfile.reth`, 50 GB) is the live EL behind `fortel2-replica-rpc` and SettlementOS. The geth EL surface is retired in this repo and deleted from Render (Task 9 / R-0019, 2026-09-14). The suspended geth pserv `fortel2-replica` remains on Render for the operator to delete by hand after merge. Grow the reth disk to ≈25 GB before 2026-10-20. Phase B evidence: [`docs/2026-09-10-op-reth-phase-b.md`](./docs/2026-09-10-op-reth-phase-b.md) (R-0016).
 

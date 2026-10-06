@@ -18,6 +18,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 ROOT = Path(__file__).resolve().parents[1]
 PIN_RETH_VERSION = "2.3.0-dev"
 PIN_RETH_COMMIT = "9384bc53d8c0c77e59cac83fdaaf3b372c6d2216"
+# Measured from the linux/amd64 op-node v1.19.8 binary: `op-node --version`.
+PIN_OP_NODE_VERSION = "v1.19.8"
+PIN_OP_NODE_COMMIT = "9f76a9d2"
+PIN_OP_NODE_VERSION_TEXT = "op-node version v1.19.8-9f76a9d2-1790167011\n"
 EXPECTED_GENESIS_HASH = (
     "0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d"
 )
@@ -149,6 +153,11 @@ while True:
                 bin_dir / "op-node",
                 r'''#!/usr/bin/env python3
 import os, sys, time
+if "--version" in sys.argv:
+    sys.stdout.write(os.environ.get("NODE_VERSION_TEXT", """'''
+                + PIN_OP_NODE_VERSION_TEXT
+                + r'''"""))
+    sys.exit(0)
 with open(os.environ["COMMAND_LOG"], "a") as log:
     if os.environ.get("GOMEMLIMIT"):
         log.write("op-node-env GOMEMLIMIT=" + os.environ["GOMEMLIMIT"] + "\n")
@@ -430,6 +439,50 @@ printf '%064d\n' 0
         self.assertEqual(1, result.returncode)
         self.assertIn("op-reth pin mismatch", result.stderr)
         self.assertEqual("", log)
+
+    def _assert_op_node_pin_refused(self, version_text):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "NODE_VERSION_TEXT": version_text,
+            },
+        )
+        self.assertNotEqual(0, result.returncode, result.stderr)
+        self.assertIn("op-node pin mismatch", result.stderr)
+        self.assertNotIn("op-node pin ok", result.stdout)
+        self.assertNotIn("op-node --l1=", log)
+        self.assertEqual("", log)
+
+    def test_refuses_pre_glamsterdam_op_node(self):
+        # v1.19.2 --version, as measured on the pre-Glamsterdam sequencer pin.
+        self._assert_op_node_pin_refused(
+            "op-node version v1.19.2-da197e45-1782514747\n"
+        )
+
+    def test_refuses_op_node_version_with_trailing_digit(self):
+        # v1.19.8 must not accept v1.19.80.
+        self._assert_op_node_pin_refused(
+            "op-node version v1.19.80-9f76a9d2-1790167011\n"
+        )
+
+    def test_refuses_op_node_wrong_commit(self):
+        self._assert_op_node_pin_refused(
+            "op-node version v1.19.8-da197e45-1790167011\n"
+        )
+
+    def test_accepts_measured_op_node_version(self):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "NODE_VERSION_TEXT": PIN_OP_NODE_VERSION_TEXT,
+            },
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            f"op-node pin ok: {PIN_OP_NODE_VERSION} commit {PIN_OP_NODE_COMMIT}",
+            result.stdout,
+        )
+        self.assertIn("op-node --l1=", log)
 
     def test_initializes_and_starts_both_clients_with_expected_options(self):
         def after(result, log, data_dir):

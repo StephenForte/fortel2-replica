@@ -321,7 +321,7 @@ The operated Render replica moves to **op-reth** on a **new** Private Service an
 **Image pin (immutable digest, Task 1 rule / D-0109).**
 
 - `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c`
-- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a`
+- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a` — **SUPERSEDED by R-0021 (2026-10-06)**. Do not deploy this op-node digest. The op-reth line above is unchanged.
 
 The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint-reth.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`.
 
@@ -459,7 +459,7 @@ Phase C executed 17:16–17:25Z as **two env edits** to `http://fortel2-replica-
 
 **Not this decision.** Suspending or deleting any service (operator, 2026-09-12); the disk grow (operator, before 2026-10-20); ForteL2 docs (planner, PR #214); Task 8 (`fortel2-node`) and Task 9 (geth removal).
 
-Next free R-id is **R-0021**.
+Next free R-id is **R-0022**.
 
 ## R-0019 — Task 9: the geth EL path is deleted from the repo and from Render; the interlock it removed was replaced with a broader one
 
@@ -534,4 +534,20 @@ Next free R-id is **R-0021**.
 
 **Not this decision.** Baking the parity script into `Dockerfile.reth`; the D-0136 throughput warning; ForteL2 `replica/FRIENDS.md`, which still describes friends running `op-geth` (R-0018 left it open and it is still open); recruiting friends, which is operator-owned; and Task 8's `Clean-room deploy` verification, which remains unrun because no host in the loop has Docker — a friend on a laptop is the cheapest way to close it, and a friend clean sync is also what retroactively satisfies the gate R-0019 recorded as skipped.
 
-Next free R-id is **R-0021**.
+Next free R-id is **R-0022**.
+
+## R-0021 — Glamsterdam: Render replica op-node moves to v1.19.8; the /data archive stays
+
+*2026-10-06 · replica half of ForteL2 D-0147. The sequencer half already shipped (ForteL2 #251).*
+
+Sepolia activated Glamsterdam at L1 block **11856337** (13:53:36 UTC). Headers from that block carry `blockAccessListHash` (EIP-7928) and `slotNumber` (EIP-7843). op-node v1.19.2 cannot hash them, so every new L1 head looks like a reorg, L1 origin lookups return not found, and derivation freezes at L1 11856336. The ForteL2 sequencer froze at unsafe 1930794 and recovered on op-node v1.19.8 commit `9f76a9d2`. This replica was still the R-0013 digest and froze at the same tip (safe head 1930755).
+
+**Image pin (immutable digest), re-fetched 2026-10-06 from `us-docker.pkg.dev` with no credentials (HTTP 200).** Index `op-node:v1.19.8` is `sha256:adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11`. The index contains linux/amd64 (`sha256:b30884be252f97b40071fdb5a893e943ab2a9f4bce72a1c7df13a4b7bc4ed3be`) and linux/arm64. `Dockerfile.reth` and `docker-compose.yml` pin that index digest. op-reth stays `v2.3.3` / `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`, and its entrypoint assertion is unchanged.
+
+**What `--version` prints.** Image config labels have no `org.opencontainers.image.version` or `revision`. The linux/amd64 layer was unpacked and `/usr/local/bin/op-node` (static ELF) was executed: stdout is exactly `op-node version v1.19.8-9f76a9d2-1790167011`. `entrypoint-reth.sh` fails closed unless that text contains `v1.19.8` with a non-digit after it (or at end of text) — `v1.19.80` does not pass — and contains commit `9f76a9d2`. The boot log line, printed next to op-node start, is `op-node pin ok: v1.19.8 commit 9f76a9d2`. Every flag this entrypoint already passes is still accepted by that binary's `--help`. No new flag was added.
+
+**Deploy.** Resume from the existing `/data` archive. No datadir wipe, no `debug_setHead`, no Blueprint re-apply, no service rename. `L1_RPC_URL`, `L1_RPC_KIND`, and `L1_RPC_FORCE=metered` stay as they are (D-0124, D-0136).
+
+The R-0013 op-node digest line is SUPERSEDED by this entry. The op-reth line of R-0013 stands.
+
+Next free R-id is **R-0022**.
