@@ -297,7 +297,7 @@ If it OOMs again (exit 137 / “Ran out of memory”), confirm the plan is Stand
 
 Never set `L1_CACHE_SIZE=0` (op-node expands that to ~2400). Do not tighten `OP_NODE_GOMEMLIMIT` until the L1 cache is already 128.
 
-**Daily check:** Cloud Agent **Daily replica health** (04:00 Pacific) reads last-24h replica RSS and QuickNode credits on **L2_Render** (this replica) vs **L2_mini** (sequencer). Warn if either endpoint or combined credits exceed ~3M/day. It uses Cloud Render plus QuickNode (skill `.cursor/skills/daily-replica-health`). The verdict is the automation's run transcript. It suggests Wave 2 — it does not change env or deploy. Do not run a local overnight loop.
+**Daily check:** **Daily replica health** (04:00 Pacific) reads last-24h replica RSS, QuickNode credits on **L2_Render** vs **L2_mini**, and [the public `/status` page](https://fortel2-replica-rpc.onrender.com/status). Warn if either endpoint or combined credits exceed ~3M/day. Preferred runner is a Grok Bot routine (skill `.cursor/skills/daily-replica-health`). It suggests Wave 2 — it does not change env or deploy. Do not run a local overnight loop.
 
 ### Blueprint vs dashboard-created services
 
