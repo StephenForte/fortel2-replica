@@ -614,3 +614,24 @@ The matcher requires the first two lines exactly. The v2.3.3 lines (`Reth Versio
 **Rollback.** Revert this PR, then Manual Deploy. That returns the Ubuntu `v2.3.3` image on the same `/data`. ForteL2 D-0150 records REPLICA-ROLLBACK-SAFE: v2.3.3 reopened a datadir v2.6.0 had opened.
 
 R-0022's park is lifted. Next free R-id is **R-0024**.
+
+## R-0024 — Snapshot metadata records the executed op-reth pin
+
+*2026-10-07 · corrects the capture metadata in R-0014. The pin strings stay in `scripts/op-reth-pin-check.py` (R-0023). ForteL2 D-0152.*
+
+`scripts/snapshot-reth-state.sh` hard-coded `reth_pin_version` `2.3.0-dev` and `reth_pin_commit` `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. The Mac sequencer and the replica both run the R-0023 binary, whose `--version` text contains these whole lines:
+
+```
+op-reth Version: 2.6.0
+Commit SHA: da6d3252491754837a778061db0cc47236ec13c6
+```
+
+A capture still ran, and the JSON named the old pin. Restore (`RETH_SNAPSHOT_URL` / `RETH_SNAPSHOT_SHA256` in `entrypoint-reth.sh`) checks only the archive SHA-256. The JSON is for humans and friends. Mislabeled metadata does not break a restore.
+
+**What the script does now.** `--op-reth-bin PATH` is required. The script runs `PATH --version` and reads the expected whole lines by importing `VERSION_LINE` and `COMMIT_LINE` from `scripts/op-reth-pin-check.py`. It does not keep a second copy of those strings. If that file is missing, the import fails, or either line is missing or empty, the script exits before writing an archive. An empty expected line would match every binary. If the binary is missing, not executable, or its output does not contain both lines, it exits the same way. `--allow-pin-mismatch` is the opt-in: the archive is still written, `reth_pin_match` is false, and the script prints a WARN.
+
+**Metadata.** The JSON no longer has `reth_pin_version` or `reth_pin_commit`. It records `reth_expected_version_line`, `reth_expected_commit_line`, `reth_version_text` (the `--version` output verbatim), `reth_pin_match`, and `op_reth_bin` (the path given).
+
+**Unchanged.** The running-op-reth refusal, the `db/` + `static_files/` + `rocksdb/` allow-list, the 2 GiB asset warning, and the SHA-256 manifest. Restore behaviour is unchanged.
+
+Next free R-id is **R-0025**.

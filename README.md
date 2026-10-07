@@ -135,11 +135,11 @@ PY
 # 2. Kickstart sleep (op-reth stops). Then:
 unset FORTEL2_ENV
 export DATA_DIR=… L2_CHAIN_ID=852   # Sepolia runtime dir
-./scripts/snapshot-reth-state.sh --labels-json /tmp/fortel2-reth-labels.json
+./scripts/snapshot-reth-state.sh --labels-json /tmp/fortel2-reth-labels.json --op-reth-bin /path/to/op-reth
 # 3. Kickstart wake. Verify the sequencer from outside.
 ```
 
-The script refuses if the op-reth pid is alive. It packs `db/` + `static_files/` + `rocksdb/` (`--datadir.rocksdb` is a live store, not a cache). It writes `$DATA_DIR/snapshots/fortel2-852-reth-snapshot-<L2head>.tar.zst` plus `.sha256` and `.json`. Publish the tarball as a GitHub Release asset **only if it is under 2 GiB** (the script prints `bytes` and errors at the cap). The ForteL2 copy of this helper belongs at `scripts/snapshot-reth-state.sh` in that repo (this agent cannot push there).
+The script refuses if the op-reth pid is alive. `--op-reth-bin` is required: it runs that binary's `--version` and refuses, before any archive, unless the output contains both whole lines from `scripts/op-reth-pin-check.py` (`--allow-pin-mismatch` records `reth_pin_match: false` and warns). It packs `db/` + `static_files/` + `rocksdb/` (`--datadir.rocksdb` is a live store, not a cache). It writes `$DATA_DIR/snapshots/fortel2-852-reth-snapshot-<L2head>.tar.zst` plus `.sha256` and `.json`. Publish the tarball as a GitHub Release asset **only if it is under 2 GiB** (the script prints `bytes` and errors at the cap). The ForteL2 copy of this helper belongs at `scripts/snapshot-reth-state.sh` in that repo (this agent cannot push there).
 
 **Mini dry-run (before Render):** restore the tarball into `$DATA_DIR/l2/spike-op-reth` (Task 2 throwaway), start with `FORTEL2_RETH_PROFILE=verifier ./scripts/start-op-reth-verifier.sh` (sidecar ports, publicnode L1). Prove (4) reth accepts the archive-captured datadir and (5) op-node starts derivation at an L1 origin near the capture-time safe head — not genesis `11545587`. Then `verify-reth-parity.sh` for ≥20 blocks. Stop and wipe the throwaway. The Mini `--full` dry-run proved restore + resume, but `--full` pruned historical receipts — **do not restore Render as `--full`**. Set `RETH_ARCHIVE=1` before the restore boot (D-0126). If the datadir is refused, or op-node walks from genesis, **stop and report**.
 
