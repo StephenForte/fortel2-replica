@@ -3,8 +3,10 @@
 
 import hashlib
 import importlib.util
+import io
 from pathlib import Path
 import re
+import tarfile
 import tempfile
 import unittest
 
@@ -237,6 +239,32 @@ class RenderYamlTests(unittest.TestCase):
                     "HTTP/2 200\ndocker-content-digest: sha256:deadbeef\n",
                     expected,
                 )
+
+    def test_extracts_op_reth_and_ignores_absolute_symlink(self):
+        spec = importlib.util.spec_from_file_location(
+            "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
+        )
+        pin_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin_check)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "layer.tar"
+            with tarfile.open(archive, "w") as tar:
+                payload = b"op-reth-bytes"
+                info = tarfile.TarInfo("usr/local/bin/op-reth")
+                info.size = len(payload)
+                info.mode = 0o755
+                tar.addfile(info, fileobj=io.BytesIO(payload))
+                link = tarfile.TarInfo("etc/mtab")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "/proc/mounts"
+                tar.addfile(link)
+            dest = root / "out"
+            got = pin_check.extract_op_reth(
+                archive, dest, "application/vnd.oci.image.layer.v1.tar"
+            )
+            self.assertEqual(payload, got.read_bytes())
+            self.assertEqual(got.name, "op-reth")
 
     def test_op_node_pin_rejects_pre_glamsterdam(self):
         # v1.19.2 cannot hash Glamsterdam headers (blockAccessListHash / slotNumber).

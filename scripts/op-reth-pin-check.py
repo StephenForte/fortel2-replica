@@ -194,27 +194,33 @@ def media_open_mode(media_type: str) -> str:
     raise SystemExit(f"ERROR: unsupported layer media type {media_type}")
 
 
-def safe_member(member: tarfile.TarInfo) -> bool:
-    name = member.name
-    if name.startswith("/") or name.startswith("../") or "/../" in f"/{name}/":
-        raise SystemExit(f"ERROR: layer path refused: {name}")
-    if name == "dev" or name.startswith("dev/") or name.startswith("./dev/"):
-        return False
-    if member.isdev():
-        return False
-    return True
+def extract_op_reth(archive: Path, dest: Path, media_type: str) -> Path | None:
+    """Copy usr/local/bin/op-reth out of one layer.
 
-
-def extract_layer(archive: Path, dest: Path, media_type: str) -> None:
+    The apko layer also contains absolute symlinks (etc/mtab -> /proc/mounts).
+    Python 3.12's data filter refuses those, and this check does not need
+    them. Only a regular file at that path is extracted, under a fixed name.
+    """
     mode = media_open_mode(media_type)
     with tarfile.open(archive, mode) as tar:
-        members = [m for m in tar.getmembers() if safe_member(m)]
-        # filter="data" exists on Python 3.12+. Older tarfile extracts the
-        # already-filtered member list without it.
-        if hasattr(tarfile, "data_filter"):
-            tar.extractall(dest, members=members, filter="data")
-        else:
-            tar.extractall(dest, members=members)
+        member = None
+        for candidate in tar.getmembers():
+            name = candidate.name.lstrip("./")
+            if name == "usr/local/bin/op-reth":
+                member = candidate
+                break
+        if member is None:
+            return None
+        if not member.isreg():
+            raise SystemExit(
+                f"ERROR: usr/local/bin/op-reth is not a regular file ({member.type})"
+            )
+        member.name = "op-reth"
+        dest.mkdir(parents=True, exist_ok=True)
+        tar.extract(member, dest, set_attrs=False)
+    binary = dest / "op-reth"
+    binary.chmod(0o755)
+    return binary
 
 
 def run_captured(binary: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
@@ -289,8 +295,7 @@ def fetch_and_check() -> int:
             token,
         )
         require_blob(config_path, config_headers, config["digest"].split(":", 1)[1])
-        rootfs = work / "rootfs"
-        rootfs.mkdir()
+        binary = None
         for index_no, layer in enumerate(manifest["layers"]):
             layer_digest = layer["digest"]
             media_type = layer["mediaType"]
@@ -303,10 +308,11 @@ def fetch_and_check() -> int:
             )
             require_blob(layer_path, layer_headers, layer_digest.split(":", 1)[1])
             print(f"layer {index_no} {layer_digest} {media_type} sha256 ok")
-            extract_layer(layer_path, rootfs, media_type)
-        binary = rootfs / "usr" / "local" / "bin" / "op-reth"
-        if not binary.is_file():
-            raise SystemExit(f"ERROR: pinned image has no {binary}")
+            found = extract_op_reth(layer_path, work / "bin", media_type)
+            if found is not None:
+                binary = found
+        if binary is None or not binary.is_file():
+            raise SystemExit("ERROR: pinned image has no usr/local/bin/op-reth")
         version = run_captured(binary, ["--version"])
         version_text = version.stdout.decode("utf-8", errors="replace")
         sys.stdout.write("===== op-reth --version (verbatim) =====\n")
