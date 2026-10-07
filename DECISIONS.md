@@ -568,6 +568,13 @@ Exit 1 from the dynamic linker; the checker returned 3 and did not change the ma
 
 **What would unblock it.** A runtime with glibc ≥ 2.44, likely Wolfi, or a source build. Take that at the next forced upgrade (for example a hardfork), not as a standalone bump.
 
-**CI gate.** `scripts/op-reth-pin-check.py` is the matcher `entrypoint-reth.sh` calls at boot (line 640, before `restore_reth_snapshot` at line 884 and `op-reth node` at line 915) and the job `.github/workflows/tests.yml` runs on every pull request. The job reads the op-reth digest from `Dockerfile.reth` only, fetches that image with curl, checks every blob sha256, runs `op-reth --version` on the Ubuntu runner, and applies this same checker. That catches this class of failure before Render: 51baa39 (bookworm's glibc too old for the v2.3.3 binary) and now GLIBC_2.44 (v2.5.0 on Ubuntu 24.04). The matcher is whole-line on the executed v2.3.3 output. A bare tag, `2.3.0-dev` followed by extra characters, a wrong commit, and the Mac v2.5.0 lines (`op-reth Version: 2.5.0`) all fail.
+**CI gate.** `scripts/op-reth-pin-check.py` is the matcher `entrypoint-reth.sh` calls at boot (line 640, before `restore_reth_snapshot` at line 884 and `op-reth node` at line 915) and the job `.github/workflows/tests.yml` runs on every pull request. The job reads the op-reth digest from `Dockerfile.reth` only, fetches that image with curl, checks every blob sha256, runs `op-reth --version` on the Ubuntu runner, and applies this same checker. That catches this class of failure before Render: 51baa39 (bookworm's glibc too old for the v2.3.3 binary) and now GLIBC_2.44 (v2.5.0 on Ubuntu 24.04). Executed on GitHub ubuntu runner, run https://github.com/StephenForte/fortel2-replica/actions/runs/37559055838 , the v2.3.3 binary printed these whole lines (plus build timestamp, features, and profile):
+
+```
+Reth Version: 2.3.0-dev
+Commit SHA: 9384bc53d8c0c77e59cac83fdaaf3b372c6d2216
+```
+
+The matcher requires those two lines exactly. A bare tag, `2.3.0-dev` followed by extra characters, a wrong commit, and the Mac v2.5.0 lines (`op-reth Version: 2.5.0`) all fail. The old substring check also accepts this executed output, so boot on the current image is unchanged.
 
 R-0013's op-reth line stands. Next free R-id is **R-0023**.
