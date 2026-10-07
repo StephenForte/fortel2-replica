@@ -118,13 +118,18 @@ jobs:
           echo "===== last line ====="
           tail -n 1 smoke.log
           grep -F "op-reth pin ok:" smoke.log
+          grep -F "op-node pin ok:" smoke.log
           grep -F "genesis/rollup hash-check ok" smoke.log
           grep -F "Initializing op-reth datadir" smoke.log
           grep -F "Starting op-reth" smoke.log
-          if [ "$code" -eq 0 ]; then
-            echo "smoke: entrypoint exited 0 after init"
-          elif [ "$code" -eq 124 ]; then
-            echo "smoke: stopped because the 240s budget ended after init (no L1 secret; example.invalid is not dialed for init)"
+          # Before: any exit after those lines was success, including a crash.
+          # After: only the 240s timeout, or op-node giving up on the
+          # placeholder L1, is success. Any other exit fails the job.
+          if [ "$code" -eq 124 ]; then
+            echo "smoke: stopped because the 240s budget ended after init"
+          elif [ "$code" -eq 1 ] && grep -F "failed to dial L1 address (https://example.invalid)" smoke.log; then
+            echo "smoke: stopped because op-node gave up dialing the placeholder L1; op-reth had already started"
           else
-            echo "smoke: entrypoint exited ${code} after the required lines; last line above is how far it got"
+            echo "smoke: unexpected exit ${code}" >&2
+            exit 1
           fi

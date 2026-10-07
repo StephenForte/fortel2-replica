@@ -224,6 +224,14 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("docker build --platform linux/amd64 -f Dockerfile.reth", ci)
         self.assertIn("id fortel2", ci)
         self.assertIn("/op-reth-pin-check.py check", ci)
+        # Before: the smoke step treated every post-init exit as success.
+        # After: an unexpected exit fails the job. The only accepted stop
+        # besides the 240s timeout is op-node giving up on the placeholder L1.
+        self.assertIn("smoke: unexpected exit", ci)
+        self.assertIn(
+            "failed to dial L1 address (https://example.invalid)",
+            ci,
+        )
         self.assertNotIn("fetch-and-check", ci)
         self.assertNotIn(
             "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
