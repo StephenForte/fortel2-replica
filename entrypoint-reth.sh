@@ -67,9 +67,8 @@ RETH_SNAPSHOT_URL="${RETH_SNAPSHOT_URL:-}"
 RETH_SNAPSHOT_SHA256="${RETH_SNAPSHOT_SHA256:-}"
 RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
 
-# Task 1 pin (D-0109). Tag op-reth/v2.3.3 is not the --version string.
-PIN_RETH_VERSION='2.3.0-dev'
-PIN_RETH_COMMIT='9384bc53d8c0c77e59cac83fdaaf3b372c6d2216'
+# op-reth pin lines live in scripts/op-reth-pin-check.py (R-0022). This
+# script calls that checker; it does not keep a second copy of the lines.
 # R-0021 / ForteL2 D-0147. Measured `op-node --version` of the pinned image:
 #   op-node version v1.19.8-9f76a9d2-1790167011
 PIN_OP_NODE_VERSION='v1.19.8'
@@ -240,28 +239,24 @@ if ! command -v op-reth >/dev/null 2>&1; then
   exit 1
 fi
 
-# Fail closed unless the container binary is the Task 1 pin. Do not grep the
-# tag string 2.3.3 (absent) or a bare 2.3 (would accept a later 2.3.x).
+# Fail closed unless --version prints the whole lines in the shared checker.
+# That runs before snapshot restore and before op-reth opens the datadir.
+if [ -z "${OP_RETH_PIN_CHECK:-}" ]; then
+  _entrypoint_dir=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
+  if [ -f "$_entrypoint_dir/scripts/op-reth-pin-check.py" ]; then
+    OP_RETH_PIN_CHECK="$_entrypoint_dir/scripts/op-reth-pin-check.py"
+  else
+    OP_RETH_PIN_CHECK=/op-reth-pin-check.py
+  fi
+fi
+if [ ! -f "$OP_RETH_PIN_CHECK" ]; then
+  echo "ERROR: missing op-reth pin check at $OP_RETH_PIN_CHECK" >&2
+  exit 1
+fi
 RETH_VER="$(op-reth --version 2>&1 || true)"
-case "$RETH_VER" in
-  *"Reth Version: ${PIN_RETH_VERSION}"*) ;;
-  *)
-    echo "ERROR: op-reth pin mismatch" >&2
-    echo "  expected: Reth Version: ${PIN_RETH_VERSION} commit ${PIN_RETH_COMMIT}" >&2
-    echo "  got: $(printf '%s' "$RETH_VER" | tr '\n' ' ')" >&2
-    exit 1
-    ;;
-esac
-case "$RETH_VER" in
-  *"${PIN_RETH_COMMIT}"*) ;;
-  *)
-    echo "ERROR: op-reth pin mismatch" >&2
-    echo "  expected: Reth Version: ${PIN_RETH_VERSION} commit ${PIN_RETH_COMMIT}" >&2
-    echo "  got: $(printf '%s' "$RETH_VER" | tr '\n' ' ')" >&2
-    exit 1
-    ;;
-esac
-echo "op-reth pin ok: Reth Version: ${PIN_RETH_VERSION} commit ${PIN_RETH_COMMIT}"
+if ! printf '%s\n' "$RETH_VER" | python3 "$OP_RETH_PIN_CHECK" check; then
+  exit 1
+fi
 
 # Fail closed unless op-node is the Glamsterdam pin. v1.19.8 must not match
 # v1.19.80: the character after the version is non-digit, or the version ends

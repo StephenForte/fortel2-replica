@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Task 7 / Task 9 Blueprint guards: declared services only; no geth EL path."""
 
+import importlib.util
 from pathlib import Path
 import re
 import unittest
@@ -150,6 +151,10 @@ class RenderYamlTests(unittest.TestCase):
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
+            "op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            docker,
+        )
+        self.assertNotIn(
             "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             docker,
         )
@@ -177,8 +182,32 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("dockerfilePath: ./Dockerfile.reth\n", reth)
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
+        self.assertIn(
+            "op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            compose,
+        )
+        spec = importlib.util.spec_from_file_location(
+            "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
+        )
+        pin_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin_check)
+        registry, repository, tag, digest = pin_check.read_pin_from_dockerfile(
+            ROOT / "Dockerfile.reth"
+        )
+        self.assertEqual("us-docker.pkg.dev", registry)
+        self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
+        self.assertEqual("v2.5.0", tag)
+        self.assertEqual(
+            "6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            digest,
+        )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
         self.assertIn("entrypoint-reth.sh", ci)
+        self.assertIn("scripts/op-reth-pin-check.py fetch-and-check", ci)
+        self.assertNotIn(
+            "6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            ci,
+        )
         self.assertNotIn("entrypoint.sh\n", ci)
         self.assertNotIn("healthcheck.sh\n", ci)
 

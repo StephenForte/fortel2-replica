@@ -320,10 +320,10 @@ The operated Render replica moves to **op-reth** on a **new** Private Service an
 
 **Image pin (immutable digest, Task 1 rule / D-0109).**
 
-- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c`
-- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a` — **SUPERSEDED by R-0021 (2026-10-06)**. Do not deploy this op-node digest. The op-reth line above is unchanged.
+- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c` — **SUPERSEDED by R-0022 (2026-10-06)**. Do not deploy this op-reth digest.
+- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a` — **SUPERSEDED by R-0021 (2026-10-06)**. Do not deploy this op-node digest.
 
-The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint-reth.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`.
+The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint-reth.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`. **SUPERSEDED by R-0022** for the op-reth pin. The op-node half of that rule stands until R-0021, which superseded the op-node digest above.
 
 **Role.** Verifier only: `op-reth --full` (prune mode — without it this is an archive on a 20 GB disk), `--rollup.disable-tx-pool-gossip`, no `--proofs-history`. op-node `--l2.enginekind=reth`, `--sequencer.enabled=false`, `--p2p.disable=true`. `--l1.rpckind` from `L1_RPC_KIND` (default `quicknode`).
 
@@ -551,3 +551,21 @@ Sepolia activated Glamsterdam at L1 block **11856337** (13:53:36 UTC). Headers f
 The R-0013 op-node digest line is SUPERSEDED by this entry. The op-reth line of R-0013 stands.
 
 Next free R-id is **R-0022**.
+
+## R-0022 — Render replica op-reth moves to v2.5.0; the /data archive stays
+
+*2026-10-06 · replica half of ForteL2 D-0149. The sequencer half already shipped (ForteL2 #253, `5e484fd`).*
+
+**Image pin (immutable digest), re-fetched 2026-10-06 from `us-docker.pkg.dev` with no credentials (HTTP 200).** Index `op-reth:v2.5.0` is `sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692`. linux/amd64 manifest is `sha256:e9fecc5cd200f157eb36e1f2df0559cd05f9c74c96512400a441ec473fdcf145`. One layer, `sha256:76a0c3350d392c3e1f6d8a6d4640a6bebbcff7ca25b5f93a55ae8c69f4214054`. `Dockerfile.reth` and `docker-compose.yml` pin the index digest. The tag is an apko/melange build (`author: github.com/chainguard-dev/apko`), not the docker-bake recipe. `images/nexus/op-reth:v2.5.0` is manifest-unknown. The release notes name `images/op-reth:v2.5.0`, which is this apko image. op-node stays the R-0021 pin.
+
+**What `--version` prints.** The Mac source build of commit `9f76a9d2` prints `op-reth Version: 2.5.0` and `Commit SHA: 9f76a9d216f2d9aa99c5f45d7aad674acde93c14`. That version line is the Mac build only (D-0149). It is not a defect in either build. The published linux/amd64 binary does not contain the literal `2.5.0`. `op_version::build_info!` reads `GIT_VERSION` / `GIT_COMMIT` at compile time; the melange pipeline does not set `GIT_VERSION`. Upstream reth's own embedded default in that binary is `Version: 2.4.0` / `Commit SHA: 49bfe5974a1ae65d47eb099c395afabbc9e4aab1`. `main.rs` calls `try_init_version_metadata` before clap parses, so that reth default is not the pin. The shared checker (`scripts/op-reth-pin-check.py`) currently requires the Mac version line as a whole line, plus `Commit SHA: 9f76a9d216f2d9aa99c5f45d7aad674acde93c14` as a whole line, so the first GitHub Actions run of `fetch-and-check` fails and logs the executed output. The executed lines replace the Mac version line in a follow-up commit on this branch. Statically extracted text is not execution.
+
+**Where the check runs.** `entrypoint-reth.sh` calls the checker at lines 256–259, before `restore_reth_snapshot` (line 501) and before `op-reth node` (line 532). A mismatch exits before snapshot restore and before op-reth opens `/data`.
+
+**Flags.** The same CI step runs `op-reth --help`, `node --help`, and `init --help` and requires every flag `entrypoint-reth.sh` already passes. No flag was added or removed in this repo.
+
+**Deploy.** `fortel2-replica-reth` (`srv-dagquc7qj5pc73fdnjsg`) has `autoDeploy: no` / `autoDeployTrigger: off` (Render read of workspace `tea-d98533l7vvec738vva90`, 2026-10-06). Merging does not deploy. Do not flip that setting in this change. Resume from the existing `/data` archive. No datadir wipe, no `debug_setHead`, no Blueprint re-apply, no service rename. `L1_RPC_URL`, `L1_RPC_KIND`, and `L1_RPC_FORCE=metered` stay (D-0136).
+
+**Rollback.** ROLLBACK-SAFE per ForteL2 D-0149 G1 — revert this PR and Render redeploys v2.3.3 on the same `/data`.
+
+R-0013's op-reth line is SUPERSEDED. Next free R-id is **R-0023**.
