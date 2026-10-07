@@ -181,6 +181,15 @@ if [[ -z "$OP_RETH_BIN" ]]; then
   exit 2
 fi
 
+# -f/-x on a slashless name inspect ./name, but Bash executes a slashless
+# command via PATH. Run the file that was checked. Metadata still stores
+# the path the operator passed.
+if [[ "$OP_RETH_BIN" == */* ]]; then
+  OP_RETH_EXEC="$OP_RETH_BIN"
+else
+  OP_RETH_EXEC="./$OP_RETH_BIN"
+fi
+
 # Pin check before the running-EL refusal and before any archive. A running
 # EL still refuses below, after this check, so a matching binary cannot pack
 # while op-reth is up. An empty expected line would match every binary, so a
@@ -197,7 +206,7 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
-if [[ ! -f "$OP_RETH_BIN" || ! -x "$OP_RETH_BIN" ]]; then
+if [[ ! -f "$OP_RETH_EXEC" || ! -x "$OP_RETH_EXEC" ]]; then
   echo "ERROR: --op-reth-bin is not an executable file: $OP_RETH_BIN" >&2
   exit 1
 fi
@@ -211,7 +220,7 @@ fi
 snap_work="$(mktemp -d "${TMPDIR:-/tmp}/fortel2-reth-pin.XXXXXX")"
 version_file="$snap_work/version.txt"
 pin_result="$snap_work/pin.json"
-if ! "$OP_RETH_BIN" --version >"$version_file" 2>&1; then
+if ! "$OP_RETH_EXEC" --version >"$version_file" 2>&1; then
   echo "ERROR: $OP_RETH_BIN --version failed; refusing before any archive" >&2
   exit 1
 fi

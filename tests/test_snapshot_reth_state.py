@@ -383,6 +383,51 @@ class SnapshotRethStateTests(unittest.TestCase):
             self.assertEqual(PIN.COMMIT_LINE, meta["reth_expected_commit_line"])
             self.assertEqual(str(stub), meta["op_reth_bin"])
 
+    def test_slashless_bin_runs_the_checked_file(self):
+        # -f/-x on a slashless name inspect ./op-reth. Execution must use that
+        # file, not a different op-reth earlier on PATH.
+        with tempfile.TemporaryDirectory() as temp:
+            data_dir = Path(temp)
+            self.populate_datadir(data_dir)
+            cwd = data_dir / "cwd"
+            good = self.write_stub(cwd, self.matching_text())
+            path_dir = data_dir / "pathbin"
+            self.write_stub(path_dir, V233_VERSION_TEXT)
+            labels = self.labels(data_dir / "labels.json", number=15)
+            env = {
+                **os.environ,
+                "DATA_DIR": str(data_dir),
+                "L2_CHAIN_ID": "852",
+                "PATH": str(path_dir) + os.pathsep + os.environ.get("PATH", ""),
+            }
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(SCRIPT),
+                    "--labels-json",
+                    str(labels),
+                    "--op-reth-bin",
+                    good.name,
+                ],
+                cwd=cwd,
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=15,
+            )
+            combined = result.stderr + result.stdout
+            self.assertIn("op-reth pin ok", result.stdout, combined)
+            self.assertNotIn("Reth Version: 2.3.0-dev", combined)
+            if result.returncode == 0:
+                meta_path = data_dir / "snapshots" / "fortel2-852-reth-snapshot-15.json"
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                self.assertIs(True, meta["reth_pin_match"])
+                self.assertEqual(self.matching_text(), meta["reth_version_text"])
+                self.assertEqual(good.name, meta["op_reth_bin"])
+            else:
+                self.assertIn("op-reth node", result.stderr)
+                self.assert_no_archive(data_dir)
+
     def test_missing_op_reth_bin_is_usage_error(self):
         with tempfile.TemporaryDirectory() as temp:
             data_dir = Path(temp)
