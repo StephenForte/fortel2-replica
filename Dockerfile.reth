@@ -46,7 +46,8 @@ FROM reth
 # Already in the base, not reinstalled: ca-certificates, busybox 1.38.0-r2
 # (sh, sed -E, grep -E, awk, sha256sum, mktemp, id, dirname).
 USER root
-RUN cp -a /usr/local/bin/op-reth /tmp/op-reth \
+RUN mkdir -p /opt/fortel2 \
+  && cp -a /usr/local/bin/op-reth /opt/fortel2/op-reth \
   && printf '%s\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories \
   && apk add --no-cache \
     curl=8.22.0-r4 \
@@ -58,7 +59,8 @@ RUN cp -a /usr/local/bin/op-reth /tmp/op-reth \
     python3-as-3.13=0.1.0-r5 \
     tzdata=2026e-r0 \
     zstd=1.5.7-r10 \
-  && mv /tmp/op-reth /usr/local/bin/op-reth \
+  && cp -a /opt/fortel2/op-reth /usr/local/bin/op-reth \
+  && chmod 755 /usr/local/bin/op-reth \
   && addgroup -g 10001 -S fortel2 \
   && adduser -u 10001 -G fortel2 -D -H -h /data -s /sbin/nologin -S fortel2 \
   && mkdir -p /config /data \
