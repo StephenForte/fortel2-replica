@@ -31,27 +31,34 @@ FROM reth
 
 # The baked repositories file points at a melange build directory that does
 # not exist here. Keep the public Wolfi repo only, or apk add fails closed.
+# apk then drops the image's local op-reth package (it is not in that repo),
+# so the binary is copied aside and put back. It only needs libc, libm,
+# libstdc++, and libgcc_s, which stay.
 # Package versions are pinned (`pkg=version`, R-0023). Transitive soname
-# dependencies are whatever that exact package requires on the day of the build.
-#   curl / libcurl-openssl4 — snapshot download (libssl.so.4, already in the base)
+# dependencies are whatever those exact packages require on the day of the build.
+#   curl / libcurl-openssl4 — snapshot download
 #   gnutar / gnutar-rmt — `tar --zstd` (busybox tar in this image has no --zstd)
+#   openssl-4.0 — `openssl rand` (apk removes the base CLI while solving)
 #   python-3.13-base / python3-as-3.13 — python3 for the pin check, genesis
 #     hash, method filter, healthcheck, and L1 router
 #   tzdata — zoneinfo America/Los_Angeles for the L1 router
 #   zstd — `command -v zstd` and GNU tar's zstd program
-# Already in the base, not reinstalled: openssl 4.0.3-r4, ca-certificates,
-# busybox 1.38.0-r2 (sh, sed -E, grep -E, awk, sha256sum, mktemp, id, dirname).
+# Already in the base, not reinstalled: ca-certificates, busybox 1.38.0-r2
+# (sh, sed -E, grep -E, awk, sha256sum, mktemp, id, dirname).
 USER root
-RUN printf '%s\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories \
+RUN cp -a /usr/local/bin/op-reth /tmp/op-reth \
+  && printf '%s\n' 'https://packages.wolfi.dev/os' > /etc/apk/repositories \
   && apk add --no-cache \
     curl=8.22.0-r4 \
     libcurl-openssl4=8.22.0-r4 \
     gnutar=1.35-r12 \
     gnutar-rmt=1.35-r12 \
+    openssl-4.0=4.0.3-r4 \
     python-3.13-base=3.13.16_git20261002-r2 \
     python3-as-3.13=0.1.0-r5 \
     tzdata=2026e-r0 \
     zstd=1.5.7-r10 \
+  && mv /tmp/op-reth /usr/local/bin/op-reth \
   && addgroup -g 10001 -S fortel2 \
   && adduser -u 10001 -G fortel2 -D -H -h /data -s /sbin/nologin -S fortel2 \
   && mkdir -p /config /data \

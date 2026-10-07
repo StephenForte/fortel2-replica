@@ -181,7 +181,7 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("gnutar=1.35-r12", docker)
         self.assertIn("python-3.13-base=3.13.16_git20261002-r2", docker)
         self.assertIn("python3-as-3.13=0.1.0-r5", docker)
-        self.assertIn("curl=8.22.0-r4", docker)
+        self.assertIn("openssl-4.0=4.0.3-r4", docker)
         self.assertIn("zstd=1.5.7-r10", docker)
         self.assertIn("tzdata=2026e-r0", docker)
         self.assertIn("adduser -u 10001", docker)

@@ -88,7 +88,7 @@ jobs:
           grep -q "/op-reth-pin-check.py" "$entry"
           grep -q "No heredoc fallback." "$entry"
           echo "===== apk pins ====="
-          apk info -e curl libcurl-openssl4 gnutar gnutar-rmt python-3.13-base python3-as-3.13 tzdata zstd
+          apk info -e curl libcurl-openssl4 gnutar gnutar-rmt openssl-4.0 python-3.13-base python3-as-3.13 tzdata zstd
           SCRIPT
 
       - name: Pin check and op-node version inside the image
