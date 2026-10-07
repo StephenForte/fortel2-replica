@@ -551,3 +551,30 @@ Sepolia activated Glamsterdam at L1 block **11856337** (13:53:36 UTC). Headers f
 The R-0013 op-node digest line is SUPERSEDED by this entry. The op-reth line of R-0013 stands.
 
 Next free R-id is **R-0022**.
+
+## R-0022 — op-reth v2.5.0 for the replica is PARKED
+
+*2026-10-06 · replica half of ForteL2 D-0149. The sequencer half already shipped (ForteL2 #253, `5e484fd`). This entry does not move the replica image.*
+
+**Image that was measured, and not adopted.** Re-fetched 2026-10-06 from `us-docker.pkg.dev` with no credentials (HTTP 200). Index `op-reth:v2.5.0` is `sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692`. linux/amd64 manifest is `sha256:e9fecc5cd200f157eb36e1f2df0559cd05f9c74c96512400a441ec473fdcf145`. One layer, `sha256:76a0c3350d392c3e1f6d8a6d4640a6bebbcff7ca25b5f93a55ae8c69f4214054`. The tag is an apko/melange build (`author: github.com/chainguard-dev/apko`), not the docker-bake recipe. `images/nexus/op-reth:v2.5.0` is manifest-unknown. The release notes name `images/op-reth:v2.5.0`, which is this apko image. `Dockerfile.reth` and `docker-compose.yml` stay on the R-0013 op-reth pin (`v2.3.3`).
+
+**Why it is parked.** The linux/amd64 binary needs glibc 2.44. This repo's runtime is `ubuntu:24.04` (glibc 2.39). On the GitHub `ubuntu-latest` runner the loader failed. Verbatim stderr, run https://github.com/StephenForte/fortel2-replica/actions/runs/37557555586 :
+
+```
+/tmp/op-reth-pin-tq4r7i6k/bin/op-reth: /lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.44' not found (required by /tmp/op-reth-pin-tq4r7i6k/bin/op-reth)
+```
+
+Exit 1 from the dynamic linker; the checker returned 3 and did not change the matcher. Changing the runtime base, or building op-reth from source, is not worth it for this bump. The replica's exposure to the two v2.5.0 advisories is negligible: rustls is TLS, and op-reth here serves plain HTTP behind the gateway; imbl is in the txpool, and the replica has gossip disabled and rejects writes. The sequencer, which benefits, already runs v2.5.0 (ForteL2 D-0149), and post-swap hashes matched the replica.
+
+**What would unblock it.** A runtime with glibc ≥ 2.44, likely Wolfi, or a source build. Take that at the next forced upgrade (for example a hardfork), not as a standalone bump.
+
+**CI gate.** `scripts/op-reth-pin-check.py` is the matcher `entrypoint-reth.sh` calls at boot (line 640, before `restore_reth_snapshot` at line 884 and `op-reth node` at line 915) and the job `.github/workflows/tests.yml` runs on every pull request. The job reads the op-reth digest from `Dockerfile.reth` only, fetches that image with curl, checks every blob sha256, runs `op-reth --version` on the Ubuntu runner, and applies this same checker. That catches this class of failure before Render: 51baa39 (bookworm's glibc too old for the v2.3.3 binary) and now GLIBC_2.44 (v2.5.0 on Ubuntu 24.04). Executed on GitHub ubuntu runner, run https://github.com/StephenForte/fortel2-replica/actions/runs/37559055838 , the v2.3.3 binary printed these whole lines (plus build timestamp, features, and profile):
+
+```
+Reth Version: 2.3.0-dev
+Commit SHA: 9384bc53d8c0c77e59cac83fdaaf3b372c6d2216
+```
+
+The matcher requires those two lines exactly. A bare tag, `2.3.0-dev` followed by extra characters, a wrong commit, and the Mac v2.5.0 lines (`op-reth Version: 2.5.0`) all fail. The old substring check also accepts this executed output, so boot on the current image is unchanged.
+
+R-0013's op-reth line stands. Next free R-id is **R-0023**.

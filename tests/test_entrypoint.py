@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import tempfile
@@ -16,8 +17,22 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PIN_RETH_VERSION = "2.3.0-dev"
-PIN_RETH_COMMIT = "9384bc53d8c0c77e59cac83fdaaf3b372c6d2216"
+PIN_CHECK = ROOT / "scripts" / "op-reth-pin-check.py"
+
+
+def _pin_constant(name):
+    match = re.search(
+        rf'^{name} = "(.*)"$',
+        PIN_CHECK.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"{name} missing from {PIN_CHECK}")
+    return match.group(1)
+
+
+PIN_RETH_VERSION_LINE = _pin_constant("VERSION_LINE")
+PIN_RETH_COMMIT_LINE = _pin_constant("COMMIT_LINE")
 # Measured from the linux/amd64 op-node v1.19.8 binary: `op-node --version`.
 PIN_OP_NODE_VERSION = "v1.19.8"
 PIN_OP_NODE_COMMIT = "9f76a9d2"
@@ -33,10 +48,7 @@ ROLLUP_852 = json.dumps(
         "genesis": {"l2": {"hash": EXPECTED_GENESIS_HASH}},
     }
 )
-PIN_VERSION_TEXT = (
-    f"Reth Version: {PIN_RETH_VERSION}\n"
-    f"Commit SHA: {PIN_RETH_COMMIT}\n"
-)
+PIN_VERSION_TEXT = f"{PIN_RETH_VERSION_LINE}\n{PIN_RETH_COMMIT_LINE}\n"
 
 # Persisted --full prune config (R-0015). Matches the Render 2026-09-10
 # /data/reth.toml that survived omitting --full: receipts/account/storage
@@ -439,6 +451,60 @@ printf '%064d\n' 0
         self.assertEqual(1, result.returncode)
         self.assertIn("op-reth pin mismatch", result.stderr)
         self.assertEqual("", log)
+
+    def _assert_reth_pin_refused(self, version_text):
+        result, log, _, _ = self.run_entrypoint(
+            {
+                "JWT_SECRET": "a" * 64,
+                "RETH_VERSION_TEXT": version_text,
+            },
+        )
+        self.assertNotEqual(0, result.returncode, result.stderr)
+        self.assertIn("op-reth pin mismatch", result.stderr)
+        self.assertNotIn("op-reth pin ok", result.stdout)
+        self.assertEqual("", log)
+
+    def test_refuses_v250_mac_lines(self):
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.5.0\n"
+            "Commit SHA: 9f76a9d216f2d9aa99c5f45d7aad674acde93c14\n"
+        )
+
+    def test_refuses_bare_op_reth_tag(self):
+        self._assert_reth_pin_refused(
+            f"v2.3.3\nop-reth:v2.3.3\n{PIN_RETH_COMMIT_LINE}\n"
+        )
+
+    def test_refuses_reth_version_near_miss(self):
+        # "2.3.0-dev" followed by extra characters is not that whole line.
+        # The old substring check would have accepted these.
+        self._assert_reth_pin_refused(
+            f"{PIN_RETH_VERSION_LINE}0\n{PIN_RETH_COMMIT_LINE}\n"
+        )
+        self._assert_reth_pin_refused(
+            "Reth Version: 2.3.0-dev-extra\n" f"{PIN_RETH_COMMIT_LINE}\n"
+        )
+
+    def test_refuses_wrong_reth_commit_line(self):
+        self._assert_reth_pin_refused(
+            f"{PIN_RETH_VERSION_LINE}\nCommit SHA: deadbeef\n"
+        )
+
+    def test_embedded_pin_check_matches_script(self):
+        text = (ROOT / "entrypoint-reth.sh").read_text(encoding="utf-8")
+        marker = "<<'END_OP_RETH_PIN_CHECK'\n"
+        start = text.index(marker) + len(marker)
+        end = text.index("\nEND_OP_RETH_PIN_CHECK\n", start)
+        embedded = text[start:end] + "\n"
+        self.assertEqual(PIN_CHECK.read_text(encoding="utf-8"), embedded)
+
+    def test_reth_pin_check_precedes_datadir_open(self):
+        text = (ROOT / "entrypoint-reth.sh").read_text(encoding="utf-8")
+        check_at = text.index('python3 "$OP_RETH_PIN_CHECK" check')
+        restore_at = text.index("restore_reth_snapshot()")
+        node_at = text.index("op-reth node \\\n")
+        self.assertLess(check_at, restore_at)
+        self.assertLess(check_at, node_at)
 
     def _assert_op_node_pin_refused(self, version_text):
         result, log, _, _ = self.run_entrypoint(

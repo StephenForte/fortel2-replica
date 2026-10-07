@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Task 7 / Task 9 Blueprint guards: declared services only; no geth EL path."""
 
+import hashlib
+import importlib.util
+import io
 from pathlib import Path
 import re
+import tarfile
+import tempfile
 import unittest
 
 try:
@@ -153,6 +158,10 @@ class RenderYamlTests(unittest.TestCase):
             "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             docker,
         )
+        self.assertNotIn(
+            "op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            docker,
+        )
         self.assertIn(
             "op-node:v1.19.8@sha256:adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11",
             docker,
@@ -177,10 +186,90 @@ class RenderYamlTests(unittest.TestCase):
         self.assertIn("dockerfilePath: ./Dockerfile.reth\n", reth)
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
+        self.assertIn(
+            "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
+            compose,
+        )
+        self.assertNotIn("6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692", compose)
+        spec = importlib.util.spec_from_file_location(
+            "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
+        )
+        pin_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin_check)
+        registry, repository, tag, digest = pin_check.read_pin_from_dockerfile(
+            ROOT / "Dockerfile.reth"
+        )
+        self.assertEqual("us-docker.pkg.dev", registry)
+        self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
+        self.assertEqual("v2.3.3", tag)
+        self.assertEqual(
+            "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
+            digest,
+        )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
         self.assertIn("entrypoint-reth.sh", ci)
+        self.assertIn("scripts/op-reth-pin-check.py fetch-and-check", ci)
+        self.assertNotIn(
+            "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
+            ci,
+        )
+        self.assertNotIn(
+            "6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            ci,
+        )
         self.assertNotIn("entrypoint.sh\n", ci)
         self.assertNotIn("healthcheck.sh\n", ci)
+
+    def test_digest_fetch_allows_missing_content_digest_header(self):
+        # GET-by-digest on Artifact Registry omits Docker-Content-Digest.
+        # The body hash still has to match the digest from the parent manifest.
+        spec = importlib.util.spec_from_file_location(
+            "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
+        )
+        pin_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin_check)
+        payload = b"manifest-bytes"
+        expected = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "amd64.json"
+            path.write_bytes(payload)
+            got = pin_check.require_blob(path, "HTTP/2 200\ncontent-type: application/json\n", expected)
+        self.assertEqual(expected, got)
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "amd64.json"
+            path.write_bytes(payload)
+            with self.assertRaises(SystemExit):
+                pin_check.require_blob(
+                    path,
+                    "HTTP/2 200\ndocker-content-digest: sha256:deadbeef\n",
+                    expected,
+                )
+
+    def test_extracts_op_reth_and_ignores_absolute_symlink(self):
+        spec = importlib.util.spec_from_file_location(
+            "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
+        )
+        pin_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin_check)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            archive = root / "layer.tar"
+            with tarfile.open(archive, "w") as tar:
+                payload = b"op-reth-bytes"
+                info = tarfile.TarInfo("usr/local/bin/op-reth")
+                info.size = len(payload)
+                info.mode = 0o755
+                tar.addfile(info, fileobj=io.BytesIO(payload))
+                link = tarfile.TarInfo("etc/mtab")
+                link.type = tarfile.SYMTYPE
+                link.linkname = "/proc/mounts"
+                tar.addfile(link)
+            dest = root / "out"
+            got = pin_check.extract_op_reth(
+                archive, dest, "application/vnd.oci.image.layer.v1.tar"
+            )
+            self.assertEqual(payload, got.read_bytes())
+            self.assertEqual(got.name, "op-reth")
 
     def test_op_node_pin_rejects_pre_glamsterdam(self):
         # v1.19.2 cannot hash Glamsterdam headers (blockAccessListHash / slotNumber).

@@ -45,7 +45,19 @@ jobs:
           python -m py_compile \
             rpc-method-filter.py \
             l1_rpc_router.py \
+            scripts/op-reth-pin-check.py \
             tests/*.py
 
       - name: Run test suite
         run: python -m unittest discover -s tests -v
+
+  op-reth-pin:
+    name: Execute pinned op-reth --version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
+
+      - name: Fetch pinned op-reth and check --version
+        run: python3 scripts/op-reth-pin-check.py fetch-and-check
