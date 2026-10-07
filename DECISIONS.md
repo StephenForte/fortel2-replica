@@ -320,10 +320,10 @@ The operated Render replica moves to **op-reth** on a **new** Private Service an
 
 **Image pin (immutable digest, Task 1 rule / D-0109).**
 
-- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c` — **SUPERSEDED by R-0022 (2026-10-06)**. Do not deploy this op-reth digest.
-- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a` — **SUPERSEDED by R-0021 (2026-10-06)**. Do not deploy this op-node digest.
+- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c`
+- `us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.2@sha256:3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a` — **SUPERSEDED by R-0021 (2026-10-06)**. Do not deploy this op-node digest. The op-reth line above is unchanged.
 
-The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint-reth.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`. **SUPERSEDED by R-0022** for the op-reth pin. The op-node half of that rule stands until R-0021, which superseded the op-node digest above.
+The container binary must report `Reth Version: 2.3.0-dev` commit `9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`. `entrypoint-reth.sh` asserts that at start and **fails closed** otherwise. Do not grep the tag string `2.3.3` (absent) or a bare `2.3`.
 
 **Role.** Verifier only: `op-reth --full` (prune mode — without it this is an archive on a 20 GB disk), `--rollup.disable-tx-pool-gossip`, no `--proofs-history`. op-node `--l2.enginekind=reth`, `--sequencer.enabled=false`, `--p2p.disable=true`. `--l1.rpckind` from `L1_RPC_KIND` (default `quicknode`).
 
@@ -552,28 +552,22 @@ The R-0013 op-node digest line is SUPERSEDED by this entry. The op-reth line of 
 
 Next free R-id is **R-0022**.
 
-## R-0022 — Render replica op-reth moves to v2.5.0; the /data archive stays
+## R-0022 — op-reth v2.5.0 for the replica is PARKED
 
-*2026-10-06 · replica half of ForteL2 D-0149. The sequencer half already shipped (ForteL2 #253, `5e484fd`).*
+*2026-10-06 · replica half of ForteL2 D-0149. The sequencer half already shipped (ForteL2 #253, `5e484fd`). This entry does not move the replica image.*
 
-**Image pin (immutable digest), re-fetched 2026-10-06 from `us-docker.pkg.dev` with no credentials (HTTP 200).** Index `op-reth:v2.5.0` is `sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692`. linux/amd64 manifest is `sha256:e9fecc5cd200f157eb36e1f2df0559cd05f9c74c96512400a441ec473fdcf145`. One layer, `sha256:76a0c3350d392c3e1f6d8a6d4640a6bebbcff7ca25b5f93a55ae8c69f4214054`. `Dockerfile.reth` and `docker-compose.yml` pin the index digest. The tag is an apko/melange build (`author: github.com/chainguard-dev/apko`), not the docker-bake recipe. `images/nexus/op-reth:v2.5.0` is manifest-unknown. The release notes name `images/op-reth:v2.5.0`, which is this apko image. op-node stays the R-0021 pin.
+**Image that was measured, and not adopted.** Re-fetched 2026-10-06 from `us-docker.pkg.dev` with no credentials (HTTP 200). Index `op-reth:v2.5.0` is `sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692`. linux/amd64 manifest is `sha256:e9fecc5cd200f157eb36e1f2df0559cd05f9c74c96512400a441ec473fdcf145`. One layer, `sha256:76a0c3350d392c3e1f6d8a6d4640a6bebbcff7ca25b5f93a55ae8c69f4214054`. The tag is an apko/melange build (`author: github.com/chainguard-dev/apko`), not the docker-bake recipe. `images/nexus/op-reth:v2.5.0` is manifest-unknown. The release notes name `images/op-reth:v2.5.0`, which is this apko image. `Dockerfile.reth` and `docker-compose.yml` stay on the R-0013 op-reth pin (`v2.3.3`).
 
-**What `--version` prints.** Not measured. On the GitHub `ubuntu-latest` runner (still Ubuntu 24.04 as of 2026-10-07; the 24.04 label moves to Ubuntu 26 on 2026-10-19) the linux/amd64 binary failed to load. Verbatim stderr, run https://github.com/StephenForte/fortel2-replica/actions/runs/37557555586 :
+**Why it is parked.** The linux/amd64 binary needs glibc 2.44. This repo's runtime is `ubuntu:24.04` (glibc 2.39). On the GitHub `ubuntu-latest` runner the loader failed. Verbatim stderr, run https://github.com/StephenForte/fortel2-replica/actions/runs/37557555586 :
 
 ```
 /tmp/op-reth-pin-tq4r7i6k/bin/op-reth: /lib/x86_64-linux-gnu/libm.so.6: version `GLIBC_2.44' not found (required by /tmp/op-reth-pin-tq4r7i6k/bin/op-reth)
 ```
 
-Exit 1 from the dynamic linker; the checker returns 3 and does not change the matcher. The image's own glibc is 2.44 (apko/melange). Ubuntu 24.04 is glibc 2.39. `Dockerfile.reth` still copies the binary onto `ubuntu:24.04`, so the same loader error would happen in the Render container. The entrypoint runs this check before snapshot restore and before `op-reth node`, so a boot would exit without opening `/data`, and the public read would crash-loop until revert.
+Exit 1 from the dynamic linker; the checker returned 3 and did not change the matcher. Changing the runtime base, or building op-reth from source, is not worth it for this bump. The replica's exposure to the two v2.5.0 advisories is negligible: rustls is TLS, and op-reth here serves plain HTTP behind the gateway; imbl is in the txpool, and the replica has gossip disabled and rejects writes. The sequencer, which benefits, already runs v2.5.0 (ForteL2 D-0149), and post-swap hashes matched the replica.
 
-The Mac source build of commit `9f76a9d2` prints `op-reth Version: 2.5.0` and `Commit SHA: 9f76a9d216f2d9aa99c5f45d7aad674acde93c14`. That version line is the Mac build only (D-0149). The published binary does not contain the literal `2.5.0`. The checker still requires that Mac line as a whole line, plus the commit line, until a runner can execute the binary. Do not pin the loader error text. Upstream reth's embedded default in the binary (`Version: 2.4.0` / `Commit SHA: 49bfe597…`) is not the pin.
+**What would unblock it.** A runtime with glibc ≥ 2.44, likely Wolfi, or a source build. Take that at the next forced upgrade (for example a hardfork), not as a standalone bump.
 
-**Where the check runs.** `entrypoint-reth.sh` calls the checker at lines 256–259, before `restore_reth_snapshot` (line 501) and before `op-reth node` (line 532). A mismatch exits before snapshot restore and before op-reth opens `/data`.
+**CI gate.** `scripts/op-reth-pin-check.py` is the matcher `entrypoint-reth.sh` calls at boot (line 640, before `restore_reth_snapshot` at line 884 and `op-reth node` at line 915) and the job `.github/workflows/tests.yml` runs on every pull request. The job reads the op-reth digest from `Dockerfile.reth` only, fetches that image with curl, checks every blob sha256, runs `op-reth --version` on the Ubuntu runner, and applies this same checker. That catches this class of failure before Render: 51baa39 (bookworm's glibc too old for the v2.3.3 binary) and now GLIBC_2.44 (v2.5.0 on Ubuntu 24.04). The matcher is whole-line on the executed v2.3.3 output. A bare tag, `2.3.0-dev` followed by extra characters, a wrong commit, and the Mac v2.5.0 lines (`op-reth Version: 2.5.0`) all fail.
 
-**Flags.** The same CI step runs `op-reth --help`, `node --help`, and `init --help` and requires every flag `entrypoint-reth.sh` already passes. No flag was added or removed in this repo.
-
-**Deploy.** `fortel2-replica-reth` (`srv-dagquc7qj5pc73fdnjsg`) has `autoDeploy: no` / `autoDeployTrigger: off` (Render read of workspace `tea-d98533l7vvec738vva90`, 2026-10-06). Merging does not deploy. Do not flip that setting in this change. Resume from the existing `/data` archive. No datadir wipe, no `debug_setHead`, no Blueprint re-apply, no service rename. `L1_RPC_URL`, `L1_RPC_KIND`, and `L1_RPC_FORCE=metered` stay (D-0136).
-
-**Rollback.** ROLLBACK-SAFE per ForteL2 D-0149 G1 — revert this PR and Render redeploys v2.3.3 on the same `/data`.
-
-R-0013's op-reth line is SUPERSEDED. Next free R-id is **R-0023**.
+R-0013's op-reth line stands. Next free R-id is **R-0023**.

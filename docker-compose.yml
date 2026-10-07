@@ -23,7 +23,7 @@ services:
       dockerfile: Dockerfile.reth
 
   op-reth:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c
     volumes:
       - reth-data:/data
       - ./config/genesis.json:/config/genesis.json:ro

@@ -464,26 +464,39 @@ printf '%064d\n' 0
         self.assertNotIn("op-reth pin ok", result.stdout)
         self.assertEqual("", log)
 
-    def test_refuses_v233_reth_version_output(self):
-        # Measured v2.3.3 --version shape: label "Reth Version:" and 2.3.0-dev.
+    def test_refuses_v250_mac_lines(self):
         self._assert_reth_pin_refused(
-            "Reth Version: 2.3.0-dev\n"
-            "Commit SHA: 9384bc53d8c0c77e59cac83fdaaf3b372c6d2216\n"
+            "op-reth Version: 2.5.0\n"
+            "Commit SHA: 9f76a9d216f2d9aa99c5f45d7aad674acde93c14\n"
         )
 
     def test_refuses_bare_op_reth_tag(self):
         self._assert_reth_pin_refused(
-            f"v2.5.0\nop-reth:v2.5.0\n{PIN_RETH_COMMIT_LINE}\n"
+            f"v2.3.3\nop-reth:v2.3.3\n{PIN_RETH_COMMIT_LINE}\n"
         )
 
     def test_refuses_reth_version_near_miss(self):
-        # A trailing character on the version line is not that line.
+        # "2.3.0-dev" followed by extra characters is not that whole line.
+        # The old substring check would have accepted these.
         self._assert_reth_pin_refused(
             f"{PIN_RETH_VERSION_LINE}0\n{PIN_RETH_COMMIT_LINE}\n"
         )
         self._assert_reth_pin_refused(
-            f"{PIN_RETH_VERSION_LINE}-dev\n{PIN_RETH_COMMIT_LINE}\n"
+            "Reth Version: 2.3.0-dev-extra\n" f"{PIN_RETH_COMMIT_LINE}\n"
         )
+
+    def test_refuses_wrong_reth_commit_line(self):
+        self._assert_reth_pin_refused(
+            f"{PIN_RETH_VERSION_LINE}\nCommit SHA: deadbeef\n"
+        )
+
+    def test_embedded_pin_check_matches_script(self):
+        text = (ROOT / "entrypoint-reth.sh").read_text(encoding="utf-8")
+        marker = "<<'END_OP_RETH_PIN_CHECK'\n"
+        start = text.index(marker) + len(marker)
+        end = text.index("\nEND_OP_RETH_PIN_CHECK\n", start)
+        embedded = text[start:end] + "\n"
+        self.assertEqual(PIN_CHECK.read_text(encoding="utf-8"), embedded)
 
     def test_reth_pin_check_precedes_datadir_open(self):
         text = (ROOT / "entrypoint-reth.sh").read_text(encoding="utf-8")

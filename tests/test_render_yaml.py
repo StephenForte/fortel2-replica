@@ -155,11 +155,11 @@ class RenderYamlTests(unittest.TestCase):
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
-            "op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             docker,
         )
         self.assertNotIn(
-            "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
+            "op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
             docker,
         )
         self.assertIn(
@@ -187,9 +187,10 @@ class RenderYamlTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
         self.assertIn(
-            "op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             compose,
         )
+        self.assertNotIn("6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692", compose)
         spec = importlib.util.spec_from_file_location(
             "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
         )
@@ -200,14 +201,18 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertEqual("us-docker.pkg.dev", registry)
         self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
-        self.assertEqual("v2.5.0", tag)
+        self.assertEqual("v2.3.3", tag)
         self.assertEqual(
-            "6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             digest,
         )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
         self.assertIn("entrypoint-reth.sh", ci)
         self.assertIn("scripts/op-reth-pin-check.py fetch-and-check", ci)
+        self.assertNotIn(
+            "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
+            ci,
+        )
         self.assertNotIn(
             "6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
             ci,

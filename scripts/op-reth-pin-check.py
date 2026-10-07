@@ -24,12 +24,10 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Whole lines. The first push expects the Mac source-build version line so CI
-# fails and logs what the published binary actually prints. Update both lines
-# to that executed output; do not accept a substring, a bare tag, or a
-# near-miss (2.5.0-dev, 2.5.00, an extra trailing character).
-VERSION_LINE = "op-reth Version: 2.5.0"
-COMMIT_LINE = "Commit SHA: 9f76a9d216f2d9aa99c5f45d7aad674acde93c14"
+# Whole lines from the executed v2.3.3 binary (R-0022 parks v2.5.0).
+# A trailing character, a bare tag, or the Mac v2.5.0 lines do not match.
+VERSION_LINE = "Reth Version: 2.3.0-dev"
+COMMIT_LINE = "Commit SHA: 9384bc53d8c0c77e59cac83fdaaf3b372c6d2216"
 
 # Flags entrypoint-reth.sh passes to op-reth. init and node help are combined.
 ENTRYPOINT_FLAGS = (

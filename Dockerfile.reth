@@ -3,20 +3,21 @@
 # Service at this file (that would boot a second public verifier).
 #
 # Images pinned by immutable digest (ForteL2 Task 1 / D-0109). Tag strings
-# are comments only — do not float off the digest. op-reth:v2.5.0 is the
-# apko/melange image (R-0022). The whole-line pin check lives in
-# scripts/op-reth-pin-check.py; the entrypoint calls it and fails closed.
+# are comments only — do not float off the digest. The container's op-reth
+# must report `Reth Version: 2.3.0-dev` commit 9384bc53…; entrypoint asserts
+# that and fails closed otherwise. Tag op-reth/v2.3.3 ≠ the reported version.
 # op-node must report `op-node version v1.19.8-9f76a9d2-…` (R-0021 /
 # ForteL2 D-0147). The entrypoint asserts that version with no trailing
 # digit, and commit 9f76a9d2, and fails closed otherwise.
 #
 # OP Labs op-node images are distroless (no /bin/sh, no apt). Do not RUN
 # shell commands on that image — copy binaries into an Ubuntu 24.04 runtime
-# instead. op-reth is a wolfi-linked dynamic binary (needs glibc and
-# libstdc++ new enough for that image). debian:bookworm-slim is glibc 2.36
-# and fails closed at the pin assert. op-geth is not in this image.
+# instead. Official op-reth:v2.3.3 is Chainguard wolfi-base with a dynamically
+# linked binary (needs glibc ≥ 2.39 and libstdc++ ≥ 13 / CXXABI_1.3.15).
+# debian:bookworm-slim is glibc 2.36 and fails closed at the pin assert.
+# op-geth is not in this image.
 
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692 AS reth
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c AS reth
 FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.8@sha256:adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11 AS node
 
 FROM ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254
@@ -39,13 +40,12 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 COPY --from=reth /usr/local/bin/op-reth /usr/local/bin/op-reth
 COPY --from=node /usr/local/bin/op-node /usr/local/bin/op-node
 COPY entrypoint-reth.sh /entrypoint.sh
-COPY scripts/op-reth-pin-check.py /op-reth-pin-check.py
 COPY healthcheck-reth.sh /healthcheck.sh
 COPY l1_rpc_router.py /l1_rpc_router.py
 COPY rpc-method-filter.py /rpc-method-filter.py
 COPY config/genesis.json /config/genesis.json
 COPY config/rollup.json /config/rollup.json
-RUN chmod +x /entrypoint.sh /op-reth-pin-check.py /healthcheck.sh /l1_rpc_router.py /rpc-method-filter.py \
+RUN chmod +x /entrypoint.sh /healthcheck.sh /l1_rpc_router.py /rpc-method-filter.py \
     /usr/local/bin/op-reth /usr/local/bin/op-node
 
 # Render Web Service sets PORT (often 10000) for the public method filter.
