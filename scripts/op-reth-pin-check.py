@@ -24,10 +24,12 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Whole lines from the executed v2.3.3 binary (R-0022 parks v2.5.0).
-# A trailing character, a bare tag, or the Mac v2.5.0 lines do not match.
-VERSION_LINE = "Reth Version: 2.3.0-dev"
-COMMIT_LINE = "Commit SHA: 9384bc53d8c0c77e59cac83fdaaf3b372c6d2216"
+# Whole lines from `op-reth --version` executed inside the v2.6.0 Wolfi image
+# (R-0023). The v2.3.3 lines ("Reth Version: 2.3.0-dev" / 9384bc53…) and the
+# Mac v2.5.0 lines ("op-reth Version: 2.5.0") do not match. A trailing
+# character or a bare tag does not match either.
+VERSION_LINE = "op-reth Version: 2.6.0"
+COMMIT_LINE = "Commit SHA: da6d3252491754837a778061db0cc47236ec13c6"
 
 # Flags entrypoint-reth.sh passes to op-reth. init and node help are combined.
 ENTRYPOINT_FLAGS = (

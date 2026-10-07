@@ -155,6 +155,10 @@ class RenderYamlTests(unittest.TestCase):
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
+            "op-reth:v2.6.0@sha256:0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c",
+            docker,
+        )
+        self.assertNotIn(
             "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             docker,
         )
@@ -166,17 +170,22 @@ class RenderYamlTests(unittest.TestCase):
             "op-node:v1.19.8@sha256:adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11",
             docker,
         )
-        self.assertIn(
-            "ubuntu:24.04@sha256:224a1869083a311ef3f13648a154ba79832fbef6364d31493642ca03082da254",
-            docker,
-        )
+        self.assertNotIn("ubuntu:24.04", docker)
         self.assertNotIn("images/op-geth", docker)
         self.assertNotIn("COPY --from=geth", docker)
-        self.assertIn("COPY --from=reth", docker)
+        self.assertNotIn("COPY --from=reth", docker)
+        self.assertIn("\nFROM reth\n", docker)
+        self.assertIn("COPY --from=node", docker)
         self.assertIn("COPY entrypoint-reth.sh", docker)
-        self.assertIn("libstdc++6", docker)
-        self.assertIn("curl", docker)
-        self.assertIn("zstd", docker)
+        self.assertIn("COPY scripts/op-reth-pin-check.py /op-reth-pin-check.py", docker)
+        self.assertIn("gnutar=1.35-r12", docker)
+        self.assertIn("python-3.13-base=3.13.16_git20261002-r2", docker)
+        self.assertIn("python3-as-3.13=0.1.0-r5", docker)
+        self.assertIn("openssl-4.0=4.0.3-r4", docker)
+        self.assertIn("zstd=1.5.7-r10", docker)
+        self.assertIn("tzdata=2026e-r0", docker)
+        self.assertIn("adduser -u 10001", docker)
+        self.assertNotIn("apt-get", docker)
         reth = next(
             block
             for block in _service_blocks(self.text)
@@ -187,7 +196,11 @@ class RenderYamlTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
         self.assertIn(
-            "op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
+            "op-reth:v2.6.0@sha256:0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c",
+            compose,
+        )
+        self.assertNotIn(
+            "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             compose,
         )
         self.assertNotIn("6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692", compose)
@@ -201,14 +214,25 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertEqual("us-docker.pkg.dev", registry)
         self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
-        self.assertEqual("v2.3.3", tag)
+        self.assertEqual("v2.6.0", tag)
         self.assertEqual(
-            "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
+            "0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c",
             digest,
         )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
         self.assertIn("entrypoint-reth.sh", ci)
-        self.assertIn("scripts/op-reth-pin-check.py fetch-and-check", ci)
+        self.assertIn("docker build --platform linux/amd64 -f Dockerfile.reth", ci)
+        self.assertIn("id fortel2", ci)
+        self.assertIn("/op-reth-pin-check.py check", ci)
+        # Before: the smoke step treated every post-init exit as success.
+        # After: an unexpected exit fails the job. The only accepted stop
+        # besides the 240s timeout is op-node giving up on the placeholder L1.
+        self.assertIn("smoke: unexpected exit", ci)
+        self.assertIn(
+            "failed to dial L1 address (https://example.invalid)",
+            ci,
+        )
+        self.assertNotIn("fetch-and-check", ci)
         self.assertNotIn(
             "eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c",
             ci,
@@ -217,8 +241,10 @@ class RenderYamlTests(unittest.TestCase):
             "6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
             ci,
         )
-        self.assertNotIn("entrypoint.sh\n", ci)
-        self.assertNotIn("healthcheck.sh\n", ci)
+        self.assertNotIn("sh -n entrypoint.sh", ci)
+        self.assertNotIn("sh -n healthcheck.sh", ci)
+        self.assertIn("sh -n entrypoint-reth.sh", ci)
+        self.assertIn("sh -n healthcheck-reth.sh", ci)
 
     def test_digest_fetch_allows_missing_content_digest_header(self):
         # GET-by-digest on Artifact Registry omits Docker-Content-Digest.
@@ -286,8 +312,9 @@ class RenderYamlTests(unittest.TestCase):
             self.assertIn(new_pin, text, path.name)
 
     def test_reth_runtime_base_is_not_bookworm(self):
-        # Official op-reth is wolfi-linked (glibc 2.38+/CXXABI_1.3.15).
-        # bookworm-slim is glibc 2.36 and cannot load the binary.
+        # The runtime stage is the pinned Wolfi op-reth image (`FROM reth`),
+        # not ubuntu and not debian bookworm. bookworm's glibc cannot load
+        # this binary; ubuntu:24.04 cannot either (glibc 2.39 vs 2.44).
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         from_lines = [
             line.split("#", 1)[0].strip()
@@ -303,11 +330,7 @@ class RenderYamlTests(unittest.TestCase):
             for line in from_lines
             if " AS " not in line and " as " not in line
         ]
-        self.assertEqual(1, len(runtime_from), runtime_from)
-        self.assertRegex(
-            runtime_from[0],
-            r"^FROM ubuntu:24\.04@sha256:[0-9a-f]{64}$",
-        )
+        self.assertEqual(["FROM reth"], runtime_from)
 
     def test_gateway_default_upstream_matches_blueprint(self):
         """The image default must name a host that still exists.
