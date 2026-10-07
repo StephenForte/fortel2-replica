@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Task 7 / Task 9 Blueprint guards: declared services only; no geth EL path."""
 
+import hashlib
 import importlib.util
 from pathlib import Path
 import re
+import tempfile
 import unittest
 
 try:
@@ -210,6 +212,31 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertNotIn("entrypoint.sh\n", ci)
         self.assertNotIn("healthcheck.sh\n", ci)
+
+    def test_digest_fetch_allows_missing_content_digest_header(self):
+        # GET-by-digest on Artifact Registry omits Docker-Content-Digest.
+        # The body hash still has to match the digest from the parent manifest.
+        spec = importlib.util.spec_from_file_location(
+            "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
+        )
+        pin_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(pin_check)
+        payload = b"manifest-bytes"
+        expected = hashlib.sha256(payload).hexdigest()
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "amd64.json"
+            path.write_bytes(payload)
+            got = pin_check.require_blob(path, "HTTP/2 200\ncontent-type: application/json\n", expected)
+        self.assertEqual(expected, got)
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "amd64.json"
+            path.write_bytes(payload)
+            with self.assertRaises(SystemExit):
+                pin_check.require_blob(
+                    path,
+                    "HTTP/2 200\ndocker-content-digest: sha256:deadbeef\n",
+                    expected,
+                )
 
     def test_op_node_pin_rejects_pre_glamsterdam(self):
         # v1.19.2 cannot hash Glamsterdam headers (blockAccessListHash / slotNumber).

@@ -134,12 +134,13 @@ def curl(url: str, dest: Path, accept: str | None, token: str | None) -> str:
     return header_path.read_text(encoding="utf-8", errors="replace")
 
 
-def header_value(headers: str, name: str) -> str:
+def header_value(headers: str, name: str) -> str | None:
     prefix = name.lower() + ":"
+    found = None
     for line in headers.splitlines():
         if line.lower().startswith(prefix):
-            return line.split(":", 1)[1].strip()
-    raise SystemExit(f"ERROR: response missing {name}")
+            found = line.split(":", 1)[1].strip()
+    return found
 
 
 def sha256_file(path: Path) -> str:
@@ -151,16 +152,26 @@ def sha256_file(path: Path) -> str:
 
 
 def require_blob(path: Path, headers: str, expected: str | None) -> str:
+    """Body sha256 must match the digest we already have.
+
+    Artifact Registry omits Docker-Content-Digest on a GET by digest. When
+    that header is present it must still equal the body. A tag fetch (the
+    index) always passes the pinned digest as ``expected``.
+    """
     body = sha256_file(path)
     listed = header_value(headers, "docker-content-digest")
-    if listed != f"sha256:{body}":
+    if listed is not None and listed != f"sha256:{body}":
         raise SystemExit(
             f"ERROR: blob sha256 mismatch for {path.name}: header {listed} body sha256:{body}"
         )
-    if expected is not None and listed != f"sha256:{expected}":
+    if expected is None and listed is None:
+        raise SystemExit(f"ERROR: response missing docker-content-digest ({path.name})")
+    if expected is not None and body != expected:
         raise SystemExit(
             f"ERROR: blob sha256:{body} != expected sha256:{expected} ({path.name})"
         )
+    if listed is None:
+        print(f"{path.name}: docker-content-digest omitted; body sha256:{body} matches")
     return body
 
 
