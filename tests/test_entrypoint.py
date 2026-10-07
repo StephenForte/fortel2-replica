@@ -490,13 +490,53 @@ printf '%064d\n' 0
             f"{PIN_RETH_VERSION_LINE}\nCommit SHA: deadbeef\n"
         )
 
-    def test_embedded_pin_check_matches_script(self):
+    def test_image_pin_check_has_no_heredoc_fallback(self):
+        # Before: the entrypoint heredoc had to equal scripts/op-reth-pin-check.py
+        # because the image did not COPY the checker. After: the image copies
+        # the file to /op-reth-pin-check.py and a missing file fails closed.
+        # A copied entrypoint with no sibling scripts/ directory must not
+        # materialize a checker.
         text = (ROOT / "entrypoint-reth.sh").read_text(encoding="utf-8")
-        marker = "<<'END_OP_RETH_PIN_CHECK'\n"
-        start = text.index(marker) + len(marker)
-        end = text.index("\nEND_OP_RETH_PIN_CHECK\n", start)
-        embedded = text[start:end] + "\n"
-        self.assertEqual(PIN_CHECK.read_text(encoding="utf-8"), embedded)
+        self.assertNotIn("END_OP_RETH_PIN_CHECK", text)
+        self.assertNotIn("_materialize_pin_check", text)
+        self.assertIn("/op-reth-pin-check.py", text)
+        self.assertIn("No heredoc fallback.", text)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            script = root / "entrypoint.sh"
+            script.write_text(text)
+            script.chmod(0o755)
+            genesis = root / "genesis.json"
+            rollup = root / "rollup.json"
+            genesis.write_text(GENESIS_852)
+            rollup.write_text(ROLLUP_852)
+            op_reth = bin_dir / "op-reth"
+            op_reth.write_text("#!/bin/sh\nexit 0\n")
+            op_reth.chmod(0o755)
+            env = {
+                **os.environ,
+                "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                "DATA_DIR": str(root / "data"),
+                "GENESIS": str(genesis),
+                "ROLLUP": str(rollup),
+                "L1_RPC_URL": "https://example.invalid",
+                "JWT_FILE": str(root / "jwt.txt"),
+            }
+            env.pop("JWT_SECRET", None)
+            env.pop("OP_RETH_PIN_CHECK", None)
+            result = subprocess.run(
+                ["/bin/sh", str(script)],
+                env=env,
+                text=True,
+                capture_output=True,
+                timeout=8,
+            )
+        self.assertEqual(1, result.returncode, result.stderr)
+        self.assertIn("No heredoc fallback.", result.stderr)
+        self.assertNotIn("op-reth pin ok", result.stdout)
+        self.assertNotIn("Initializing op-reth", result.stdout)
 
     def test_reth_pin_check_precedes_datadir_open(self):
         text = (ROOT / "entrypoint-reth.sh").read_text(encoding="utf-8")

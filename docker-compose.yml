@@ -10,8 +10,9 @@
 # L1_RPC_KIND, RETH_CROSS_BLOCK_CACHE_MB, RETH_RPC_CACHE_MAX_BLOCKS.
 # Schedule / JWT_SECRET / OP_NODE_GOMEMLIMIT are Render-only.
 #
-# Official op-reth / op-node images are distroless (no /bin/sh). Init + start
-# stay in the command list so we do not need a shell on the EL image.
+# Official op-node images are distroless (no /bin/sh). op-reth v2.6.0 is the
+# Wolfi image pinned below (its own libc). Init + start stay in the command
+# list so this service does not need the replica entrypoint.
 # Render image (Dockerfile.reth). Do not point a Web Service at it:
 #   docker compose --profile render build replica-reth
 
@@ -23,7 +24,7 @@ services:
       dockerfile: Dockerfile.reth
 
   op-reth:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.3.3@sha256:eec35eaafb6f8b3d07c6844ff87c4f8af81fca088472b6a432435c53a36b8a4c
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.6.0@sha256:0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c
     volumes:
       - reth-data:/data
       - ./config/genesis.json:/config/genesis.json:ro

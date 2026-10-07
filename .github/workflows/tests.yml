@@ -51,13 +51,80 @@ jobs:
       - name: Run test suite
         run: python -m unittest discover -s tests -v
 
-  op-reth-pin:
-    name: Execute pinned op-reth --version
+  op-reth-image:
+    name: Build op-reth image and boot-smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (node24)
 
-      - name: Fetch pinned op-reth and check --version
-        run: python3 scripts/op-reth-pin-check.py fetch-and-check
+      - name: Build linux/amd64 image
+        run: docker build --platform linux/amd64 -f Dockerfile.reth -t fortel2-replica-reth:ci .
+
+      - name: Command inventory, uid, and tar --zstd
+        run: |
+          docker run --rm -i --entrypoint /bin/sh fortel2-replica-reth:ci <<'SCRIPT'
+          set -eu
+          echo "===== id fortel2 ====="
+          id fortel2
+          id fortel2 | grep -q "uid=10001(fortel2) gid=10001(fortel2)"
+          echo "===== command inventory ====="
+          for cmd in dirname python3 op-reth op-node openssl curl zstd sha256sum awk tar grep sed tr mkdir chmod rm mv sleep env kill id; do
+            path=$(command -v "$cmd") || { echo "MISSING $cmd" >&2; exit 1; }
+            echo "$cmd=$path"
+          done
+          echo "===== tar recognizes --zstd ====="
+          tar --help 2>&1 | grep -q -- --zstd
+          echo "===== openssl rand ====="
+          openssl rand -hex 4 >/dev/null
+          echo "===== python zoneinfo ====="
+          python3 -c 'from zoneinfo import ZoneInfo; ZoneInfo("America/Los_Angeles")'
+          echo "===== copied pin check, no heredoc ====="
+          pin=/op-reth-pin-check.py
+          entry=/entrypoint.sh
+          test -f "$pin"
+          test ! -e /scripts/op-reth-pin-check.py
+          grep -q "/op-reth-pin-check.py" "$entry"
+          grep -q "No heredoc fallback." "$entry"
+          echo "===== apk pins ====="
+          apk info -e curl libcurl-openssl4 gnutar gnutar-rmt python-3.13-base python3-as-3.13 tzdata zstd
+          SCRIPT
+
+      - name: Pin check and op-node version inside the image
+        run: |
+          docker run --rm -i --entrypoint /bin/sh fortel2-replica-reth:ci <<'SCRIPT'
+          set -eu
+          echo "===== op-reth --version (verbatim) ====="
+          op-reth --version
+          echo "===== pin check (copied /op-reth-pin-check.py) ====="
+          op-reth --version | python3 /op-reth-pin-check.py check
+          echo "===== op-node --version ====="
+          op-node --version
+          SCRIPT
+
+      - name: Boot smoke on a scratch data volume, no L1 secret
+        run: |
+          set +e
+          timeout 240 docker run --name fortel2-reth-smoke --rm \
+            -v /data \
+            -e L1_RPC_URL=https://example.invalid \
+            fortel2-replica-reth:ci > smoke.log 2>&1
+          code=$?
+          docker rm -f fortel2-reth-smoke >/dev/null 2>&1 || true
+          set -e
+          echo "container exit ${code}"
+          cat smoke.log
+          echo "===== last line ====="
+          tail -n 1 smoke.log
+          grep -F "op-reth pin ok:" smoke.log
+          grep -F "genesis/rollup hash-check ok" smoke.log
+          grep -F "Initializing op-reth datadir" smoke.log
+          grep -F "Starting op-reth" smoke.log
+          if [ "$code" -eq 0 ]; then
+            echo "smoke: entrypoint exited 0 after init"
+          elif [ "$code" -eq 124 ]; then
+            echo "smoke: stopped because the 240s budget ended after init (no L1 secret; example.invalid is not dialed for init)"
+          else
+            echo "smoke: entrypoint exited ${code} after the required lines; last line above is how far it got"
+          fi
