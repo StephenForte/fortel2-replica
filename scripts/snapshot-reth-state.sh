@@ -9,8 +9,14 @@
 #   1. Save labels from RPC (EL still up):
 #        curl ... eth_getBlockByNumber latest/safe/finalized → labels.json
 #   2. Kickstart sleep (op-reth stops)
-#   3. DATA_DIR=… L2_CHAIN_ID=852 ./scripts/snapshot-reth-state.sh --labels-json labels.json
+#   3. DATA_DIR=… L2_CHAIN_ID=852 ./scripts/snapshot-reth-state.sh \
+#        --labels-json labels.json --op-reth-bin /path/to/op-reth
 #   4. Kickstart wake (verify from outside)
+#
+# The expected op-reth lines come from scripts/op-reth-pin-check.py
+# (VERSION_LINE / COMMIT_LINE). This script does not keep a second copy.
+# --version must contain both whole lines or the script exits before any
+# archive. --allow-pin-mismatch records reth_pin_match=false and warns.
 #
 # Do not export FORTEL2_ENV=.env.sepolia (role keys). Output:
 #   $DATA_DIR/snapshots/fortel2-852-reth-snapshot-<L2head>.tar.zst
@@ -22,14 +28,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PIN_RETH_VERSION='2.3.0-dev'
-PIN_RETH_COMMIT='9384bc53d8c0c77e59cac83fdaaf3b372c6d2216'
 GITHUB_ASSET_MAX_BYTES=$((2 * 1024 * 1024 * 1024))
 GITHUB_ASSET_WARN_BYTES=$((GITHUB_ASSET_MAX_BYTES - 32 * 1024 * 1024))
 
 usage() {
   cat <<'EOF'
-usage: snapshot-reth-state.sh --labels-json PATH [--datadir PATH]
+usage: snapshot-reth-state.sh --labels-json PATH --op-reth-bin PATH [--datadir PATH] [--allow-pin-mismatch]
 
 Capture db/ + static_files/ + rocksdb/ of the Sepolia op-reth datadir while the EL is STOPPED.
 
@@ -37,7 +41,14 @@ Capture db/ + static_files/ + rocksdb/ of the Sepolia op-reth datadir while the 
                        Schema: {"l2_head":{"number":N,"hash":"0x…"},
                                 "safe":{"hash":"0x…"},
                                 "finalized":{"hash":"0x…"}}
+  --op-reth-bin PATH   op-reth binary this capture describes (required).
+                       Runs PATH --version. Both expected whole lines must
+                       appear. The lines are VERSION_LINE and COMMIT_LINE in
+                       scripts/op-reth-pin-check.py.
   --datadir PATH       Override (must still resolve to $DATA_DIR/l2/op-reth)
+  --allow-pin-mismatch Record reth_pin_match=false and continue. Default is
+                       to refuse, before any archive, when --version does not
+                       contain both expected lines.
 
 Requires DATA_DIR (Sepolia runtime dir) and L2_CHAIN_ID=852. Refuses:
   - op-reth pid alive (pidfile or `op-reth node` process)
@@ -56,15 +67,30 @@ fi
 
 LABELS_JSON=""
 DATADIR_ARG=""
+OP_RETH_BIN=""
+ALLOW_PIN_MISMATCH=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --labels-json)
-      LABELS_JSON="$2"
+      LABELS_JSON="${2:-}"
+      shift 2
+      ;;
+    --op-reth-bin)
+      if [[ $# -lt 2 ]]; then
+        echo "ERROR: --op-reth-bin requires a path" >&2
+        usage >&2
+        exit 2
+      fi
+      OP_RETH_BIN="$2"
       shift 2
       ;;
     --datadir)
-      DATADIR_ARG="$2"
+      DATADIR_ARG="${2:-}"
       shift 2
+      ;;
+    --allow-pin-mismatch)
+      ALLOW_PIN_MISMATCH=1
+      shift
       ;;
     -h|--help)
       usage
@@ -149,6 +175,131 @@ if [[ ! -d "$SRC/db" ]]; then
   exit 1
 fi
 
+if [[ -z "$OP_RETH_BIN" ]]; then
+  echo "ERROR: --op-reth-bin is required (path to the op-reth binary this capture describes)" >&2
+  usage >&2
+  exit 2
+fi
+
+# Pin check before the running-EL refusal and before any archive. A running
+# EL still refuses below, after this check, so a matching binary cannot pack
+# while op-reth is up. An empty expected line would match every binary, so a
+# failed import or a blank VERSION_LINE / COMMIT_LINE refuses.
+snap_work=""
+tmp_tar=""
+cleanup_tmp() {
+  if [[ -n "${tmp_tar}" ]]; then
+    rm -f "$tmp_tar"
+  fi
+  if [[ -n "${snap_work}" ]]; then
+    rm -rf "$snap_work"
+  fi
+}
+trap cleanup_tmp EXIT
+
+if [[ ! -f "$OP_RETH_BIN" || ! -x "$OP_RETH_BIN" ]]; then
+  echo "ERROR: --op-reth-bin is not an executable file: $OP_RETH_BIN" >&2
+  exit 1
+fi
+
+PIN_CHECK="$SCRIPT_DIR/op-reth-pin-check.py"
+if [[ ! -f "$PIN_CHECK" ]]; then
+  echo "ERROR: missing $PIN_CHECK; refusing an empty pin (an empty expected line would match every binary)" >&2
+  exit 1
+fi
+
+snap_work="$(mktemp -d "${TMPDIR:-/tmp}/fortel2-reth-pin.XXXXXX")"
+version_file="$snap_work/version.txt"
+pin_result="$snap_work/pin.json"
+if ! "$OP_RETH_BIN" --version >"$version_file" 2>&1; then
+  echo "ERROR: $OP_RETH_BIN --version failed; refusing before any archive" >&2
+  exit 1
+fi
+if ! python3 - "$PIN_CHECK" "$version_file" "$pin_result" "$ALLOW_PIN_MISMATCH" <<'PY'
+import contextlib
+import importlib.util
+import io
+import json
+import sys
+from pathlib import Path
+
+pin_path, version_path, result_path, allow_flag = sys.argv[1:5]
+allow = allow_flag == "1"
+
+def die(message):
+    print("ERROR: %s" % message, file=sys.stderr)
+    raise SystemExit(1)
+
+spec = importlib.util.spec_from_file_location("op_reth_pin_check", pin_path)
+if spec is None or spec.loader is None:
+    die(
+        "cannot load %s; refusing an empty pin "
+        "(an empty expected line would match every binary)" % pin_path
+    )
+module = importlib.util.module_from_spec(spec)
+try:
+    spec.loader.exec_module(module)
+except Exception as exc:
+    die(
+        "import of op-reth pin check failed (%s); refusing an empty pin "
+        "(an empty expected line would match every binary)" % exc
+    )
+
+def require_line(name):
+    value = getattr(module, name, None)
+    if not isinstance(value, str) or value == "" or "\n" in value or "\r" in value:
+        die(
+            "%s from %s is missing or empty; refusing because an empty "
+            "expected line would match every binary" % (name, pin_path)
+        )
+    return value
+
+version_line = require_line("VERSION_LINE")
+commit_line = require_line("COMMIT_LINE")
+if not hasattr(module, "check_text"):
+    die("op-reth pin check has no check_text; refusing an empty pin")
+text = Path(version_path).read_text(encoding="utf-8", errors="replace")
+stdout_buf = io.StringIO()
+stderr_buf = io.StringIO()
+with contextlib.redirect_stdout(stdout_buf), contextlib.redirect_stderr(stderr_buf):
+    matched = bool(module.check_text(text))
+if matched:
+    sys.stdout.write(stdout_buf.getvalue())
+else:
+    err = stderr_buf.getvalue()
+    if err:
+        sys.stderr.write(err)
+    else:
+        print("ERROR: op-reth pin mismatch", file=sys.stderr)
+    if not allow:
+        raise SystemExit(1)
+Path(result_path).write_text(
+    json.dumps(
+        {
+            "match": matched,
+            "version_line": version_line,
+            "commit_line": commit_line,
+        }
+    ),
+    encoding="utf-8",
+)
+PY
+then
+  echo "ERROR: refusing before any archive" >&2
+  exit 1
+fi
+
+pin_match="$(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], encoding="utf-8")); print("true" if data.get("match") is True else "false" if data.get("match") is False else "bad")' "$pin_result")" || {
+  echo "ERROR: could not read pin result; refusing before any archive" >&2
+  exit 1
+}
+if [[ "$pin_match" == "false" ]]; then
+  echo "WARN: op-reth pin mismatch; recording reth_pin_match=false (--allow-pin-mismatch)" >&2
+elif [[ "$pin_match" != "true" ]]; then
+  echo "ERROR: pin result match flag is not true or false; refusing before any archive" >&2
+  exit 1
+fi
+
 PID_DIR="${PID_DIR:-$DATA_DIR/pids}"
 PIDFILE="$PID_DIR/op-reth.pid"
 if [[ -f "$PIDFILE" ]]; then
@@ -215,10 +366,6 @@ META="$OUT_DIR/${BASE}.json"
 # Never add jwt.txt, historical-proofs/, logs, or pids.
 # BSD mktemp requires XXXXXX at the end of the template (no .tar suffix).
 tmp_tar="$(mktemp "${TMPDIR:-/tmp}/fortel2-reth-snap.XXXXXX")"
-cleanup_tmp() {
-  rm -f "$tmp_tar"
-}
-trap cleanup_tmp EXIT
 
 # COPYFILE_DISABLE / --no-xattrs: macOS bsdtar otherwise injects AppleDouble
 # `._*` members (com.apple.provenance) that fail the db/static_files/rocksdb allowlist.
@@ -253,10 +400,6 @@ SHA="$(file_sha256 "$ARCHIVE")"
 printf '%s  %s\n' "$SHA" "$(basename "$ARCHIVE")" > "$MANIFEST"
 
 CAPTURED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-RETH_VER=""
-if command -v op-reth >/dev/null 2>&1; then
-  RETH_VER="$(op-reth --version 2>&1 | tr '\n' ' ' || true)"
-fi
 
 INCLUDES='["db/"'
 if [[ -d "$SRC/static_files" ]]; then
@@ -268,9 +411,10 @@ fi
 INCLUDES+=']'
 
 python3 - "$META" "$HEAD_NUM" "$HEAD_HASH" "$SAFE_HASH" "$FINALIZED_HASH" \
-  "$CAPTURED_AT" "$SHA" "$BYTES" "$ARCHIVE" "$PIN_RETH_COMMIT" "$PIN_RETH_VERSION" \
-  "$RETH_VER" "$INCLUDES" <<'PY'
+  "$CAPTURED_AT" "$SHA" "$BYTES" "$ARCHIVE" "$pin_result" "$version_file" \
+  "$OP_RETH_BIN" "$INCLUDES" <<'PY'
 import json, sys
+from pathlib import Path
 
 (
     meta_path,
@@ -282,17 +426,31 @@ import json, sys
     sha256,
     nbytes,
     archive,
-    pin_commit,
-    pin_version,
-    reth_ver,
+    pin_result,
+    version_file,
+    op_reth_bin,
     includes_json,
 ) = sys.argv[1:]
+pin = json.loads(Path(pin_result).read_text(encoding="utf-8"))
+version_line = pin.get("version_line")
+commit_line = pin.get("commit_line")
+if not isinstance(version_line, str) or version_line == "":
+    print("ERROR: pin result version line is empty; refusing to write metadata", file=sys.stderr)
+    sys.exit(1)
+if not isinstance(commit_line, str) or commit_line == "":
+    print("ERROR: pin result commit line is empty; refusing to write metadata", file=sys.stderr)
+    sys.exit(1)
+if pin.get("match") not in (True, False):
+    print("ERROR: pin result match flag is missing", file=sys.stderr)
+    sys.exit(1)
 payload = {
     "chain_id": 852,
     "captured_at": captured_at,
-    "reth_pin_version": pin_version,
-    "reth_pin_commit": pin_commit,
-    "reth_version_text": reth_ver.strip() or None,
+    "op_reth_bin": op_reth_bin,
+    "reth_expected_version_line": version_line,
+    "reth_expected_commit_line": commit_line,
+    "reth_version_text": Path(version_file).read_text(encoding="utf-8", errors="replace"),
+    "reth_pin_match": pin["match"],
     "l2_head": {"number": int(number), "hash": head_hash},
     "safe": {"hash": safe_hash or None},
     "finalized": {"hash": finalized_hash or None},
@@ -335,6 +493,3 @@ fi
 if [[ "$BYTES" -ge "$GITHUB_ASSET_WARN_BYTES" ]]; then
   echo "WARN: archive is $BYTES bytes (within 32 MiB of the 2 GiB GitHub asset cap). Measure before promising a single release asset." >&2
 fi
-
-# Unused: keep SCRIPT_DIR referenced so a copy sitting next to lib.sh is obvious.
-: "$SCRIPT_DIR"
