@@ -578,3 +578,37 @@ Commit SHA: 9384bc53d8c0c77e59cac83fdaaf3b372c6d2216
 The matcher requires those two lines exactly. A bare tag, `2.3.0-dev` followed by extra characters, a wrong commit, and the Mac v2.5.0 lines (`op-reth Version: 2.5.0`) all fail. The old substring check also accepts this executed output, so boot on the current image is unchanged.
 
 R-0013's op-reth line stands. Next free R-id is **R-0023**.
+
+## R-0023 — replica op-reth v2.6.0 on the Wolfi base
+
+*2026-10-07 · lifts the R-0022 park. The runtime is now the pinned `op-reth:v2.6.0` image, which is Wolfi and already has glibc 2.44. v2.5.0 is not what this deploys.*
+
+**Digests, re-fetched 2026-10-07 from `us-docker.pkg.dev` (HTTP 200) and resolved again by the image build.** Index `op-reth:v2.6.0` is `sha256:0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c`. linux/amd64 manifest is `sha256:a072764c2dfaacd52126f3d3c70b34ba65f793e55d13bf4b96830f83992439c9`. One layer, `sha256:39707d5d31163436fe20e7f7dea56999d9f42ff57f26344d620508bd1a3d4067`. `Dockerfile.reth` and `docker-compose.yml` pin that index digest. The final stage is `FROM reth`, so the digest stays the only copy. op-node stays the R-0021 pin (`v1.19.8`).
+
+**What `--version` printed, and where.** GitHub Actions run https://github.com/StephenForte/fortel2-replica/actions/runs/37660829377 , job `Build op-reth image and boot-smoke`, 2026-10-07T17:40:25Z. The command was `op-reth --version` inside the built `linux/amd64` image, after apk, not on the Ubuntu host. Verbatim:
+
+```
+op-reth Version: 2.6.0
+Commit SHA: da6d3252491754837a778061db0cc47236ec13c6
+Build Timestamp: 1790802614
+Build Features: unknown
+Build Profile: maxperf
+```
+
+The matcher requires the first two lines exactly. The v2.3.3 lines (`Reth Version: 2.3.0-dev` / `Commit SHA: 9384bc53d8c0c77e59cac83fdaaf3b372c6d2216`), the Mac v2.5.0 lines (`op-reth Version: 2.5.0`), a trailing character, and a bare tag all fail. The same run is the red CI job: the image built, `id fortel2` was `uid=10001(fortel2) gid=10001(fortel2)`, the command inventory passed, and the pin check then failed because the checker still required the v2.3.3 lines. That red is the one that counts. Three earlier runs failed in `apk` while the local op-reth package purge deleted the binary (https://github.com/StephenForte/fortel2-replica/actions/runs/37659513708 , https://github.com/StephenForte/fortel2-replica/actions/runs/37660047861 , https://github.com/StephenForte/fortel2-replica/actions/runs/37660446848); those are build bugs, not the pin-mismatch red. The green run URL is added in the follow-up commit once this matcher's job passes.
+
+**Base image overrides.** The Wolfi config sets `User` `0`, `Entrypoint` `["/usr/local/bin/op-reth"]`, `Cmd` null. `Dockerfile.reth` sets `USER fortel2`, `ENTRYPOINT ["/entrypoint.sh"]`, and `CMD []`. `HEALTHCHECK`, `VOLUME /data`, `EXPOSE 8545`, and the existing `ENV` block are unchanged. The base `SSL_CERT_FILE` stays.
+
+**apk, pinned `pkg=version`, from that same build (85 MiB, 56 packages).** Direct pins: `curl=8.22.0-r4`, `libcurl-openssl4=8.22.0-r4`, `gnutar=1.35-r12`, `gnutar-rmt=1.35-r12`, `openssl-4.0=4.0.3-r4` (already in the base, so the transaction did not reinstall it; `apk info -e openssl-4.0` still listed it), `python-3.13-base=3.13.16_git20261002-r2`, `python3-as-3.13=0.1.0-r5`, `tzdata=2026e-r0`, `zstd=1.5.7-r10`. `gnutar` is required because busybox tar has no `--zstd`. Repositories are rewritten to `https://packages.wolfi.dev/os` only. apk purges the local `op-reth` package and removes `/usr/local/bin`; the binary is copied to `/opt/fortel2` first and put back after. Transitive packages that apk resolved, not pinned: `krb5-conf=1.0-r10`, `libcom_err=1.47.4-r2`, `keyutils-libs=1.6.3-r40`, `libverto=0.3.2-r8`, `krb5-libs=1.22.2-r5`, `libunistring=1.4.2-r3`, `libidn2=2.3.8-r9`, `libcrypto3=3.6.5-r1`, `gdbm=1.26-r6`, `ncurses-terminfo-base=6.6.20260926-r0`, `ncurses=6.6.20260926-r0`, `readline=8.3-r3`, `sqlite-libs=3.53.4-r2`, `heimdal-libs=7.8.0-r52`, `cyrus-sasl-heimdal-libs=2.1.28-r58`, `libssl3=3.6.5-r1`, `libldap=2.6.10-r5`, `libnghttp2-14=1.70.0-r5`, `nghttp3=1.18.0-r1`, `ngtcp2=1.25.0-r5`, `libpsl=0.23.3-r1`, `py3-pip-wheel=26.2.1-r2`, `libbz2-1=1.0.8-r24`, `libexpat1=2.9.0-r0`, `libffi=3.8.0-r1`, `xz=5.8.4-r0`, `mpdecimal=4.0.1-r4`, `libuuid=2.42.4-r0`. Those can drift between this CI build and a later Render build.
+
+**uid.** `addgroup -g 10001` and `adduser -u 10001`. The live `/data` disk is owned by 10001. The inventory step printed `uid=10001(fortel2) gid=10001(fortel2) groups=10001(fortel2)`.
+
+**Boot path.** The heredoc copy of the checker is gone. The image `COPY`s `scripts/op-reth-pin-check.py` to `/op-reth-pin-check.py`. `entrypoint-reth.sh` calls that file (lines 243–265) and exits 1 with `No heredoc fallback.` if it is missing. That is before `mkdir` of the datadir (line 335), before `restore_reth_snapshot` (line 507), and before `op-reth init` / `op-reth node`. The op-node pin check is lines 267–289; its pin-ok line is printed at line 698, next to op-node start. No busybox-flag edit was required in the entrypoint or the healthcheck: GNU tar supplies `--zstd`, and the inventory confirmed `tar --help` contains `--zstd`, `openssl rand` works, and `zoneinfo` has `America/Los_Angeles`.
+
+**Canary, before any live change.** Not started. The operator creates it in the dashboard. Do not Blueprint-sync (D-0128) and do not attach `fortel2-replica-reth-data`. Settings: new private service `fortel2-replica-canary`; this PR branch; `Dockerfile.reth`; plan Standard; a new 10 GB disk at `/data`. Env the operator copies from live `fortel2-replica-reth`: `RETH_ARCHIVE=1`, `RETH_SNAPSHOT_URL`, `RETH_SNAPSHOT_SHA256` (the snapshot-811872 release), `L1_RPC_URL`, `L1_RPC_KIND`, `L1_RPC_FORCE=metered` (D-0136). The read-only service API does not return env values, so the URL is not copied into this entry. Delete the canary service and its disk within 30 minutes of derivation starting, or immediately on failure. Evidence (build, pin-ok, restore, `pruning_mode="archive"`, block 811872 hash `0x5af991c94b1f83fb50cd561eb8facc72f1d2b1e754edb2fc074a7a2fc23c8ada`, derivation, QuickNode spend, deletion listing) is appended here before merge.
+
+**Live plan.** Auto-deploy stays off (R-0022). After the canary evidence is in this entry, the operator merges and clicks Manual Deploy on `fortel2-replica-reth`. Same `/data`. No wipe, no `debug_setHead`, no Blueprint re-apply, no service rename (D-0128). `L1_RPC_FORCE=metered` stays (D-0136). Boot should log pin-ok, skip restore because `db/` exists, and log `pruning_mode="archive"`.
+
+**Rollback.** Revert this PR, then Manual Deploy. That returns the Ubuntu `v2.3.3` image on the same `/data`. ForteL2 D-0150 records REPLICA-ROLLBACK-SAFE: v2.3.3 reopened a datadir v2.6.0 had opened.
+
+R-0022's park is lifted. Next free R-id is **R-0024**.
