@@ -634,4 +634,24 @@ A capture still ran, and the JSON named the old pin. Restore (`RETH_SNAPSHOT_URL
 
 **Unchanged.** The running-op-reth refusal, the `db/` + `static_files/` + `rocksdb/` allow-list, the 2 GiB asset warning, and the SHA-256 manifest. Restore behaviour is unchanged.
 
-Next free R-id is **R-0025**.
+## R-0025 — The ETH bridge is a static TypeScript app inside the gateway image
+
+*2026-10-08 · plan: `docs/2026-10-08-bridge-plan.md` · source PRD: "ForteL2 ETH Bridge in the Replica Gateway" (2026-10-08, operator-held)*
+
+`/bridge` is a Sepolia → ForteL2 (852) native-ETH deposit page. The user's MetaMask signs `OptimismPortal.depositTransaction` on Sepolia. The page tracks the deposit with public reads. No server API, no database, no secret, no new Render service.
+
+**Shape.**
+- Source lives in `gateway/bridge/` (TypeScript, ethers v6 pinned exactly, esbuild, vitest + happy-dom, `package-lock.json` committed). `npm ci && npm run build` writes `gateway/bridge/dist/index.html` and `gateway/bridge/dist/assets/<name>-<hash>.{js,css}`. Asset URLs in the built HTML are absolute: `/bridge/assets/...`. The page is served at `/bridge`, without a trailing slash, so relative URLs would resolve to `/assets/` and fall through to the RPC proxy.
+- `gateway/Dockerfile` gets a pinned Node build stage (exact tag plus digest). The runtime stays `nginxinc/nginx-unprivileged:1.30.4-alpine` with no Node, no volume, and no new env var. The build context stays `gateway/`.
+- `gateway/bridge/bridge-config.json` is committed and generated from `config/rollup.json` by `scripts/gen-bridge-config.py`. `config/` is outside the gateway build context, so the file has to be committed. `tests/test_bridge_config.py` fails if the two disagree. `configVersion` is `852-sepolia-2026-10-08.1`. Bump it only with a chain reset or a contract change.
+- nginx adds exact locations before `location /`: `= /bridge`, `= /bridge/` (301 to `/bridge`), `^~ /bridge/assets/` (files only; a missing file is 404 and never proxied), and `= /bridge-config.json`. These are GET/HEAD only. `POST /`, `/status`, and `/healthz` behave as before. CORS stays owned by the method filter.
+- `/bridge` CSP: `default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://fortel2-sequencer-rpc.onrender.com https://sepolia.gateway.tenderly.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`. No inline script, no eval. The `/status` CSP is not changed.
+- Browser journal: `localStorage` key `fortel2-bridge:v1:<l1ChainId>:<l2ChainId>:<l2GenesisHash>:<account lowercased>`, records `schemaVersion: 1`. A stored record is a hint. A success is shown only after the tracker re-reads the chain.
+
+**Why spec-driven, not a port.** The PRD says to port the lab files (`site/lib/bridge-protocol.ts`, `funding.ts`, `bridge.ts`, `bridge-client.tsx`). On 2026-10-08 the planner could not find them on the operator's Mac (Spotlight) or in any StephenForte GitHub repo. Workers implement from the PRD and this entry. The derivation was falsified independently instead. The fixture L1 tx `0x57b64e5b…8fa3` was read from Tenderly: receipt status 1, `to` = DelegationManager `0xdb9b1e94…7db3`, Portal `TransactionDeposited` at block log index `0x4f`, block hash `0xa43b7375…a857`. Recomputing `sourceHash` and the 0x7e RLP hash with ethers v6 gave `0xe020a2de…4712` and L2 `0x6229a074…53b9`. The sequencer returned that tx with the same `sourceHash`, mint = value = `0x71afd498d0000` (0.002 ETH), gas `0x186a0`, input `0x`. The replica receipt was status 1 in block `0xb1cb4fbb…7b9f`, the same block as the sequencer. Actual L1 fee: `0x3154f × 0xa7068d47` = 0.000566225880050665 ETH, which matches the PRD. If the operator later supplies the lab code, it is reference only. This entry and the fixtures win.
+
+**CORS, checked 2026-10-08** from origin `https://fortel2-replica-rpc.onrender.com`: Tenderly Sepolia and the sequencer door both answered preflight `204` with `access-control-allow-origin: *`. A real-browser check on the deployed origin is still a release gate (R-0026).
+
+**Not changed.** Execution node, chain config, sequencer, Render service names and env, `render.yaml`, the write-method filter. Deploy only `fortel2-replica-rpc`. Rollback is to redeploy the previous gateway commit.
+
+R-0026 is reserved for the bridge release-gate evidence (live MetaMask deposit, real-browser CSP/CORS). Next free R-id is **R-0027**.
