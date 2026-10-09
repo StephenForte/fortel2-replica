@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import bridgeConfig from "../bridge-config.json";
 import { startBridge, type BridgeHandle } from "../src/ui/app";
+import { transferredPrincipalWei } from "../src/ui/format";
 import { renderProgressArticle } from "../src/ui/progress";
 import type { BridgeConfig, DepositRecord } from "../src/types";
 import type { DiscoveryTarget, DiscoveryTimer } from "../src/wallet";
@@ -476,6 +477,96 @@ describe("bridge page", () => {
     renderProgressArticle(stored, record, null, cfg);
     expect(stored.querySelector('[data-step="confirmed"]')?.getAttribute("data-state")).toBe("pending");
     expect(stored.querySelector('[data-state="done"]')).toBeNull();
+  });
+
+  it("writes the submission into the account that approved it", async () => {
+    const provider = createMockEip1193();
+    let release: (value: string) => void = () => {};
+    const gate = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    await boot({ provider, accounts: [] });
+    provider.handle("eth_sendTransaction", () => gate);
+    await connectAndReview(provider);
+    byId<HTMLButtonElement>("approve").click();
+    await vi.waitFor(() => {
+      expect(provider.calls("eth_sendTransaction")).toHaveLength(1);
+    });
+    provider.emit("accountsChanged", [OTHER]);
+    await settle();
+    release(HASH);
+    await settle();
+    expect(localStorage.getItem(journalKey(ACCOUNT)) ?? "").toContain(HASH);
+    expect(localStorage.getItem(journalKey(OTHER)) ?? "").not.toContain(HASH);
+  });
+
+  it("refuses a recovery sent by a different account", async () => {
+    const provider = createMockEip1193();
+    const foreign = `0x${"cd".repeat(32)}`;
+    await boot({
+      provider,
+      accounts: [ACCOUNT],
+      rpc(method, params, url) {
+        if (method === "eth_getTransactionByHash" && String(params[0]).toLowerCase() === foreign) {
+          return {
+            hash: foreign,
+            from: OTHER,
+            to: `0x${"11".repeat(20)}`,
+            value: "0x0",
+            input: "0x",
+            nonce: "0x1",
+          };
+        }
+        return defaultRpc(method, params, url);
+      },
+    });
+    byId<HTMLInputElement>("recover-hash").value = foreign;
+    byId<HTMLButtonElement>("recover").click();
+    await settle();
+    expect(text("history-status")).toBe("That deposit was sent by a different account.");
+    expect(text("history-list")).not.toContain(foreign);
+    expect(localStorage.getItem(journalKey(ACCOUNT)) ?? "").not.toContain(foreign);
+  });
+
+  it("drops history from the screen when the wallet account goes away", async () => {
+    seedRecord(ACCOUNT, { l1Hash: HASH, phase: "l1-pending" });
+    const provider = createMockEip1193();
+    await boot({ provider, accounts: [ACCOUNT] });
+    expect(text("history-list")).toContain(HASH);
+    provider.emit("accountsChanged", []);
+    await settle();
+    expect(text("account")).toBe("Not connected");
+    expect(text("history-list")).not.toContain(HASH);
+    byId<HTMLButtonElement>("export-json").click();
+    expect(text("history-status")).toBe("Connect a wallet before exporting history.");
+    expect(localStorage.getItem(journalKey(ACCOUNT)) ?? "").toContain(HASH);
+  });
+
+  it("leaves reverted, cancelled, and replaced originals out of ETH transferred", () => {
+    const row = (l1Hash: string, phase: DepositRecord["phase"], amountWei: string): DepositRecord => ({
+      schemaVersion: 1,
+      account: ACCOUNT,
+      recipient: ACCOUNT,
+      amountWei,
+      configVersion: cfg.configVersion,
+      l1ChainId: cfg.l1.chainId,
+      l2ChainId: cfg.l2.chainId,
+      l2GenesisHash: cfg.l2.genesisHash,
+      l1Hash,
+      phase,
+    });
+    const successor = `0x${"11".repeat(32)}`;
+    const replaced = row(HASH, "replaced", "2000000000000000");
+    replaced.replacedBy = successor;
+    const next = row(successor, "l1-pending", "2000000000000000");
+    next.replaces = HASH;
+    const reverted = row(`0x${"22".repeat(32)}`, "l1-reverted", "1000000000000000");
+    const cancelled = row(`0x${"33".repeat(32)}`, "cancelled", "1000000000000000");
+    const confirmed = row(`0x${"44".repeat(32)}`, "replica-confirmed", "5000000000000000");
+    const outage = row(`0x${"55".repeat(32)}`, "tracking-unavailable", "1000000000000000");
+    expect(transferredPrincipalWei([replaced, next, reverted, cancelled, confirmed, outage])).toBe(
+      2_000_000_000_000_000n + 5_000_000_000_000_000n + 1_000_000_000_000_000n,
+    );
   });
 
   it("renders lastError markup as text", async () => {

@@ -1,4 +1,39 @@
+import type { DepositRecord, Phase } from "../types";
+
 /** Wei display is integer math. A float is never used to scale ETH. */
+
+/** Principal that did not arrive, or that a successor already represents. */
+const NON_TRANSFER: ReadonlySet<Phase> = new Set([
+  "replaced",
+  "cancelled",
+  "l1-reverted",
+  "l2-execution-failed",
+]);
+
+/**
+ * ETH transferred is principal only. Fees stay out. A replaced original is
+ * omitted when its successor is in the same list, and a reverted, cancelled,
+ * or failed deposit does not count.
+ */
+export function transferredPrincipalWei(records: readonly DepositRecord[]): bigint {
+  const present = new Set(records.map((record) => record.l1Hash.toLowerCase()));
+  const seen = new Set<string>();
+  let total = 0n;
+  for (const record of records) {
+    const hash = record.l1Hash.toLowerCase();
+    if (seen.has(hash)) continue;
+    seen.add(hash);
+    if (NON_TRANSFER.has(record.phase)) continue;
+    if (record.replacedBy !== undefined && present.has(record.replacedBy.toLowerCase())) continue;
+    try {
+      const amount = BigInt(record.amountWei);
+      if (amount > 0n) total += amount;
+    } catch {
+      continue;
+    }
+  }
+  return total;
+}
 
 const WEI_PER_ETH = 10n ** 18n;
 

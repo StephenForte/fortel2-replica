@@ -21,7 +21,7 @@ import {
   type Wallet,
 } from "../wallet";
 import { clear, el, requireElement, setText } from "./dom";
-import { formatEth, formatEthLabel, secondsUntil } from "./format";
+import { formatEth, formatEthLabel, secondsUntil, transferredPrincipalWei } from "./format";
 import { historyPhase, renderProgressArticle } from "./progress";
 
 const GUIDANCE =
@@ -260,23 +260,6 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
       .map((item) => item.record);
   }
 
-  function principalWei(records: DepositRecord[]): bigint {
-    const seen = new Set<string>();
-    let total = 0n;
-    for (const record of records) {
-      const hash = record.l1Hash.toLowerCase();
-      if (seen.has(hash)) continue;
-      seen.add(hash);
-      try {
-        const amount = BigInt(record.amountWei);
-        if (amount > 0n) total += amount;
-      } catch {
-        continue;
-      }
-    }
-    return total;
-  }
-
   function renderProgress(): void {
     clear(progressList);
     if (!cfg) return;
@@ -291,7 +274,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     const records = sortedRecords();
     const fees = journal ? journal.totalActualFeesWei() : "0";
     setText("fee-total-value", formatEthLabel(fees));
-    setText("principal-total-value", formatEthLabel(principalWei(records)));
+    setText("principal-total-value", formatEthLabel(transferredPrincipalWei(records)));
     for (const record of records) {
       const session = proven.get(record.l1Hash.toLowerCase()) ?? null;
       const row = el("article", { className: "history-row" });
@@ -409,6 +392,17 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     renderBalances();
   }
 
+  function closeJournal(): void {
+    if (journal && poller) {
+      for (const record of journal.list()) poller.unwatch(record.l1Hash);
+    }
+    poller?.stop();
+    poller = null;
+    tracker = null;
+    journal = null;
+    proven.clear();
+  }
+
   function openJournal(nextAccount: string): void {
     if (!cfg || !l1 || !sequencer || !replica) return;
     poller?.stop();
@@ -486,7 +480,10 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     const first = accounts.find((item) => typeof item === "string");
     if (!first) {
       account = null;
+      closeJournal();
       setText("account", "Not connected");
+      renderProgress();
+      renderHistory();
       return;
     }
     try {
@@ -554,6 +551,8 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     submitting = true;
     approveButton.disabled = true;
     reviewButton.disabled = true;
+    const boundJournal = journal;
+    const boundPoller = poller;
     setStatus("Awaiting your wallet approval");
     try {
       const result = await submitDeposit(current, {
@@ -570,8 +569,8 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
             reviewedAt: current.createdAt,
             approvedAt: now(),
           };
-          journal?.upsert(stored);
-          poller?.watch(stored);
+          boundJournal.upsert(stored);
+          boundPoller.watch(stored);
           showSubmitted(stored);
           renderProgress();
           renderHistory();
@@ -612,6 +611,10 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     }
     try {
       const record = await tracker.recover(hash);
+      if (account === null || record.account.toLowerCase() !== account.toLowerCase()) {
+        historyStatus.textContent = "That deposit was sent by a different account.";
+        return;
+      }
       proven.set(record.l1Hash.toLowerCase(), record);
       journal.upsert(record);
       poller.watch(record);
@@ -769,6 +772,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     wallet.on("disconnect", () => {
       dropQuote();
       account = null;
+      closeJournal();
       setStatus("Wallet disconnected.");
       renderAll();
     });
