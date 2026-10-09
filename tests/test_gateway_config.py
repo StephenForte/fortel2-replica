@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import http.client
 import os
 import re
 import socket
@@ -168,6 +169,41 @@ def _script_exports(got: subprocess.CompletedProcess) -> dict[str, str]:
             key, _, value = line.partition("=")
             out[key] = value
     return out
+
+
+BRIDGE_CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; "
+    "img-src 'self' data:; connect-src 'self' "
+    "https://fortel2-sequencer-rpc.onrender.com "
+    "https://sepolia.gateway.tenderly.co; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
+STATUS_CSP = (
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+    "connect-src 'self' https://fortel2-sequencer-rpc.onrender.com "
+    "https://ethereum-sepolia-rpc.publicnode.com; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'"
+)
+
+
+def _raw_http(method: str, url: str, body: bytes | None = None, timeout: float = 5.0):
+    """One HTTP request with no redirect following. Location stays as sent."""
+    parsed = urlparse(url)
+    conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=timeout)
+    try:
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        headers = {}
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        payload = resp.read()
+        hdrs = {k.lower(): v for k, v in resp.getheaders()}
+        return resp.status, payload, hdrs
+    finally:
+        conn.close()
 
 
 def _http(
@@ -545,6 +581,107 @@ class StatusPageTests(unittest.TestCase):
         self.assertEqual(rollup["genesis"]["system_config"]["batcherAddr"].lower(), cfg("batcher"))
         self.assertEqual(str(rollup["l1_chain_id"]), cfg("l1ChainId"))
         self.assertEqual(str(rollup["l2_chain_id"]), cfg("l2ChainId"))
+
+
+class BridgeRouteStaticTests(unittest.TestCase):
+    """Gateway routing for the static /bridge page. Existing tests stay as they are."""
+
+    def test_bridge_locations_precede_proxy_location(self):
+        raw = TEMPLATE.read_text(encoding="utf-8")
+        proxy_at = raw.find("\n    location / {")
+        self.assertGreater(proxy_at, 0, "proxy location / not found")
+        for loc in (
+            "location = /bridge {",
+            "location = /bridge/ {",
+            "location ^~ /bridge/assets/ {",
+            "location = /bridge-config.json {",
+        ):
+            at = raw.find(loc)
+            self.assertGreater(at, 0, loc)
+            self.assertLess(at, proxy_at, f"{loc} must appear before location /")
+            block = _block(raw, loc)
+            self.assertIn("limit_req zone=rpc burst=${RPC_BURST} nodelay;", block)
+            self.assertNotIn("proxy_pass", block)
+            self.assertIn("limit_except GET HEAD", block)
+        slash = _block(raw, "location = /bridge/ {")
+        self.assertNotRegex(slash, r"(?m)^\s*return\b")
+        self.assertNotRegex(slash, r"(?m)^\s*rewrite\b")
+        self.assertIn(
+            "try_files /bridge/.slash-redirect-never @bridge_slash_redirect;",
+            slash,
+        )
+        redirect = _block(raw, "location @bridge_slash_redirect")
+        self.assertIn("return 301 /bridge;", redirect)
+        self.assertNotIn("proxy_pass", redirect)
+        self.assertIn("absolute_redirect off;", raw)
+        assets = _block(raw, "location ^~ /bridge/assets/")
+        self.assertIn("try_files $uri =404;", assets)
+        self.assertNotIn("@proxy", assets)
+        self.assertNotRegex(assets, r"try_files[^;]*@")
+
+    def test_bridge_csp_equals_published_string(self):
+        block = _block(TEMPLATE.read_text(encoding="utf-8"), "location = /bridge {")
+        csp = re.search(r'Content-Security-Policy "([^"]*)"', block)
+        self.assertIsNotNone(csp, block)
+        self.assertEqual(BRIDGE_CSP, csp.group(1))
+
+    def test_status_csp_is_unchanged(self):
+        block = _block(TEMPLATE.read_text(encoding="utf-8"), "location = /status")
+        csp = re.search(r'Content-Security-Policy "([^"]*)"', block)
+        self.assertIsNotNone(csp, block)
+        self.assertEqual(STATUS_CSP, csp.group(1))
+
+    def test_dockerfile_final_stage_has_no_node(self):
+        df = DOCKERFILE.read_text(encoding="utf-8")
+        stages = re.split(r"(?m)^(?=FROM )", df)
+        stages = [part for part in stages if part.startswith("FROM ")]
+        self.assertGreaterEqual(len(stages), 2, df)
+        build, final = stages[0], stages[-1]
+        image = build.split(" AS ", 1)[0].removeprefix("FROM ").strip()
+        self.assertRegex(image, r"^node:22\.\d+\.\d+-")
+        self.assertRegex(image, r"@sha256:[0-9a-f]{64}$")
+        self.assertNotIn(":latest", image)
+        pkg = build.find("COPY bridge/package.json bridge/package-lock.json")
+        npm_ci = build.find("RUN npm ci")
+        copy_rest = build.find("COPY bridge/ ./")
+        built = build.find("RUN npm run build")
+        self.assertTrue(0 <= pkg < npm_ci < copy_rest < built, build)
+        self.assertEqual(
+            "FROM nginxinc/nginx-unprivileged:1.30.4-alpine",
+            final.splitlines()[0].strip(),
+        )
+        self.assertNotRegex(final, r"(?i)\bnode\b")
+        self.assertNotRegex(final, r"(?m)^VOLUME\b")
+        self.assertIn("\nUSER nginx\n", final)
+        self.assertEqual(1, len(re.findall(r"(?m)^ENV ", final)))
+        self.assertIn(
+            'NGINX_ENVSUBST_FILTER="^(PORT|REPLICA_UPSTREAM|RPC_RATE|RPC_BURST|'
+            'RPC_REAL_IP_HEADER|RPC_MAX_BODY|NGINX_LOCAL_RESOLVERS|NGINX_REPLICA_UPSTREAM)$"',
+            final,
+        )
+        self.assertIn(
+            "COPY --from=bridge-build /src/dist/index.html /usr/share/nginx/html/bridge/index.html",
+            final,
+        )
+        self.assertIn(
+            "COPY --from=bridge-build /src/dist/assets/ /usr/share/nginx/html/bridge/assets/",
+            final,
+        )
+        self.assertIn(
+            "COPY bridge/bridge-config.json /usr/share/nginx/html/bridge-config.json",
+            final,
+        )
+        ignored = (GATEWAY / ".dockerignore").read_text(encoding="utf-8")
+        self.assertIn("bridge/node_modules", ignored)
+        self.assertIn("bridge/dist", ignored)
+
+    def test_status_html_links_bridge(self):
+        html = (GATEWAY / "status.html").read_text(encoding="utf-8")
+        header = html.split("<header>", 1)[1].split("</header>", 1)[0]
+        self.assertIn('<a href="/bridge">Bridge ETH</a>', header)
+        self.assertIn("Sepolia testnet", header)
+        self.assertNotIn("<script", header)
+        self.assertNotRegex(header, r"https?://")
 
 
 class GatewayDockerTests(unittest.TestCase):
@@ -952,6 +1089,133 @@ class GatewayDockerTests(unittest.TestCase):
         # DNS-change-without-restart (incident 1) is not simulated here.
         # Docker embedded-DNS TTLs would make a same-name container swap
         # a false failure. That case is the live-Render reproduction.
+
+    def test_bridge_static_routes_do_not_hit_upstream(self):
+        """/bridge, its assets, and the config file are served locally.
+
+        A miss or a non-GET must not reach the dummy filter. POST / still
+        does, with the eth_chainId body unchanged.
+        """
+        upstream, up_port = self._start_upstream()
+        cid = None
+        try:
+            cid, url = self._run_gateway(
+                up_port,
+                extra_env={"RPC_RATE": "50r/s", "RPC_BURST": "100"},
+            )
+            passwd = subprocess.check_output(
+                ["docker", "exec", cid, "cat", "/etc/passwd"],
+                timeout=15,
+            )
+            self.assertIn(b"root:x:0:0:", passwd)
+            before = list(_DummyFilter.hits)
+
+            status, body, hdrs = _raw_http("GET", f"{url}/bridge")
+            self.assertEqual(200, status, body)
+            self.assertTrue(hdrs.get("content-type", "").startswith("text/html"), hdrs)
+            self.assertEqual(BRIDGE_CSP, hdrs.get("content-security-policy"))
+            self.assertIn("no-cache", hdrs.get("cache-control", ""))
+            self.assertEqual("nosniff", hdrs.get("x-content-type-options"))
+            html = body.decode("utf-8")
+            assets = re.findall(r'(?:src|href)="(/bridge/assets/[^"]+)"', html)
+            self.assertEqual(2, len(assets), html)
+            seen_js = seen_css = False
+            real_asset = None
+            for path in assets:
+                st, payload, ah = _raw_http("GET", f"{url}{path}")
+                self.assertEqual(200, st, path)
+                self.assertEqual(
+                    "public, max-age=31536000, immutable",
+                    ah.get("cache-control"),
+                    path,
+                )
+                self.assertEqual("nosniff", ah.get("x-content-type-options"), path)
+                ctype = ah.get("content-type", "").split(";")[0].strip()
+                if path.endswith(".js"):
+                    self.assertEqual("application/javascript", ctype, path)
+                    seen_js = True
+                elif path.endswith(".css"):
+                    self.assertEqual("text/css", ctype, path)
+                    seen_css = True
+                else:
+                    self.fail(f"unexpected asset {path}")
+                self.assertGreater(len(payload), 0, path)
+                real_asset = path
+            self.assertTrue(seen_js and seen_css, assets)
+
+            status, _body, hdrs = _raw_http("GET", f"{url}/bridge/")
+            self.assertEqual(301, status)
+            self.assertEqual("/bridge", hdrs.get("location"), hdrs)
+
+            status, _body, _hdrs = _raw_http("GET", f"{url}/bridge/assets/nope.js")
+            self.assertEqual(404, status)
+            self.assertEqual(before, _DummyFilter.hits)
+
+            status, body, hdrs = _raw_http("GET", f"{url}/bridge-config.json")
+            self.assertEqual(200, status, body)
+            self.assertTrue(hdrs.get("content-type", "").startswith("application/json"), hdrs)
+            self.assertIn("no-cache", hdrs.get("cache-control", ""))
+            self.assertEqual("nosniff", hdrs.get("x-content-type-options"))
+            expected = (GATEWAY / "bridge" / "bridge-config.json").read_bytes()
+            self.assertEqual(expected, body)
+
+            for method in ("POST", "OPTIONS", "PUT"):
+                st, _payload, hdrs = _raw_http(method, f"{url}/bridge/", CHAIN_ID_REQ)
+                self.assertEqual(405, st, method)
+                self.assertNotIn("location", hdrs, method)
+            for path in ("/bridge", "/bridge-config.json", real_asset):
+                st, _payload, hdrs = _raw_http("POST", f"{url}{path}", CHAIN_ID_REQ)
+                self.assertEqual(405, st, path)
+                self.assertNotIn("location", hdrs, path)
+
+            status, body, _hdrs = _raw_http("GET", f"{url}/bridge/../status")
+            self.assertNotIn(passwd, body)
+            self.assertNotIn(b"root:x:0:0:", body)
+            self.assertEqual(200, status, body)
+            self.assertIn(b"<title>ForteL2 Pipeline Health</title>", body)
+            # %2e stays inside a static location after nginx normalizes "..".
+            for path in (
+                "/bridge/%2e%2e/status",
+                "/bridge/assets/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+            ):
+                _st, payload, _h = _raw_http("GET", f"{url}{path}")
+                self.assertNotIn(passwd, payload, path)
+                self.assertNotIn(b"root:x:0:0:", payload, path)
+            self.assertEqual(before, _DummyFilter.hits, _DummyFilter.hits)
+
+            # nginx decodes %2f before choosing a location, so
+            # /bridge/assets/..%2f.. collapses to a path the catch-all
+            # prefix owns. That must still not be a file read from
+            # outside the html directory.
+            for path in (
+                "/bridge/assets/..%2f..%2fetc/passwd",
+                "/bridge/..%2f..%2fetc/passwd",
+            ):
+                _st, payload, _h = _raw_http("GET", f"{url}{path}")
+                self.assertNotIn(passwd, payload, path)
+                self.assertNotIn(b"root:x:0:0:", payload, path)
+                self.assertNotIn(b"/usr/share/nginx/html/../", payload, path)
+
+            after_traversal = list(_DummyFilter.hits)
+            status, body, _hdrs = _raw_http("POST", url + "/", CHAIN_ID_REQ)
+            self.assertEqual(200, status, body)
+            self.assertEqual(CHAIN_ID_BODY, body)
+            self.assertEqual(CHAIN_ID_REQ, _DummyFilter.last_body)
+            self.assertEqual(after_traversal + ["POST /"], _DummyFilter.hits)
+
+            hz_status, hz_body, _ = _raw_http("GET", f"{url}/healthz")
+            self.assertEqual(200, hz_status)
+            self.assertEqual(b"ok\n", hz_body)
+
+            st, page, hdrs = _raw_http("GET", f"{url}/status")
+            self.assertEqual(200, st)
+            self.assertIn(b"<title>ForteL2 Pipeline Health</title>", page)
+            self.assertEqual(STATUS_CSP, hdrs.get("content-security-policy"))
+            self.assertEqual(after_traversal + ["POST /"], _DummyFilter.hits)
+        finally:
+            if cid:
+                self._stop(cid)
+            upstream.shutdown()
 
     def _wait_nginx_t(self, cid: str) -> subprocess.CompletedProcess:
         last_err = None
