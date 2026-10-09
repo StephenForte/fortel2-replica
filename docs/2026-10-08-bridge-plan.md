@@ -94,7 +94,7 @@ Fields taken from `config/rollup.json`: `l1.chainId`, `l2.chainId`, `l2.genesisH
 
 ## Model tiering and run order
 
-Record the actual model used per task in the Status table when it is dispatched.
+Record the actual model used per task in the Status table when it is dispatched. Cursor mapping: **strongest** = Grok 4.7. **mid** and **cheap** = Cursor `auto`, which usually picks Sonnet.
 
 | ID | Tier | Why |
 |---|---|---|
@@ -133,10 +133,10 @@ Record the actual model used per task in the Status table when it is dispatched.
 
 | ID | State | Branch / PR | Model | Notes |
 |---|---|---|---|---|
-| B1 | **approved 2026-10-08**, merge pending | `bridge/b1-protocol-core` / #69 @ `c166c0d` | not reported | Planner re-ran in a scratch clone: typecheck, build, vitest 19/19. 5 probes passed, and breaking the wrapper inner-value check turns both suites red. An ethers 6.17.0 bundle has 0 `eval(` and 0 `new Function`. The event `from` equals the L1 tx `from` (no 7702 alias). Wall-clock 36 min. |
-| B2 | **merged** (#68 → `1db7c8b`) | `bridge/b2-config-artifact` / #68 | not reported | Planner probes: changing the Portal or genesis hash in rollup.json, or hand-editing `capWei` in the artifact, gives 3 unittest FAILs. CI: 177 tests OK. Wall-clock 20 min. |
-| B3 | blocked on B1, B2 | — | — | |
-| B4 | blocked on B1 | — | — | |
-| B5 | blocked on B1 | — | — | |
+| B1 | **merged** (#69 → `de9d4f3`) | `bridge/b1-protocol-core` / #69 @ `c166c0d` | Grok 4.7 | Planner re-ran in a scratch clone: typecheck, build, vitest 19/19. 5 probes passed, and breaking the wrapper inner-value check turns both suites red. An ethers 6.17.0 bundle has 0 `eval(` and 0 `new Function`. The event `from` equals the L1 tx `from` (no 7702 alias). Wall-clock 36 min. |
+| B2 | **merged** (#68 → `1db7c8b`) | `bridge/b2-config-artifact` / #68 | Cursor auto (usually Sonnet) | Planner probes: changing the Portal or genesis hash in rollup.json, or hand-editing `capWei` in the artifact, gives 3 unittest FAILs. CI: 177 tests OK. Wall-clock 20 min. |
+| B3 | ready to dispatch | — | — | |
+| B4 | ready to dispatch | — | — | |
+| B5 | ready to dispatch | — | — | |
 | B6 | blocked on B3–B5 | — | — | |
 | G | blocked on B6 | — | operator | |
