@@ -1,0 +1,39 @@
+{
+  "configVersion": "852-sepolia-2026-10-08.1",
+  "l1": {
+    "chainId": 11155111,
+    "chainIdHex": "0xaa36a7",
+    "name": "Sepolia",
+    "rpc": "https://sepolia.gateway.tenderly.co",
+    "explorerTx": "https://sepolia.etherscan.io/tx/{hash}"
+  },
+  "l2": {
+    "chainId": 852,
+    "chainIdHex": "0x354",
+    "name": "ForteL2 Sepolia",
+    "genesisHash": "0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d",
+    "sequencerRpc": "https://fortel2-sequencer-rpc.onrender.com/",
+    "replicaRpc": "/",
+    "explorerTx": "https://settlementos-explorer-ihgo.onrender.com/fortel2-sepolia/tx/{hash}"
+  },
+  "contracts": {
+    "optimismPortal": "0xf8c7da6c009d5d05bb98f8cd8286b9b838a3b54e",
+    "systemConfig": "0x7c799f23a427328831be0a8206a525a9bc886bde",
+    "metamaskDelegationManager": "0xdb9b1e94b5b69df7e401ddbede43491141047db3"
+  },
+  "deposit": {
+    "l2GasLimit": "100000",
+    "capWei": "20000000000000000",
+    "presetsWei": [
+      "1000000000000000",
+      "2000000000000000",
+      "5000000000000000"
+    ],
+    "defaultWei": "2000000000000000",
+    "quoteTtlSeconds": 60,
+    "l1GasFloor": "500000",
+    "l1GasCeiling": "1000000",
+    "l1GasMultiplier": 2,
+    "pollSeconds": 12
+  }
+}
