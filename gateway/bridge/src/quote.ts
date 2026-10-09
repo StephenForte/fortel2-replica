@@ -27,11 +27,19 @@ export type QuoteContext = {
   configVersion: string;
 };
 
+export type FeeSource = "wallet" | "wallet-feeHistory" | "l1";
+
+/** DepositQuote plus which priority-fee read succeeded. Legacy quotes omit it. */
+export type QuotedDeposit = DepositQuote & {
+  feeSource?: FeeSource;
+};
+
 export type QuoteDeps = {
   cfg: BridgeConfig;
   replica: RpcClient;
   sequencer: RpcClient;
   wallet: Eip1193Provider;
+  l1: RpcClient;
   now: () => number;
 };
 
@@ -46,10 +54,19 @@ export class QuoteError extends Error {
 }
 
 type FeeQuote =
-  | { kind: "eip1559"; perGas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
+  | {
+      kind: "eip1559";
+      perGas: bigint;
+      maxFeePerGas: bigint;
+      maxPriorityFeePerGas: bigint;
+      feeSource: FeeSource;
+    }
   | { kind: "legacy"; perGas: bigint; gasPrice: bigint };
 
-export async function createQuote(input: QuoteInput, deps: QuoteDeps): Promise<DepositQuote> {
+const FEE_HISTORY_BLOCKS = 5;
+const FEE_HISTORY_PARAMS = ["0x5", "latest", [50]] as const;
+
+export async function createQuote(input: QuoteInput, deps: QuoteDeps): Promise<QuotedDeposit> {
   const amountWei = parseEthAmount(input.amount, parseWei(deps.cfg.deposit.capWei, "cap"));
   const recipient = validateRecipient(input.recipient);
   const account = requireAccount(input.account);
@@ -68,7 +85,7 @@ export async function createQuote(input: QuoteInput, deps: QuoteDeps): Promise<D
     data,
   });
   const limit = l1GasLimit(estimate, deps.cfg);
-  const fees = await readFees(deps.wallet);
+  const fees = await readFees(deps.wallet, deps.l1);
   const maxNetworkFeeWei = limit * fees.perGas;
   const maxWalletDebitWei = amountWei + maxNetworkFeeWei;
   const balance = await walletBalance(deps.wallet, account);
@@ -99,12 +116,13 @@ export async function createQuote(input: QuoteInput, deps: QuoteDeps): Promise<D
     maxWalletDebitWei: decimal(maxWalletDebitWei),
   };
 
-  const quote: DepositQuote =
+  const quote: QuotedDeposit =
     fees.kind === "eip1559"
       ? {
           ...base,
           maxFeePerGasWei: decimal(fees.maxFeePerGas),
           maxPriorityFeePerGasWei: decimal(fees.maxPriorityFeePerGas),
+          feeSource: fees.feeSource,
         }
       : {
           ...base,
@@ -183,7 +201,7 @@ async function estimateGas(wallet: Eip1193Provider, tx: Record<string, string>):
   return parseHexQuantity(raw, "gas estimate");
 }
 
-async function readFees(wallet: Eip1193Provider): Promise<FeeQuote> {
+async function readFees(wallet: Eip1193Provider, l1: RpcClient): Promise<FeeQuote> {
   let block: unknown;
   try {
     block = await wallet.request({ method: "eth_getBlockByNumber", params: ["latest", false] });
@@ -199,9 +217,70 @@ async function readFees(wallet: Eip1193Provider): Promise<FeeQuote> {
     return { kind: "legacy", perGas: gasPrice, gasPrice };
   }
   const baseFee = parseHexQuantity(baseFeePerGas, "baseFeePerGas");
-  const maxPriorityFeePerGas = await requestQuantity(wallet, "eth_maxPriorityFeePerGas");
-  const maxFeePerGas = baseFee * FEE_BASE_MULTIPLIER + maxPriorityFeePerGas;
-  return { kind: "eip1559", perGas: maxFeePerGas, maxFeePerGas, maxPriorityFeePerGas };
+  const priority = await readPriorityFee(wallet, l1);
+  const maxFeePerGas = baseFee * FEE_BASE_MULTIPLIER + priority.value;
+  return {
+    kind: "eip1559",
+    perGas: maxFeePerGas,
+    maxFeePerGas,
+    maxPriorityFeePerGas: priority.value,
+    feeSource: priority.source,
+  };
+}
+
+async function readPriorityFee(
+  wallet: Eip1193Provider,
+  l1: RpcClient,
+): Promise<{ value: bigint; source: FeeSource }> {
+  const fromWallet = await tryWalletPriority(wallet);
+  if (fromWallet !== null) return { value: fromWallet, source: "wallet" };
+  const fromHistory = await tryWalletFeeHistory(wallet);
+  if (fromHistory !== null) return { value: fromHistory, source: "wallet-feeHistory" };
+  const fromL1 = await tryL1Priority(l1);
+  if (fromL1 !== null) return { value: fromL1, source: "l1" };
+  throw new QuoteError("priority fee unavailable", { unavailable: true });
+}
+
+async function tryWalletPriority(wallet: Eip1193Provider): Promise<bigint | null> {
+  try {
+    const raw = await wallet.request({ method: "eth_maxPriorityFeePerGas", params: [] });
+    return tryHexQuantity(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function tryWalletFeeHistory(wallet: Eip1193Provider): Promise<bigint | null> {
+  try {
+    const raw = await wallet.request({ method: "eth_feeHistory", params: [...FEE_HISTORY_PARAMS] });
+    return medianFeeHistoryReward(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function tryL1Priority(l1: RpcClient): Promise<bigint | null> {
+  try {
+    const raw = await l1.call("eth_maxPriorityFeePerGas", []);
+    return tryHexQuantity(raw);
+  } catch {
+    return null;
+  }
+}
+
+function medianFeeHistoryReward(raw: unknown): bigint | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const reward = (raw as { reward?: unknown }).reward;
+  if (!Array.isArray(reward) || reward.length !== FEE_HISTORY_BLOCKS) return null;
+  const values: bigint[] = [];
+  for (const block of reward) {
+    if (!Array.isArray(block) || block.length < 1) return null;
+    const value = tryHexQuantity(block[0]);
+    if (value === null) return null;
+    values.push(value);
+  }
+  values.sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+  return values[2] ?? null;
 }
 
 async function requestQuantity(wallet: Eip1193Provider, method: string): Promise<bigint> {
@@ -259,9 +338,13 @@ function parseWei(value: string, label: string): bigint {
 }
 
 function parseHexQuantity(value: unknown, label: string): bigint {
-  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) {
-    throw new QuoteError(`${label} is unreadable`);
-  }
+  const parsed = tryHexQuantity(value);
+  if (parsed === null) throw new QuoteError(`${label} is unreadable`);
+  return parsed;
+}
+
+function tryHexQuantity(value: unknown): bigint | null {
+  if (typeof value !== "string" || !/^0x[0-9a-fA-F]+$/.test(value)) return null;
   return BigInt(value);
 }
 
