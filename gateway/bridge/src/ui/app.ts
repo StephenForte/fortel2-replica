@@ -206,7 +206,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     }
     const raw = recipientInput.value.trim();
     if (raw === "") {
-      recipientError.textContent = account ? "" : "Recipient is required.";
+      recipientError.textContent = recipientTouched ? "Recipient is required." : "";
     } else {
       try {
         validateRecipient(raw);
@@ -814,7 +814,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
   if (provider) await runVerify();
   else {
     configState = "unavailable";
-    configStatus.textContent = "network check unavailable";
+    configStatus.textContent = "Connect MetaMask to run the network check.";
   }
   if (account) openJournal(account);
   void refreshSepoliaBalance();

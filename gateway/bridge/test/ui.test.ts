@@ -220,6 +220,7 @@ describe("bridge page", () => {
     expect(guidance.textContent).toBe(
       "MetaMask extension on desktop Chrome or Brave is required. In Brave, set MetaMask as the default wallet.",
     );
+    expect(text("config-status")).toBe("Connect MetaMask to run the network check.");
     expect(brave.calls("eth_requestAccounts")).toHaveLength(0);
     expect(brave.calls("eth_accounts")).toHaveLength(0);
     expect(document.body.textContent).not.toMatch(/seed phrase|private key/i);

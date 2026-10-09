@@ -80,6 +80,7 @@ button:disabled { opacity: 0.55; cursor: default; }
   margin-top: 10px;
   min-width: 0;
 }
+:focus,
 :focus-visible {
   outline: 3px solid var(--ink);
   outline-offset: 2px;
