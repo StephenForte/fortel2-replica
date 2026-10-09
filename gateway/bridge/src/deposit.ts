@@ -87,6 +87,9 @@ async function submitOnce(quote: DepositQuote, deps: SubmitDeps): Promise<Submit
   if (recipientNow !== null) return recipientNow;
   const walletNow = await readWalletNow(deps.provider, quote);
   if (walletNow !== null) return walletNow;
+  if (!isQuoteValid(quote, deps.ctx, deps.now())) {
+    return { kind: "blocked", reason: "quote is no longer valid" };
+  }
 
   let raw: unknown;
   try {
@@ -191,10 +194,8 @@ async function readWalletNow(provider: Eip1193Provider, quote: DepositQuote): Pr
   if (!isSepolia(chain) || !isSepolia(quote.l1ChainId)) {
     return { kind: "blocked", reason: "wallet chain changed" };
   }
-  const stillConnected =
-    Array.isArray(accounts) &&
-    accounts.some((item) => typeof item === "string" && item.toLowerCase() === quote.account.toLowerCase());
-  if (!stillConnected) {
+  const selected = Array.isArray(accounts) ? accounts[0] : undefined;
+  if (typeof selected !== "string" || selected.toLowerCase() !== quote.account.toLowerCase()) {
     return { kind: "blocked", reason: "wallet account changed" };
   }
   return null;

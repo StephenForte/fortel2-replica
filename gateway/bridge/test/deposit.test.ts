@@ -106,6 +106,7 @@ function ctx(quote: DepositQuote, patch: Partial<QuoteContext> = {}): QuoteConte
 function submitter(options: {
   quote: DepositQuote;
   now: number;
+  nowFn?: () => number;
   context?: QuoteContext;
   l1Chain?: string;
   balance?: string;
@@ -144,7 +145,7 @@ function submitter(options: {
     l1: chains.l1.client,
     sequencer: chains.sequencer.client,
     replica: chains.replica.client,
-    now: () => options.now,
+    now: options.nowFn ?? (() => options.now),
     ctx: options.context ?? ctx(options.quote),
     onHash: options.onHash ?? (async () => undefined),
   };
@@ -278,6 +279,47 @@ describe("submitDeposit", () => {
     const result = await submitDeposit(quote, deps);
     expect(result).toEqual({ kind: "blocked", reason: "wallet account changed" });
     expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("sends nothing when the quoted account is no longer the selected account", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      accountsOnSend: [OTHER, quote.account],
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "wallet account changed" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("sends when the quoted account stays selected ahead of other authorized accounts", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      accountsOnSend: [quote.account, OTHER],
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result.kind).toBe("submitted");
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(1);
+  });
+
+  it("sends nothing if the quote expires during the last preflight reads", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    let ticks = 0;
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      nowFn: () => {
+        ticks += 1;
+        return ticks >= 3 ? quote.expiresAt : quote.createdAt;
+      },
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "quote is no longer valid" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+    expect(ticks).toBe(3);
   });
 
   it("sends nothing if the recipient is a contract by submit time", async () => {
