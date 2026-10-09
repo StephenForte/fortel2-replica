@@ -17,7 +17,7 @@ Source: the operator's PRD "ForteL2 ETH Bridge in the Replica Gateway" (2026-10-
 
 - One task = one branch `bridge/<task-id>-<slug>` = one PR into `main`. Squash merge. Title is `bridge(<task-id>): <summary>`.
 - A worker never merges. The planner reviews with `review-handoff`. Codex (BFF) review comments get answered or fixed. The operator merges.
-- CI green is required. That means the existing Python job, plus the `bridge-node` job once B1 lands and the `gateway-image` job once B3 lands.
+- CI green is required. That means the existing Python job, plus the `bridge-node` job once B1 lands. B3's gateway coverage runs inside the existing `Python and Docker tests` job (`GatewayDockerTests`); there is no separate `gateway-image` job (Wave 2 amendments).
 - Workers do not edit `DECISIONS.md`, this plan, `AGENTS.md`, `RUNNING.md`, `render.yaml`, root `Dockerfile.reth`, `entrypoint-reth.sh`, `rpc-method-filter.py`, `sequencer-read/`, or `config/`.
 - No new npm dependency beyond B1's set unless the planner approves it first. A worker that needs one stops and asks.
 - No deploys, no Render changes, and no on-chain transactions by workers. Release (G) is operator-run.
@@ -105,7 +105,7 @@ Fields taken from `config/rollup.json`: `l1.chainId`, `l2.chainId`, `l2.genesisH
 4. **Release:** G.
 
 **Expected conflicts.**
-- `.github/workflows/tests.yml`: B1 appends `bridge-node` and B3 appends `gateway-image`. They are in different waves, so this should not happen. If B3 branches before B1 merges, it is a trivial end-of-file conflict.
+- `.github/workflows/tests.yml`: only B1 appended a job (`bridge-node`). B3 added no CI job (Wave 2 amendments), so this file had no wave-2 conflict.
 - `package-lock.json`: only B1 writes it. If B4, B5, or B6 changes it, the PR is rejected.
 - B6 replaces B1's stub `index.html`. That is intended.
 
@@ -127,7 +127,7 @@ Record the actual model used per task in the Status table when it is dispatched.
 | AC | Owner | Evidence expected |
 |---|---|---|
 | 1 status link, public load, Brave→MetaMask, mobile | B3 (route/link), B6 (UI), G (real Brave) | B3 curl matrix; B6 happy-dom tests; G screenshots |
-| 2 RPC/healthz/write-reject preserved, docker build, `nginx -t`, unit tests | B3 | `gateway-image` CI job |
+| 2 RPC/healthz/write-reject preserved, docker build, `nginx -t`, unit tests | B3 | `GatewayDockerTests` in the `Python and Docker tests` CI job |
 | 3 invalid input cannot submit | B1 (parse/validate), B5 (quote/preflight), B6 (UI gating) | unit tests per case |
 | 4 live MetaMask deposit | G | R-0026: call, estimates, fee, timings, both hashes |
 | 5 regression fixture | B1 | `protocol.test.ts` derives `0x6229…53b9` |
@@ -157,4 +157,4 @@ Record the actual model used per task in the Status table when it is dispatched.
 | B5 | **merged** (#73 → `db2fce3`) | `bridge/b5-wallet-quote-deposit` / #73 | Grok 4.7 | Merged with B4: vitest 136. The full-module + ethers bundle (102,437 B) has 0 eval and 0 Function. Gas boundaries 250k→500k, 500k→1M, 500,001 blocked. Mutation checks: removing the consume guard fails 2 tests; removing the pre-send wallet re-read fails 5. 6 Codex rounds, all fixed. Wall-clock 78 min. |
 | B6 | **merged** (#76 → `de0da94`), **deployed** (live `/bridge` serves `bridge-7e04f200.js`) | `bridge/b6-ui` / #76 | Grok 4.7 | vitest 163. Planner loaded the built bundle locally under the exact R-0025 CSP, with live Tenderly, sequencer and replica: 0 CSP violations; no horizontal scroll at 360 px. With a reject-only stand-in wallet: a double-click gave 1 `eth_sendTransaction` whose fields equal the quote, and recover-by-hash reached replica-confirmed with the fee shown separately from principal. **Missed:** the stand-in answered `eth_maxPriorityFeePerGas`, and real MetaMask does not (see B5-fix). Wall-clock 49 min. |
 | B5-fix | dispatched 2026-10-09 | `bridge/b5-fee-fallback` | Grok 4.7 | **Live defect, 2026-10-09.** The operator connected real MetaMask on the deployed `/bridge`, and Review stopped with "eth_maxPriorityFeePerGas unavailable". In the console, `window.ethereum.request({method:"eth_maxPriorityFeePerGas"})` from MetaMask `inpage.js` returned `{code: -32601, message: 'The method "eth_maxPriorityFeePerGas" does not exist / is not available.'}`. The page failed closed and no ETH moved. Fix: the priority fee comes from wallet `eth_maxPriorityFeePerGas`, then wallet `eth_feeHistory` (median p50 reward over 5 blocks), then the public L1 client. Never a constant. The source is shown in the review. Blocks G. |
-| G | blocked on B6 | — | operator | |
+| G | blocked on B5-fix (B6 merged and deployed) | — | operator | |
