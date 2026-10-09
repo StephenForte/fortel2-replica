@@ -658,7 +658,7 @@ R-0026 records the bridge release-gate evidence.
 
 ---
 
-## R-0026 — Bridge release gate G passed: a live MetaMask deposit on the deployed /bridge
+## R-0026 — Bridge release gate G passed on Brave: a live MetaMask deposit on the deployed /bridge
 
 *2026-10-09 · closes R-0025 and plan task G (`docs/2026-10-08-bridge-plan.md`). The gateway serves `bridge-fcfeeaeb.js` (B6 #76 plus B5-fix #79).*
 
@@ -680,6 +680,8 @@ R-0026 records the bridge release-gate evidence.
 **Deployed smoke, 2026-10-09.** `/healthz` 200. `/status` 200 and links `/bridge`. `/bridge` 200 with the exact R-0025 CSP. `/bridge/` → 301 `Location: /bridge`. The hashed JS returns 200 `application/javascript`, and a missing asset 404. `/bridge-config.json` is byte-identical to `main`. RPC `eth_chainId` returns `0x354`. `eth_sendRawTransaction` returns `-32601 method not allowed`. Real-browser CSP/CORS on the deployed origin: the operator's Brave session loaded the config, ran verifyConfig against Tenderly, the sequencer and the replica, quoted, submitted, and tracked to replica confirmation. Every one of those connect-src origins was exercised under the deployed CSP.
 
 **Gaps, stated plainly.** MetaMask sent both deposits directly, so the EIP-7702 `redeemDelegations` wrapper path is covered only by the 2026-10-08 regression fixture (`0x57b6…8fa3`) and unit tests, not by a live deposit in this release. Desktop Chrome was not run live; only Brave was. Mobile is out of scope (PRD).
+
+**Gate revision (operator decision, 2026-10-09).** The plan defined G as a hand check in Brave **and** Chrome (plan, "Real-browser e2e"), and PRD §3 names both as MVP wallet browsers. The operator uses Brave only and deferred the Chrome check, and a live wrapper-path deposit, until people other than the operator use the bridge. G is therefore passed on Brave only. Chrome is untested live, not verified. Revisit both items before inviting outside users. Raised by Codex on #81.
 
 **Rollback.** Redeploy the previous gateway commit on `fortel2-replica-rpc`. On-chain deposits stay traceable by hash, and no chain state depends on the page.
 
