@@ -83,6 +83,8 @@ async function submitOnce(quote: DepositQuote, deps: SubmitDeps): Promise<Submit
 
   const tx = transactionFromQuote(quote);
   if (tx === null) return { kind: "blocked", reason: "quote cannot be encoded" };
+  const walletNow = await readWalletNow(deps.provider, quote);
+  if (walletNow !== null) return walletNow;
 
   let raw: unknown;
   try {
@@ -157,6 +159,35 @@ function transactionFromQuote(quote: DepositQuote): Record<string, string> | nul
     return tx;
   }
   return null;
+}
+
+const SEPOLIA_CHAIN = 11155111n;
+
+async function readWalletNow(provider: Eip1193Provider, quote: DepositQuote): Promise<SubmitResult | null> {
+  let chain: unknown;
+  let accounts: unknown;
+  try {
+    chain = await provider.request({ method: "eth_chainId", params: [] });
+    accounts = await provider.request({ method: "eth_accounts", params: [] });
+  } catch {
+    return { kind: "blocked", reason: "wallet state unavailable" };
+  }
+  if (!isSepolia(chain) || !isSepolia(quote.l1ChainId)) {
+    return { kind: "blocked", reason: "wallet chain changed" };
+  }
+  const stillConnected =
+    Array.isArray(accounts) &&
+    accounts.some((item) => typeof item === "string" && item.toLowerCase() === quote.account.toLowerCase());
+  if (!stillConnected) {
+    return { kind: "blocked", reason: "wallet account changed" };
+  }
+  return null;
+}
+
+function isSepolia(value: unknown): boolean {
+  if (typeof value === "string" && /^0x[0-9a-fA-F]+$/.test(value)) return BigInt(value) === SEPOLIA_CHAIN;
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return BigInt(value) === SEPOLIA_CHAIN;
+  return false;
 }
 
 async function readBalance(provider: Eip1193Provider, account: string): Promise<bigint | null> {

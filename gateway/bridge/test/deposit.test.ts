@@ -96,11 +96,17 @@ function submitter(options: {
   context?: QuoteContext;
   l1Chain?: string;
   balance?: string;
+  chainOnSend?: string;
+  accountsOnSend?: string[];
   send?: (callIndex: number) => unknown;
   onHash?: SubmitDeps["onHash"];
 }): { deps: SubmitDeps; provider: MockEip1193; l1Calls: { readonly calls: number } } {
   const provider = createMockEip1193();
-  provider.handle("eth_chainId", () => "0xaa36a7");
+  provider.handle("eth_chainId", (_params, callIndex) => {
+    if (options.chainOnSend !== undefined && callIndex > 1) return options.chainOnSend;
+    return "0xaa36a7";
+  });
+  provider.handle("eth_accounts", () => options.accountsOnSend ?? [options.quote.account]);
   provider.handle("eth_getBalance", () => options.balance ?? hex(10n ** 24n));
   provider.handle("eth_sendTransaction", (_params, callIndex) => {
     if (options.send) return options.send(callIndex);
@@ -151,6 +157,8 @@ describe("submitDeposit", () => {
     expect(provider.requests.map((entry) => entry.method)).toEqual([
       "eth_chainId",
       "eth_getBalance",
+      "eth_chainId",
+      "eth_accounts",
       "eth_sendTransaction",
     ]);
 
@@ -224,6 +232,23 @@ describe("submitDeposit", () => {
     expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
     expect(provider.calls("eth_getBalance")).toHaveLength(0);
     expect(provider.requests.map((entry) => entry.method)).toEqual(["eth_chainId"]);
+  });
+
+  it("sends nothing if the wallet network changes after preflight", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({ quote, now: quote.createdAt, chainOnSend: "0x1" });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "wallet chain changed" });
+    expect(provider.calls("eth_chainId")).toHaveLength(2);
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("sends nothing if the wallet account changes after preflight", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({ quote, now: quote.createdAt, accountsOnSend: [OTHER] });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "wallet account changed" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
   });
 
   it("sends nothing when the balance can no longer cover the quote", async () => {
