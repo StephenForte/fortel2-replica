@@ -142,6 +142,23 @@ describe("verifyConfig", () => {
     expect(result).toMatchObject({ ok: false, phase: "configuration-mismatch" });
   });
 
+  it("rejects a configured L1 chain that is not Sepolia even when that client agrees", async () => {
+    const mainnet = structuredClone(cfg);
+    mainnet.l1 = { ...cfg.l1, chainId: 1, chainIdHex: "0x1" };
+    const l1Side = l1({ eth_chainId: () => "0x1" });
+    const result = await verifyConfig({
+      cfg: mainnet,
+      l1: l1Side.client,
+      sequencer: l2().client,
+      replica: l2().client,
+      wallet: wallet(),
+    });
+    expect(result).toMatchObject({ ok: false, phase: "configuration-mismatch" });
+    if (!result.ok && "phase" in result) expect(result.reason).toMatch(/0xaa36a7/);
+    expect(l1Side.calls.map((entry) => entry.method)).not.toContain("eth_getCode");
+    expect(l1Side.calls.map((entry) => entry.method)).not.toContain("eth_call");
+  });
+
   it("rejects an L1 chain id that is not the configured one", async () => {
     const { result } = await verify({ l1: l1({ eth_chainId: () => "0x1" }) });
     expect(result).toMatchObject({ ok: false, phase: "configuration-mismatch" });

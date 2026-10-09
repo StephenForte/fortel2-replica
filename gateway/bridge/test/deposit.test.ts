@@ -66,9 +66,16 @@ async function quoted(options: { estimate: bigint; legacy?: boolean }): Promise<
   provider.handle("eth_gasPrice", () => "0x1");
   provider.handle("eth_getBalance", () => hex(10n ** 24n));
   const replica = scripted({ eth_getCode: () => "0x" });
+  const sequencer = scripted({ eth_getCode: () => "0x" });
   return createQuote(
     { amount: "0.002", recipient: ACCOUNT, account: ACCOUNT },
-    { cfg, replica: replica.client, wallet: provider, now: () => 1_700_000_000_000 },
+    {
+      cfg,
+      replica: replica.client,
+      sequencer: sequencer.client,
+      wallet: provider,
+      now: () => 1_700_000_000_000,
+    },
   );
 }
 

@@ -73,9 +73,14 @@ function wallet(options: {
   return { provider, order };
 }
 
+function codePair(replicaCode: string, sequencerCode = replicaCode) {
+  return { replica: codeAt(replicaCode), sequencer: codeAt(sequencerCode) };
+}
+
 async function quoteWith(options: {
   estimate: bigint;
   code?: string;
+  sequencerCode?: string;
   recipient?: string;
   account?: string;
   baseFee?: string | null;
@@ -83,7 +88,7 @@ async function quoteWith(options: {
   gasPrice?: bigint;
   balance?: bigint;
 }) {
-  const l2 = codeAt(options.code ?? "0x");
+  const l2 = codePair(options.code ?? "0x", options.sequencerCode ?? options.code ?? "0x");
   const node = wallet(options);
   const quote = await createQuote(
     {
@@ -91,7 +96,7 @@ async function quoteWith(options: {
       recipient: options.recipient ?? ACCOUNT,
       account: options.account ?? ACCOUNT,
     },
-    { cfg, replica: l2.client, wallet: node.provider, now: () => CREATED_AT },
+    { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
   );
   return { quote, l2, node };
 }
@@ -165,12 +170,12 @@ describe("createQuote", () => {
   });
 
   it("blocks an estimate whose doubled limit exceeds 1000000", async () => {
-    const l2 = codeAt("0x");
+    const l2 = codePair("0x");
     const node = wallet({ estimate: 600_000n, baseFee: hex(1n) });
     await expect(
       createQuote(
         { amount: "0.002", recipient: ACCOUNT, account: ACCOUNT },
-        { cfg, replica: l2.client, wallet: node.provider, now: () => CREATED_AT },
+        { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
       ),
     ).rejects.toThrow(/1200000 exceeds the ceiling of 1000000/);
     expect(node.order).toEqual(["estimate"]);
@@ -185,18 +190,31 @@ describe("createQuote", () => {
   });
 
   it("rejects a contract recipient before estimating gas", async () => {
-    const l2 = codeAt("0x6000");
+    const l2 = codePair("0x6000");
     const node = wallet({ estimate: 100_000n, baseFee: hex(1n) });
     const error = await createQuote(
       { amount: "0.002", recipient: OTHER, account: ACCOUNT },
-      { cfg, replica: l2.client, wallet: node.provider, now: () => CREATED_AT },
+      { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
     ).then(
       () => null,
       (err: unknown) => err,
     );
     expect(error).toBeInstanceOf(QuoteError);
     expect((error as QuoteError).message).toMatch(/contract/);
-    expect(l2.calls).toBe(1);
+    expect(l2.replica.calls).toBe(1);
+    expect(l2.sequencer.calls).toBe(1);
+    expect(node.provider.calls("eth_estimateGas")).toHaveLength(0);
+  });
+
+  it("rejects an address the replica still reports as empty when the sequencer has code", async () => {
+    const l2 = codePair("0x", "0x6000");
+    const node = wallet({ estimate: 100_000n, baseFee: hex(1n) });
+    await expect(
+      createQuote(
+        { amount: "0.002", recipient: OTHER, account: ACCOUNT },
+        { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
+      ),
+    ).rejects.toThrow(/differs between sequencer and replica/);
     expect(node.provider.calls("eth_estimateGas")).toHaveLength(0);
   });
 
@@ -212,37 +230,50 @@ describe("createQuote", () => {
     expect(allowed.quote.recipient).toBe(ACCOUNT);
     expect(allowed.node.provider.calls("eth_estimateGas")).toHaveLength(1);
 
-    const l2 = codeAt(delegation(OTHER));
+    const l2 = codePair(delegation(OTHER));
     const node = wallet({ estimate: 100_000n, baseFee: hex(1n) });
     await expect(
       createQuote(
         { amount: "0.002", recipient: OTHER, account: ACCOUNT },
-        { cfg, replica: l2.client, wallet: node.provider, now: () => CREATED_AT },
+        { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
       ),
     ).rejects.toThrow(/EIP-7702/);
     expect(node.provider.calls("eth_estimateGas")).toHaveLength(0);
 
-    const longer = codeAt(`${delegation(ACCOUNT)}00`);
+    const longer = codePair(`${delegation(ACCOUNT)}00`);
     const blocked = wallet({ estimate: 100_000n, baseFee: hex(1n) });
     await expect(
       createQuote(
         { amount: "0.002", recipient: ACCOUNT, account: ACCOUNT },
-        { cfg, replica: longer.client, wallet: blocked.provider, now: () => CREATED_AT },
+        {
+          cfg,
+          replica: longer.replica.client,
+          sequencer: longer.sequencer.client,
+          wallet: blocked.provider,
+          now: () => CREATED_AT,
+        },
       ),
     ).rejects.toThrow(/contract/);
   });
 
   it("does not ask for code until the amount and recipient parse", async () => {
-    const l2 = codeAt("0x");
+    const l2 = codePair("0x");
     const node = wallet({ estimate: 100_000n });
-    const deps = { cfg, replica: l2.client, wallet: node.provider, now: () => CREATED_AT };
+    const deps = {
+      cfg,
+      replica: l2.replica.client,
+      sequencer: l2.sequencer.client,
+      wallet: node.provider,
+      now: () => CREATED_AT,
+    };
     await expect(createQuote({ amount: "0", recipient: ACCOUNT, account: ACCOUNT }, deps)).rejects.toBeInstanceOf(
       ProtocolError,
     );
     await expect(createQuote({ amount: "0.002", recipient: "0x123", account: ACCOUNT }, deps)).rejects.toBeInstanceOf(
       ProtocolError,
     );
-    expect(l2.calls).toBe(0);
+    expect(l2.replica.calls).toBe(0);
+    expect(l2.sequencer.calls).toBe(0);
     expect(node.provider.requests).toHaveLength(0);
   });
 

@@ -95,10 +95,13 @@ async function verifyConfigBody(input: {
   if (!sameChain(walletChain, SEPOLIA_CHAIN_ID)) {
     return mismatch(`wallet chain is ${preview(walletChain)}, expected ${SEPOLIA_CHAIN_ID}`);
   }
+  if (!sameChain(input.cfg.l1.chainIdHex, SEPOLIA_CHAIN_ID)) {
+    return mismatch(`configured L1 chain is ${input.cfg.l1.chainIdHex}, expected ${SEPOLIA_CHAIN_ID}`);
+  }
 
   const l1Chain = await input.l1.call("eth_chainId", []);
-  if (!sameChain(l1Chain, input.cfg.l1.chainIdHex)) {
-    return mismatch(`L1 chain is ${preview(l1Chain)}, expected ${input.cfg.l1.chainIdHex}`);
+  if (!sameChain(l1Chain, SEPOLIA_CHAIN_ID)) {
+    return mismatch(`L1 chain is ${preview(l1Chain)}, expected ${SEPOLIA_CHAIN_ID}`);
   }
 
   const code = await input.l1.call("eth_getCode", [input.cfg.contracts.optimismPortal, "latest"]);

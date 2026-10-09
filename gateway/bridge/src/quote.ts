@@ -30,6 +30,7 @@ export type QuoteContext = {
 export type QuoteDeps = {
   cfg: BridgeConfig;
   replica: RpcClient;
+  sequencer: RpcClient;
   wallet: Eip1193Provider;
   now: () => number;
 };
@@ -53,8 +54,9 @@ export async function createQuote(input: QuoteInput, deps: QuoteDeps): Promise<D
   const recipient = validateRecipient(input.recipient);
   const account = requireAccount(input.account);
 
-  const code = await recipientCode(deps.replica, recipient);
-  assertRecipientCode(code, recipient, account);
+  const replicaCode = await recipientCode(deps.replica, recipient);
+  const sequencerCode = await recipientCode(deps.sequencer, recipient);
+  assertRecipientCode(replicaCode, sequencerCode, recipient, account);
 
   if (deps.cfg.deposit.l2GasLimit !== decimal(L2_GAS)) {
     throw new QuoteError("L2 gas limit must stay 100000");
@@ -148,7 +150,11 @@ async function recipientCode(replica: RpcClient, recipient: string): Promise<str
   return code;
 }
 
-function assertRecipientCode(code: string, recipient: string, account: string): void {
+function assertRecipientCode(replicaCode: string, sequencerCode: string, recipient: string, account: string): void {
+  if (replicaCode.toLowerCase() !== sequencerCode.toLowerCase()) {
+    throw new QuoteError("recipient code differs between sequencer and replica");
+  }
+  const code = replicaCode;
   if (code.toLowerCase() === "0x") return;
   if (DELEGATION_CODE.test(code)) {
     if (recipient.toLowerCase() !== account.toLowerCase()) {
