@@ -5,6 +5,18 @@
 # nginxinc/nginx-unprivileged already runs as USER nginx (uid 101) and
 # listens on unprivileged ports. Do not switch to nginx:*-alpine (root master).
 
+# Bridge page. Node stays in this stage. package.json and the lockfile
+# are copied first so `npm ci` is cached when only sources change.
+# bookworm-slim (glibc): bridge/package-lock.json pins esbuild's linux
+# gnu optional packages and has no musl build, so Alpine cannot run it.
+FROM node:22.23.3-bookworm-slim@sha256:c3de60bf2f9dd0ac6370e6117950ff62d6e339527e7472301c9c78a017978392 AS bridge-build
+
+WORKDIR /src
+COPY bridge/package.json bridge/package-lock.json ./
+RUN npm ci
+COPY bridge/ ./
+RUN npm run build
+
 FROM nginxinc/nginx-unprivileged:1.30.4-alpine
 
 # Contract defaults. Render injects PORT; the rest are overridable at runtime.
@@ -33,6 +45,11 @@ COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 # Static live-health page for `location = /status`. Not a template: envsubst
 # never touches it, so its JS `${...}` strings stay intact.
 COPY status.html /usr/share/nginx/html/status.html
+# Built bridge shell and hashed assets. bridge-config.json is committed
+# because config/ is outside this build context.
+COPY --from=bridge-build /src/dist/index.html /usr/share/nginx/html/bridge/index.html
+COPY --from=bridge-build /src/dist/assets/ /usr/share/nginx/html/bridge/assets/
+COPY bridge/bridge-config.json /usr/share/nginx/html/bridge-config.json
 
 EXPOSE 10000
 
