@@ -654,4 +654,33 @@ A capture still ran, and the JSON named the old pin. Restore (`RETH_SNAPSHOT_URL
 
 **Not changed.** Execution node, chain config, sequencer, Render service names and env, `render.yaml`, the write-method filter. Deploy only `fortel2-replica-rpc`. Rollback is to redeploy the previous gateway commit.
 
-R-0026 is reserved for the bridge release-gate evidence (live MetaMask deposit, real-browser CSP/CORS). Next free R-id is **R-0027**.
+R-0026 records the bridge release-gate evidence.
+
+---
+
+## R-0026 — Bridge release gate G passed: a live MetaMask deposit on the deployed /bridge
+
+*2026-10-09 · closes R-0025 and plan task G (`docs/2026-10-08-bridge-plan.md`). The gateway serves `bridge-fcfeeaeb.js` (B6 #76 plus B5-fix #79).*
+
+**What shipped.** `https://fortel2-replica-rpc.onrender.com/bridge` is live on Sepolia testnet. B1 through B6 are merged as #68, #69, #72, #73, #74 and #76, and B5-fix is #79. Only the diskless gateway `fortel2-replica-rpc` was redeployed. No execution node, chain config, disk, service name or `render.yaml` changed.
+
+**The defect found in the live test (fixed before this deposit).** On 2026-10-09 the first real-MetaMask Review on the deployed page stopped with "eth_maxPriorityFeePerGas unavailable". In the operator's console, MetaMask `inpage.js` returned `{code: -32601, message: 'The method "eth_maxPriorityFeePerGas" does not exist / is not available.'}`. The page failed closed and no ETH moved. Unit tests and the planner's browser probe had missed it because their mock wallets answered that method. B5-fix (#79) now reads the priority fee from wallet `eth_maxPriorityFeePerGas`, then wallet `eth_feeHistory` (median of the five p50 rewards), then the public L1 client. There is no constant fallback, and the source is shown in the review.
+
+**Live deposit (the operator approved it in MetaMask, Brave desktop).** The planner checked every value below from chain reads on 2026-10-09, independently of the page.
+- **L1** `0xcb0fe0be311df7066850dfa1b22dd31df59fad1d993517a9d50996469a140a09`, Sepolia block 11878324 (`0x347e039f…5475`), timestamp 2026-10-09T15:44:00Z, status 1, from `0xb849…d019`, nonce 4.
+- **Call.** A direct Portal call (not the EIP-7702 wrapper): `to` = OptimismPortal `0xf8c7…3b54e`, selector `0xe9e05c42`, `depositTransaction(0xb849…D019, 5000000000000000, 100000, false, 0x)`, tx `value` `0x11c37937e08000` (0.005 ETH).
+- **Gas and fees signed.** Gas limit `0x7a120` (500,000), the quoted floor. maxFeePerGas 1,000,000,015 and maxPriorityFeePerGas 999,999,985. That equals 2 × baseFee 15 + priority, so MetaMask signed the page's fee fields unchanged. A priority of ~1 gwei matches the live `eth_feeHistory` p50 (`0x3b9ac9f0`); MetaMask returns -32601 for `eth_maxPriorityFeePerGas`, and the public client's value that day was ~0.001 gwei. So the source was almost certainly wallet fee history. That is an inference from the value, not a screen reading.
+- **Actual L1 fee.** gasUsed 128,891 × effectiveGasPrice 1,000,000,000 = **128,891,000,000,000 wei (0.000128891 ETH)**. The journal shows the same `actualL1FeeWei`, separately from the 0.005 ETH principal.
+- **Receipt logs.** Two logs: an ETH-transfer `Transfer` from `0xff…fe` at block logIndex `0x5c`, then the Portal `TransactionDeposited` at `0x5d`. Recomputing with logIndex `0x5d` gives sourceHash `0xcc987884…0313` and **L2 `0x3b3489fbf3a6558c8d15a86ca3c735616aec905e1e7ae85d27b9cf144a8a6375`**. Those match the nodes, which they would not with the log's array position (1). That is the R-0025 / B1 "block-global logIndex" rule holding on real data.
+- **L2.** Sequencer and replica both return type `0x7e`, the same sourceHash, from = to = `0xb849…d019`, mint = value = 0.005 ETH, gas 100000, input `0x`, receipt status 1, gasUsed 21000, in the same block `0x638d1c37…2e92` (2063703), timestamp 2026-10-09T15:44:54Z: 54 s after the L1 block by chain timestamps.
+- **Browser-observed timings** (journal export, not consensus time): review→approve 9.0 s; approve→L1 included 13.0 s; →L2 received 64.3 s; →**Confirmed by replica 195.1 s**. The page's own tracker reached `replica-confirmed` (`replicaObservedAt` set).
+
+**Second deposit, same session.** L1 `0x67dfd09f…7f04` (0.002 ETH, nonce 5, direct Portal call, gas 500,000, fee 129,047,000,000,000 wei) succeeded. Its L2 `0xe5091a42…c76a` had status 1 on the sequencer. Two minutes after approval the replica was 172 blocks behind the sequencer head (normal lag), and the export showed `l2-pending`.
+
+**Deployed smoke, 2026-10-09.** `/healthz` 200. `/status` 200 and links `/bridge`. `/bridge` 200 with the exact R-0025 CSP. `/bridge/` → 301 `Location: /bridge`. The hashed JS returns 200 `application/javascript`, and a missing asset 404. `/bridge-config.json` is byte-identical to `main`. RPC `eth_chainId` returns `0x354`. `eth_sendRawTransaction` returns `-32601 method not allowed`. Real-browser CSP/CORS on the deployed origin: the operator's Brave session loaded the config, ran verifyConfig against Tenderly, the sequencer and the replica, quoted, submitted, and tracked to replica confirmation. Every one of those connect-src origins was exercised under the deployed CSP.
+
+**Gaps, stated plainly.** MetaMask sent both deposits directly, so the EIP-7702 `redeemDelegations` wrapper path is covered only by the 2026-10-08 regression fixture (`0x57b6…8fa3`) and unit tests, not by a live deposit in this release. Desktop Chrome was not run live; only Brave was. Mobile is out of scope (PRD).
+
+**Rollback.** Redeploy the previous gateway commit on `fortel2-replica-rpc`. On-chain deposits stay traceable by hash, and no chain state depends on the page.
+
+Next free R-id is **R-0027**.
