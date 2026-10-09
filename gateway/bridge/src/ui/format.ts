@@ -83,8 +83,6 @@ export function stepLabel(phase: string | undefined): string {
       return "Received on ForteL2";
     case "replica-confirmed":
       return "Confirmed by replica";
-    case "l1-pending":
-      return "Included on Sepolia";
     default:
       return "none";
   }

@@ -98,7 +98,7 @@ function installFetch(rpc: Rpc = defaultRpc, config: "ok" | "down" = "ok"): { ca
     const payload = JSON.parse(String(init?.body)) as { id: number; method: string; params?: unknown[] };
     calls.push({ url, method: payload.method });
     try {
-      const result = rpc(payload.method, payload.params ?? [], url);
+      const result = await rpc(payload.method, payload.params ?? [], url);
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: payload.id, result }), { status: 200 });
     } catch (err) {
       const message = err instanceof Error ? err.message : "rpc failed";
@@ -567,6 +567,110 @@ describe("bridge page", () => {
     expect(transferredPrincipalWei([replaced, next, reverted, cancelled, confirmed, outage])).toBe(
       2_000_000_000_000_000n + 5_000_000_000_000_000n + 1_000_000_000_000_000n,
     );
+  });
+
+  it("does not write an in-flight refresh into the account that was switched to", async () => {
+    seedRecord(ACCOUNT, { l1Hash: HASH, phase: "l1-pending" });
+    let releaseTx: (value: null) => void = () => {};
+    const txGate = new Promise<null>((resolve) => {
+      releaseTx = resolve;
+    });
+    const provider = createMockEip1193();
+    await boot({
+      provider,
+      accounts: [ACCOUNT],
+      rpc(method, params, url) {
+        if (method === "eth_getTransactionByHash" || method === "eth_getTransactionReceipt") return txGate;
+        return defaultRpc(method, params, url);
+      },
+    });
+    expect(text("history-list")).toContain(HASH);
+    provider.emit("accountsChanged", [OTHER]);
+    await settle();
+    releaseTx(null);
+    await settle();
+    expect(text("account")).toBe(OTHER);
+    expect(text("history-list")).not.toContain(HASH);
+    expect(localStorage.getItem(journalKey(OTHER)) ?? "").not.toContain(HASH);
+    expect(localStorage.getItem(journalKey(ACCOUNT)) ?? "").toContain(HASH);
+  });
+
+  it("drops a late ForteL2 balance after the recipient is cleared", async () => {
+    let releaseBalance: (value: string) => void = () => {};
+    const balanceGate = new Promise<string>((resolve) => {
+      releaseBalance = resolve;
+    });
+    let replicaBalances = 0;
+    const provider = createMockEip1193();
+    await boot({
+      provider,
+      accounts: [ACCOUNT],
+      rpc(method, params, url) {
+        if (method === "eth_getBalance" && !url.includes("tenderly")) {
+          replicaBalances += 1;
+          if (replicaBalances === 1) return balanceGate;
+        }
+        return defaultRpc(method, params, url);
+      },
+    });
+    const recipient = byId<HTMLInputElement>("recipient");
+    recipient.value = "";
+    recipient.dispatchEvent(new Event("input", { bubbles: true }));
+    provider.emit("accountsChanged", []);
+    await settle();
+    releaseBalance(hex(10n ** 21n));
+    await settle();
+    expect(text("account")).toBe("Not connected");
+    expect(text("sepolia-balance")).toBe("–");
+    expect(text("sepolia-balance-time")).toBe("–");
+    expect(text("forte-balance")).toBe("–");
+    expect(text("forte-balance")).not.toContain("1000");
+  });
+
+  it("does not keep a Sepolia balance after the wallet leaves Sepolia", async () => {
+    const provider = createMockEip1193();
+    await boot({ provider, accounts: [ACCOUNT] });
+    expect(text("sepolia-balance")).toBe("1000 ETH");
+    provider.handle("eth_chainId", () => "0x1");
+    provider.emit("chainChanged", "0x1");
+    await settle();
+    expect(text("sepolia-balance")).toBe("–");
+    expect(text("sepolia-balance-error")).toBe("Sepolia balance unavailable");
+    expect(text("sepolia-balance")).not.toContain("1000");
+  });
+
+  it("does not call a submitted deposit included when tracking is down", () => {
+    const record: DepositRecord = {
+      schemaVersion: 1,
+      account: ACCOUNT,
+      recipient: ACCOUNT,
+      amountWei: "2000000000000000",
+      configVersion: cfg.configVersion,
+      l1ChainId: cfg.l1.chainId,
+      l2ChainId: cfg.l2.chainId,
+      l2GenesisHash: cfg.l2.genesisHash,
+      l1Hash: HASH,
+      phase: "tracking-unavailable",
+      lastProvenPhase: "l1-pending",
+      lastCheckedAt: CREATED_AT,
+    };
+    const host = document.createElement("div");
+    renderProgressArticle(host, record, record, cfg);
+    expect(host.textContent).toContain(
+      `Last confirmed: none at ${new Date(CREATED_AT).toISOString()}. Rechecking…`,
+    );
+    expect(host.textContent).not.toContain("Last confirmed: Included on Sepolia");
+    expect(host.querySelector('[data-step="included"]')?.getAttribute("data-state")).toBe("pending");
+  });
+
+  it("downloads history without leaving the file link in the list", async () => {
+    const provider = createMockEip1193();
+    await boot({ provider, accounts: [ACCOUNT] });
+    byId<HTMLButtonElement>("export-json").click();
+    expect(byId("history-list").querySelector("a")).toBeNull();
+    expect(document.querySelector("a[download]")).toBeNull();
+    await settle();
+    expect(document.querySelector("a[download]")).toBeNull();
   });
 
   it("renders lastError markup as text", async () => {

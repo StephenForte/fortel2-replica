@@ -87,6 +87,9 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
   let recipientTouched = false;
   let sepoliaBalance = emptyBalance();
   let forteBalance = emptyBalance();
+  let sepoliaGen = 0;
+  let forteGen = 0;
+  let exportUrl: string | null = null;
   let quote: DepositQuote | null = null;
   let submitting = false;
   let reviewing = false;
@@ -346,29 +349,53 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     syncButtons();
   }
 
+  function walletOnSepolia(): boolean {
+    if (!cfg || chainId === null) return false;
+    try {
+      return BigInt(chainId) === BigInt(cfg.l1.chainIdHex);
+    } catch {
+      return false;
+    }
+  }
+
+  function forgetSepoliaBalance(): void {
+    sepoliaGen += 1;
+    sepoliaBalance = emptyBalance();
+  }
+
   async function refreshSepoliaBalance(): Promise<void> {
+    const gen = ++sepoliaGen;
     const current = account;
     if (!provider || !current) {
+      if (gen !== sepoliaGen) return;
       sepoliaBalance = emptyBalance();
+      renderBalances();
+      return;
+    }
+    if (!walletOnSepolia()) {
+      if (gen !== sepoliaGen) return;
+      sepoliaBalance = { text: "–", at: now(), error: "Sepolia balance unavailable" };
       renderBalances();
       return;
     }
     const at = now();
     try {
       const raw = await provider.request({ method: "eth_getBalance", params: [current, "latest"] });
-      if (account !== current) return;
+      if (gen !== sepoliaGen || account !== current) return;
       sepoliaBalance = { text: formatEthLabel(parseQuantity(raw)), at, error: "" };
     } catch {
-      if (account !== current) return;
+      if (gen !== sepoliaGen || account !== current) return;
       sepoliaBalance = { text: "–", at, error: "Sepolia balance unavailable" };
     }
     renderBalances();
   }
 
   async function refreshForteBalance(): Promise<void> {
+    const gen = ++forteGen;
     const recipientRaw = recipientInput.value.trim();
     const who = recipientRaw || account;
     if (!replica || !who) {
+      if (gen !== forteGen) return;
       forteBalance = emptyBalance();
       renderBalances();
       return;
@@ -377,6 +404,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     try {
       recipient = validateRecipient(who);
     } catch {
+      if (gen !== forteGen) return;
       forteBalance = { text: "–", at: now(), error: "ForteL2 balance unavailable" };
       renderBalances();
       return;
@@ -384,9 +412,10 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     const at = now();
     try {
       const raw = await replica.call("eth_getBalance", [recipient, "latest"]);
-      if ((recipientInput.value.trim() || account) !== who && recipientInput.value.trim() !== recipientRaw) return;
+      if (gen !== forteGen) return;
       forteBalance = { text: formatEthLabel(parseQuantity(raw)), at, error: "" };
     } catch {
+      if (gen !== forteGen) return;
       forteBalance = { text: "–", at, error: "ForteL2 balance unavailable" };
     }
     renderBalances();
@@ -405,9 +434,9 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
 
   function openJournal(nextAccount: string): void {
     if (!cfg || !l1 || !sequencer || !replica) return;
-    poller?.stop();
-    proven.clear();
-    journal = createJournal({ storage, cfg, account: nextAccount });
+    closeJournal();
+    const boundJournal = createJournal({ storage, cfg, account: nextAccount });
+    journal = boundJournal;
     tracker = createTracker({ cfg, l1, sequencer, replica, now });
     const visibility = {
       get visibilityState() {
@@ -427,8 +456,9 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
       now,
       ...(options.pollerTimer ? { timer: options.pollerTimer } : {}),
       onUpdate(record) {
+        if (journal !== boundJournal) return;
         proven.set(record.l1Hash.toLowerCase(), record);
-        journal?.upsert(record);
+        boundJournal.upsert(record);
         renderProgress();
         renderHistory();
       },
@@ -481,16 +511,23 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     if (!first) {
       account = null;
       closeJournal();
+      forgetSepoliaBalance();
       setText("account", "Not connected");
       renderProgress();
       renderHistory();
+      renderBalances();
+      void refreshForteBalance();
       return;
     }
     try {
       account = validateRecipient(first);
     } catch {
       account = null;
+      closeJournal();
+      forgetSepoliaBalance();
       setStatus("The wallet returned an unusable account.");
+      renderBalances();
+      void refreshForteBalance();
       return;
     }
     if (!recipientTouched) recipientInput.value = account;
@@ -657,12 +694,20 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
       return;
     }
     const blob = new Blob([journal.exportJson()], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
+    if (exportUrl) URL.revokeObjectURL(exportUrl);
+    exportUrl = URL.createObjectURL(blob);
     const link = el("a", { text: "fortel2-bridge-history.json" });
-    link.href = url;
+    link.href = exportUrl;
     link.download = "fortel2-bridge-history.json";
-    historyList.append(link);
+    doc.body.append(link);
     link.click();
+    link.remove();
+    const url = exportUrl;
+    setTimeout(() => {
+      if (exportUrl !== url) return;
+      URL.revokeObjectURL(url);
+      exportUrl = null;
+    }, 0);
   });
   requireElement<HTMLInputElement>("import-file").addEventListener("change", () => {
     const input = requireElement<HTMLInputElement>("import-file");
@@ -766,15 +811,22 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     wallet.on("chainChanged", (next) => {
       dropQuote();
       chainId = typeof next === "string" ? next : null;
+      forgetSepoliaBalance();
+      renderBalances();
       setStatus("The wallet network changed. Review the deposit again.");
-      void readChain().then(() => runVerify());
+      void readChain().then(() => {
+        void refreshSepoliaBalance();
+        return runVerify();
+      });
     });
     wallet.on("disconnect", () => {
       dropQuote();
       account = null;
       closeJournal();
+      forgetSepoliaBalance();
       setStatus("Wallet disconnected.");
       renderAll();
+      void refreshForteBalance();
     });
     try {
       const existing = await wallet.reconnect();
