@@ -693,4 +693,28 @@ describe("bridge page", () => {
     expect(document.getElementById("progress-list")?.textContent).toContain(IMG);
     expect(document.getElementById("progress-list")?.querySelector("img")).toBeNull();
   });
+
+  it("reviews and approves when the wallet rejects eth_maxPriorityFeePerGas", async () => {
+    const provider = createMockEip1193();
+    await boot({ provider, accounts: [] });
+    provider.handle("eth_maxPriorityFeePerGas", () => {
+      throw new Error('The method "eth_maxPriorityFeePerGas" does not exist / is not available.');
+    });
+    provider.handle("eth_feeHistory", () => ({
+      reward: [["0x5"], ["0x1"], ["0x3"], ["0x9"], ["0x4"]],
+    }));
+    await connectAndReview(provider);
+    expect(byId("review-panel").hidden).toBe(false);
+    expect(text("review-fee")).toBe("0.000000000003 ETH");
+    const feeLabel = byId("review-fee").previousElementSibling;
+    expect(feeLabel?.textContent).toContain("Max network fee");
+    expect(text("review-fee-source").trim()).toBe("from wallet fee history");
+    expect(text("live")).toBe("Review the deposit, then approve in MetaMask.");
+    byId<HTMLButtonElement>("approve").click();
+    await settle();
+    const sends = provider.calls("eth_sendTransaction");
+    expect(sends).toHaveLength(1);
+    const tx = (sends[0]?.params as { maxPriorityFeePerGas?: string }[])[0];
+    expect(tx?.maxPriorityFeePerGas).toBe("0x4");
+  });
 });
