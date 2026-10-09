@@ -433,6 +433,50 @@ describe("submitDeposit", () => {
     expect(provider.calls("eth_sendTransaction")).toHaveLength(1);
   });
 
+  it("does not send the same quote again after a broadcast attempt", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({ quote, now: quote.createdAt });
+    await expect(submitDeposit(quote, deps)).resolves.toMatchObject({ kind: "submitted" });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "quote was already submitted" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(1);
+    expect(provider.requests).toHaveLength(5);
+  });
+
+  it("does not send the same quote again after an uncertain broadcast", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      send: () => {
+        throw Object.assign(new Error("timeout"), { name: "TimeoutError" });
+      },
+    });
+    await expect(submitDeposit(quote, deps)).resolves.toMatchObject({ kind: "uncertain" });
+    const before = provider.requests.length;
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "quote was already submitted" });
+    expect(provider.requests).toHaveLength(before);
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(1);
+  });
+
+  it("allows another approval after a user rejection", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    let attempts = 0;
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      send: () => {
+        attempts += 1;
+        if (attempts === 1) throw Object.assign(new Error("rejected"), { code: 4001 });
+        return HASH;
+      },
+    });
+    await expect(submitDeposit(quote, deps)).resolves.toEqual({ kind: "wallet-rejected" });
+    await expect(submitDeposit(quote, deps)).resolves.toMatchObject({ kind: "submitted" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(2);
+  });
+
   it("maps 4001 to wallet-rejected and does not retry", async () => {
     const quote = await quoted({ estimate: 100_000n });
     const { deps, provider } = submitter({

@@ -15,6 +15,7 @@ const UNCERTAIN_GUIDANCE =
   "Check MetaMask activity. If a deposit transaction is there, paste the hash before trying again.";
 
 const inFlight = new WeakSet<object>();
+const submittedQuotes = new WeakSet<DepositQuote>();
 
 export class DepositInFlightError extends Error {
   constructor() {
@@ -43,6 +44,9 @@ export type SubmitDeps = {
 export async function submitDeposit(quote: DepositQuote, deps: SubmitDeps): Promise<SubmitResult> {
   const provider = deps.provider;
   if (inFlight.has(provider)) throw new DepositInFlightError();
+  if (submittedQuotes.has(quote)) {
+    return { kind: "blocked", reason: "quote was already submitted" };
+  }
   inFlight.add(provider);
   try {
     return await submitOnce(quote, deps);
@@ -92,10 +96,14 @@ async function submitOnce(quote: DepositQuote, deps: SubmitDeps): Promise<Submit
   }
 
   let raw: unknown;
+  submittedQuotes.add(quote);
   try {
     raw = await deps.provider.request({ method: "eth_sendTransaction", params: [tx] });
   } catch (err) {
-    if (errorCode(err) === 4001) return { kind: "wallet-rejected" };
+    if (errorCode(err) === 4001) {
+      submittedQuotes.delete(quote);
+      return { kind: "wallet-rejected" };
+    }
     return { kind: "uncertain", guidance: UNCERTAIN_GUIDANCE };
   }
 
