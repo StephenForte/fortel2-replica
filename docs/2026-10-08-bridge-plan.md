@@ -89,6 +89,14 @@ Fields taken from `config/rollup.json`: `l1.chainId`, `l2.chainId`, `l2.genesisH
 - **Recipient code rule.** Any non-empty L2 code rejects the recipient. One exception: an EIP-7702 delegation designator (`0xef0100` + 20 bytes) is allowed when the recipient is the connected account itself.
 - **Live checks, 2026-10-08.** `eth_call systemConfig()` (`0x33d7e2bd`) on the Portal via Tenderly returns `0x7c79…6bde`. Portal code is non-empty. Sequencer and replica block 0 hash both equal `0xe242…386d`. The replica returns the fixture L2 tx with the same `sourceHash` and block. `isSystemTx` is absent (null) on both nodes, so treat absent as false.
 
+## Notes for B6 (from wave-2 reviews)
+
+- `tracking-unavailable` plus `lastProvenPhase` must render as "last confirmed <step> at <time>, rechecking". It must never render as the current state. A stored success is only a hint until the tracker re-proves it.
+- `replacedBy` / `replaces` link records. The UI shows both hashes.
+- `submitDeposit` returns `uncertain` with guidance. The UI then offers paste-hash recovery (`tracker.recover`), and it must not offer a resend button.
+- `reviewedAt` / `approvedAt` are filled by B6 (in `onHash`, before `journal.upsert`).
+- `build.mjs` `check:bundle` greps `eval(` as a substring. If minified code trips it on an innocent identifier, report it. Do not loosen the check without planner approval.
+
 ## Integration order and expected conflicts
 
 1. **Wave 1, in parallel:** B1 and B2. They share no files. B2's file sits in `gateway/bridge/`, but B1 does not create `bridge-config.json`.
@@ -112,7 +120,7 @@ Record the actual model used per task in the Status table when it is dispatched.
 | B3 | strongest | Public RPC door. A routing slip breaks or opens `POST /`. |
 | B4 | strongest | Reorg, canonical checks, and no false success. |
 | B5 | strongest | Money path: quote immutability and preflight. |
-| B6 | mid | UI wiring over tested modules. |
+| B6 | strongest (raised 2026-10-08) | It wires the money path: review gating, the single Approve button, and how `tracking-unavailable` / `lastProvenPhase` are shown. A UI slip there submits an unreviewed deposit or shows a false success. |
 
 ## Acceptance mapping (PRD §10 → owner)
 
@@ -144,8 +152,8 @@ Record the actual model used per task in the Status table when it is dispatched.
 |---|---|---|---|---|
 | B1 | **merged** (#69 → `de9d4f3`) | `bridge/b1-protocol-core` / #69 @ `c166c0d` | Grok 4.7 | Planner re-ran in a scratch clone: typecheck, build, vitest 19/19. 5 probes passed, and breaking the wrapper inner-value check turns both suites red. An ethers 6.17.0 bundle has 0 `eval(` and 0 `new Function`. The event `from` equals the L1 tx `from` (no 7702 alias). Wall-clock 36 min. |
 | B2 | **merged** (#68 → `1db7c8b`) | `bridge/b2-config-artifact` / #68 | Cursor auto (usually Sonnet) | Planner probes: changing the Portal or genesis hash in rollup.json, or hand-editing `capWei` in the artifact, gives 3 unittest FAILs. CI: 177 tests OK. Wall-clock 20 min. |
-| B3 | ready to dispatch | — | — | |
-| B4 | ready to dispatch | — | — | |
-| B5 | ready to dispatch | — | — | |
-| B6 | blocked on B3–B5 | — | — | |
+| B3 | **merged** (#72 → `6d394d7`) | `bridge/b3-gateway-routing` / #72 | Grok 4.7 | Planner ran the real image with a counting upstream: `/bridge/` → 301 `Location: /bridge`, the R-0025 CSP is verbatim, asset MIME and immutable cache are correct, a missing asset is 404, non-GET is 405, and static routes made 0 upstream hits. Encoded `..` paths fall through to the proxy like any unknown path; that is accepted. The worker left a worktree behind and the planner removed it. Wall-clock 22 min. |
+| B4 | **merged** (#74 → `08fc3ca`) | `bridge/b4-tracker-journal` / #74 | Grok 4.7 | First review: changes requested. A replaced or cancelled original went back to `l1-pending` on the poller's recheck; planner probe and fix were proven in scratch. The fix `544796f` adds 4 tests, and 3 of them fail on `0efa9bf`. vitest 68. Wall-clock 51 + 6 min. |
+| B5 | **merged** (#73 → `db2fce3`) | `bridge/b5-wallet-quote-deposit` / #73 | Grok 4.7 | Merged with B4: vitest 136. The full-module + ethers bundle (102,437 B) has 0 eval and 0 Function. Gas boundaries 250k→500k, 500k→1M, 500,001 blocked. Mutation checks: removing the consume guard fails 2 tests; removing the pre-send wallet re-read fails 5. 6 Codex rounds, all fixed. Wall-clock 78 min. |
+| B6 | ready to dispatch | — | — | |
 | G | blocked on B6 | — | operator | |
