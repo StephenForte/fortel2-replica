@@ -111,6 +111,12 @@ server {
     listen ${PORT};
     server_name _;
 
+    # Keep redirects as paths. nginx otherwise builds an absolute Location
+    # from this listen port, so `return 301 /bridge` becomes
+    # http://<host>:10000/bridge. Render terminates TLS in front of the
+    # container; that URL is dead, and a localhost test still looks fine.
+    absolute_redirect off;
+
     client_max_body_size ${RPC_MAX_BODY};
 
     access_log /dev/stdout rpc_gateway;
@@ -135,6 +141,73 @@ server {
         add_header Cache-Control "no-cache" always;
         add_header X-Content-Type-Options "nosniff" always;
         add_header Content-Security-Policy "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https://fortel2-sequencer-rpc.onrender.com https://ethereum-sepolia-rpc.publicnode.com; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+    }
+
+    # Bridge. These four locations sit ahead of the catch-all prefix so a
+    # static miss cannot fall through to the replica. GET and HEAD only;
+    # any other method is 405 from limit_except (access phase, after
+    # limit_req) and never proxy_passes. Do not switch the asset prefix
+    # to a regex, drop the ^~, or point try_files at a proxy location —
+    # a miss would be proxied, or the RPC door would become a static server.
+    location = /bridge {
+        limit_req zone=rpc burst=${RPC_BURST} nodelay;
+        error_page 403 =405 @bridge_method_not_allowed;
+        limit_except GET HEAD {
+            deny all;
+        }
+        default_type text/html;
+        charset utf-8;
+        alias /usr/share/nginx/html/bridge/index.html;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://fortel2-sequencer-rpc.onrender.com https://sepolia.gateway.tenderly.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
+    }
+
+    location = /bridge/ {
+        limit_req zone=rpc burst=${RPC_BURST} nodelay;
+        error_page 403 =405 @bridge_method_not_allowed;
+        limit_except GET HEAD {
+            deny all;
+        }
+        return 301 /bridge;
+    }
+
+    # ^~ : longest-prefix wins over regex, and a missing file is the
+    # static module's 404. =404 is a code, not an internal redirect, so
+    # this cannot reach the proxy. root (not alias) because the URL path
+    # is already under /usr/share/nginx/html.
+    location ^~ /bridge/assets/ {
+        limit_req zone=rpc burst=${RPC_BURST} nodelay;
+        error_page 403 =405 @bridge_method_not_allowed;
+        limit_except GET HEAD {
+            deny all;
+        }
+        root /usr/share/nginx/html;
+        try_files $uri =404;
+        types {
+            application/javascript js;
+            text/css css;
+        }
+        default_type application/octet-stream;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    location = /bridge-config.json {
+        limit_req zone=rpc burst=${RPC_BURST} nodelay;
+        error_page 403 =405 @bridge_method_not_allowed;
+        limit_except GET HEAD {
+            deny all;
+        }
+        default_type application/json;
+        alias /usr/share/nginx/html/bridge-config.json;
+        add_header Cache-Control "no-cache" always;
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    location @bridge_method_not_allowed {
+        default_type text/plain;
+        return 405;
     }
 
     # Everything else, including GET /, goes to the replica method filter.

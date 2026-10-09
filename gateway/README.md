@@ -34,6 +34,37 @@ field is always unavailable. The `Content-Security-Policy` on
 `location = /status` lists these origins; change it together with the
 `CFG` block in `status.html` (a test checks they match).
 
+The header links to the same-origin deposit page (`Bridge ETH`) and
+labels the chain `Sepolia testnet`. That link does not add an origin
+and does not change the `/status` policy or its polling.
+
+## Bridge (`/bridge`)
+
+The image builds `bridge/` in a Node 22 stage (`npm ci`, then
+`npm run build`) and copies the output into the nginx stage. The
+runtime image stays `nginxinc/nginx-unprivileged:1.30.4-alpine`: no
+Node, no volume, and no new environment variable.
+`package.json` and `package-lock.json` are copied before the rest of
+`bridge/` so the install layer caches. `.dockerignore` excludes
+`bridge/node_modules` and `bridge/dist`, so a build on the host cannot
+enter the image. The build context is still this directory.
+
+| Route | Methods | What it serves |
+|---|---|---|
+| `/bridge` | GET, HEAD | Built `index.html`. `Cache-Control: no-cache`. Bridge `Content-Security-Policy` (script and style are `'self'` only). |
+| `/bridge/` | GET, HEAD | `301` with `Location: /bridge`. The location is a path. nginx would otherwise emit `http://<host>:10000/bridge`, which is dead behind Render's TLS. |
+| `/bridge/assets/` | GET, HEAD | Hashed files only. `Cache-Control: public, max-age=31536000, immutable`. `.js` is `application/javascript`, `.css` is `text/css`. A missing file is 404 and is not proxied. |
+| `/bridge-config.json` | GET, HEAD | Committed `bridge/bridge-config.json`. `application/json`. `Cache-Control: no-cache`. |
+
+Any other method on those routes is `405` and does not reach the
+replica. `POST /`, `/status`, `/healthz`, the per-request resolver,
+the rate limits, and CORS (still only from the method filter) are
+unchanged.
+
+Rollback is a redeploy of the previous gateway commit. The replica
+disk, sequencer, and rollup config are not part of this image, so
+chain state is unaffected.
+
 ## Env (contract)
 
 | Variable | Default | Meaning |
