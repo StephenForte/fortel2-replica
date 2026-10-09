@@ -423,6 +423,25 @@ describe("tracker refresh", () => {
     expect(again.actualL1FeeWei).toBe(FEE);
   });
 
+  it("keeps the phase proved in this refresh when a later client goes down", async () => {
+    const sequencerDown = chain();
+    sequencerDown.fail.sequencer = new RpcUnavailableError("sequencer down");
+    const afterL1 = await trackerFor(sequencerDown).refresh(seed());
+    expect(afterL1.phase).toBe("tracking-unavailable");
+    expect(afterL1.lastProvenPhase).toBe("l1-included");
+    expect(afterL1.l2Hash).toBe(L2_HASH);
+    expect(afterL1.actualL1FeeWei).toBe(FEE);
+
+    const replicaDown = chain();
+    replicaDown.fail.replica = new RpcUnavailableError("replica down");
+    const afterL2 = await trackerFor(replicaDown).refresh(seed());
+    expect(afterL2.phase).toBe("tracking-unavailable");
+    expect(afterL2.lastProvenPhase).toBe("l2-received");
+    expect(afterL2.l2Hash).toBe(L2_HASH);
+    expect(afterL2.actualL1FeeWei).toBe(FEE);
+    expect(afterL2.replicaObservedAt).toBeUndefined();
+  });
+
   it("treats a malformed receipt as no progress", async () => {
     const { world, tracker, record } = await confirmed();
     const row = world.l1.get(L1_HASH);
@@ -669,6 +688,94 @@ describe("poller", () => {
     page.set("visible");
     await drain();
     expect(calls).toBe(2);
+  });
+
+  it("rechecks a stored success once, then stops if the chain still proves it", async () => {
+    const clock = timer();
+    let calls = 0;
+    const poller = createPoller({
+      intervalMs: 1_000,
+      now: () => 0,
+      timer: clock,
+      visibility: visibility(),
+      tracker: {
+        async refresh(record) {
+          calls += 1;
+          return { ...record, phase: "replica-confirmed" };
+        },
+      },
+    });
+    poller.watch(seed({ phase: "replica-confirmed", l2Hash: L2_HASH }));
+    poller.start();
+    await drain();
+    expect(calls).toBe(1);
+    expect(poller.dueAt()).toBeNull();
+    expect(clock.fireNext()).toBe(false);
+    expect(calls).toBe(1);
+  });
+
+  it("keeps polling when a stored success no longer matches the chain", async () => {
+    const clock = timer();
+    let calls = 0;
+    const poller = createPoller({
+      intervalMs: 1_000,
+      now: () => 0,
+      timer: clock,
+      visibility: visibility(),
+      tracker: {
+        async refresh(record) {
+          calls += 1;
+          const next = { ...record, phase: "l1-pending" as const };
+          delete next.l2Hash;
+          return next;
+        },
+      },
+    });
+    poller.watch(seed({ phase: "replica-confirmed", l2Hash: L2_HASH }));
+    poller.start();
+    await drain();
+    expect(calls).toBe(1);
+    expect(poller.records()[0]?.phase).toBe("l1-pending");
+    expect(clock.fireNext()).toBe(true);
+    await drain();
+    expect(calls).toBe(2);
+  });
+
+  it("does not restore a deposit unwatched during an in-flight refresh", async () => {
+    const clock = timer();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const updates: string[] = [];
+    const poller = createPoller({
+      intervalMs: 1_000,
+      now: () => 0,
+      timer: clock,
+      visibility: visibility(),
+      onUpdate(record) {
+        updates.push(record.phase);
+      },
+      tracker: {
+        async refresh(record) {
+          calls += 1;
+          await gate;
+          return { ...record, phase: "l2-received" };
+        },
+      },
+    });
+    poller.watch(seed());
+    poller.start();
+    await drain();
+    expect(calls).toBe(1);
+    poller.unwatch(L1_HASH);
+    release();
+    await drain();
+    expect(poller.records()).toEqual([]);
+    expect(updates).toEqual([]);
+    expect(clock.fireNext()).toBe(false);
+    expect(calls).toBe(1);
   });
 
   it("stops polling terminal phases", async () => {

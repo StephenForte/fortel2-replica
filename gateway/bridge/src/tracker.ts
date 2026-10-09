@@ -34,6 +34,15 @@ export const TERMINAL_PHASES: readonly Phase[] = [
 
 const TERMINAL = new Set<Phase>(TERMINAL_PHASES);
 
+/** Pipeline order. An outage keeps the furthest phase this refresh, or a prior one, actually proved. */
+const PROGRESS_RANK: Partial<Record<Phase, number>> = {
+  "l1-pending": 1,
+  "l1-included": 2,
+  "l2-pending": 3,
+  "l2-received": 4,
+  "replica-confirmed": 5,
+};
+
 export type Tracker = {
   refresh(record: DepositRecord): Promise<DepositRecord>;
   recover(l1Hash: string): Promise<DepositRecord>;
@@ -124,7 +133,8 @@ export function createTracker(options: {
       lastError: reason.length > 0 ? reason : "unavailable",
       lastCheckedAt: now(),
     };
-    const proven = prior.phase === "tracking-unavailable" ? prior.lastProvenPhase : prior.phase;
+    const previous = prior.phase === "tracking-unavailable" ? prior.lastProvenPhase : prior.phase;
+    const proven = strongerPhase(previous, latest.lastProvenPhase);
     if (proven === undefined) delete next.lastProvenPhase;
     else next.lastProvenPhase = proven;
     return next;
@@ -372,10 +382,15 @@ export function createPoller(options: {
   let due: number | null = null;
   let started = false;
   let inFlight = false;
+  let ticket = 0;
   const watched = new Map<string, DepositRecord>();
+  const generation = new Map<string, number>();
+  /** Terminal phases are hints until this poller has refreshed them once. */
+  const rechecked = new Set<string>();
 
   const hidden = () => options.visibility?.visibilityState === "hidden";
-  const hasActive = () => [...watched.values()].some((record) => !TERMINAL.has(record.phase));
+  const needsRefresh = (record: DepositRecord) => !TERMINAL.has(record.phase) || !rechecked.has(record.l1Hash.toLowerCase());
+  const hasActive = () => [...watched.values()].some(needsRefresh);
 
   function clearArmed(): void {
     if (handle !== null) timer.clearTimeout(handle);
@@ -403,8 +418,11 @@ export function createPoller(options: {
     try {
       for (const [key, record] of [...watched.entries()]) {
         if (!started || hidden()) break;
-        if (TERMINAL.has(record.phase)) continue;
+        if (!needsRefresh(record)) continue;
+        const current = generation.get(key);
         const next = await options.tracker.refresh(record);
+        if (!watched.has(key) || generation.get(key) !== current) continue;
+        rechecked.add(key);
         watched.set(key, next);
         options.onUpdate?.(next);
         if (next.phase === "tracking-unavailable") sawUnavailable = true;
@@ -428,11 +446,17 @@ export function createPoller(options: {
 
   return {
     watch(record) {
-      watched.set(record.l1Hash.toLowerCase(), { ...record });
+      const key = record.l1Hash.toLowerCase();
+      ticket += 1;
+      generation.set(key, ticket);
+      watched.set(key, { ...record });
       if (started && !hidden() && !inFlight) void run();
     },
     unwatch(l1Hash) {
-      watched.delete(l1Hash.toLowerCase());
+      const key = l1Hash.toLowerCase();
+      watched.delete(key);
+      generation.delete(key);
+      rechecked.delete(key);
     },
     records() {
       return [...watched.values()].map((record) => ({ ...record }));
@@ -455,6 +479,13 @@ export function createPoller(options: {
       return due;
     },
   };
+}
+
+function strongerPhase(previous: Phase | undefined, reached: Phase | undefined): Phase | undefined {
+  const previousRank = previous === undefined ? 0 : (PROGRESS_RANK[previous] ?? 0);
+  const reachedRank = reached === undefined ? 0 : (PROGRESS_RANK[reached] ?? 0);
+  if (reachedRank > previousRank) return reached;
+  return previous ?? reached;
 }
 
 function replicaProven(phase: Phase): boolean {
