@@ -530,6 +530,88 @@ describe("replacement", () => {
     expect(wrongFrom).toEqual({ status: "rejected", reason: "from mismatch" });
     expect(original.phase).toBe("l1-pending");
   });
+
+  function minedReplacement(world: ReturnType<typeof chain>, hash: string) {
+    const tx = structuredClone(world.l1.get(L1_HASH)?.tx);
+    const receipt = structuredClone(world.l1.get(L1_HASH)?.receipt);
+    if (!tx || !receipt) throw new Error("missing fixture");
+    tx.hash = hash;
+    receipt.transactionHash = hash;
+    addTx(world, hash, tx, receipt);
+  }
+
+  it("keeps replaced when the original transaction has been dropped", async () => {
+    const world = chain();
+    const hash = `0x${"22".repeat(32)}`;
+    minedReplacement(world, hash);
+    world.l1.delete(L1_HASH);
+    const tracker = trackerFor(world);
+    const linked = await tracker.linkReplacement(seed({ nonce: 3 }), hash);
+    expect(linked.status).toBe("replaced");
+    if (linked.status !== "replaced") return;
+    const again = await tracker.refresh(linked.original);
+    expect(again.phase).toBe("replaced");
+    expect(again.replacedBy).toBe(hash);
+    expect(again.l2Hash).toBeUndefined();
+  });
+
+  it("keeps cancelled when the original transaction has been dropped", async () => {
+    const world = chain();
+    const hash = `0x${"23".repeat(32)}`;
+    addTx(
+      world,
+      hash,
+      { hash, from: ACCOUNT, to: ACCOUNT, nonce: "0x3", value: "0x0", input: "0x" },
+      { transactionHash: hash, status: "0x1", blockNumber: "0x1", blockHash: `0x${"ab".repeat(32)}` },
+    );
+    world.l1.delete(L1_HASH);
+    const tracker = trackerFor(world);
+    const linked = await tracker.linkReplacement(seed({ nonce: 3, actualL1FeeWei: "9" }), hash);
+    expect(linked.status).toBe("cancelled");
+    if (linked.status !== "cancelled") return;
+    expect(linked.original.replacedBy).toBe(hash);
+    const again = await tracker.refresh(linked.original);
+    expect(again.phase).toBe("cancelled");
+    expect(again.replacedBy).toBe(hash);
+    expect(again.lastError).toBe("replacement is not the same deposit");
+    expect(again.actualL1FeeWei).toBeUndefined();
+  });
+
+  it("restores replaced from tracking-unavailable when the original is still absent", async () => {
+    const world = chain();
+    world.l1.delete(L1_HASH);
+    const hash = `0x${"22".repeat(32)}`;
+    const prior = seed({
+      phase: "tracking-unavailable",
+      lastProvenPhase: "replaced",
+      replacedBy: hash,
+      nonce: 3,
+      lastError: "unavailable",
+    });
+    const next = await trackerFor(world).refresh(prior);
+    expect(next.phase).toBe("replaced");
+    expect(next.replacedBy).toBe(hash);
+    expect(next.lastProvenPhase).toBe("replaced");
+    expect(next.lastError).toBe("unavailable");
+  });
+
+  it("derives a replaced record normally once its original transaction is mined", async () => {
+    const world = chain();
+    const hash = `0x${"26".repeat(32)}`;
+    minedReplacement(world, hash);
+    const originalRow = world.l1.get(L1_HASH);
+    if (!originalRow) throw new Error("missing original");
+    world.l1.delete(L1_HASH);
+    const tracker = trackerFor(world);
+    const linked = await tracker.linkReplacement(seed({ nonce: 3 }), hash);
+    expect(linked.status).toBe("replaced");
+    if (linked.status !== "replaced") return;
+    world.l1.set(L1_HASH, originalRow);
+    const again = await tracker.refresh(linked.original);
+    expect(again.phase).toBe("replica-confirmed");
+    expect(again.l2Hash).toBe(L2_HASH);
+    expect(again.actualL1FeeWei).toBe(FEE);
+  });
 });
 
 describe("poller", () => {

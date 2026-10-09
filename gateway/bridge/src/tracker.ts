@@ -157,7 +157,7 @@ export function createTracker(options: {
 
     const txRaw = await l1.call("eth_getTransactionByHash", [prior.l1Hash]);
     const receiptRaw = await l1.call("eth_getTransactionReceipt", [prior.l1Hash]);
-    if (txRaw === null && receiptRaw === null) return pending(prior, prior.nonce);
+    if (txRaw === null && receiptRaw === null) return droppedOriginal(prior);
     if (!isChainRecord(txRaw)) throw new NotProgress("l1 transaction malformed");
     if (receiptRaw !== null && !isChainRecord(receiptRaw)) throw new NotProgress("l1 receipt malformed");
 
@@ -276,6 +276,18 @@ export function createTracker(options: {
     return touch(next, prior, "l1-pending");
   }
 
+  function droppedOriginal(prior: DepositRecord): DepositRecord {
+    // A missing original stays replaced or cancelled only when replacedBy names the successor.
+    // Any other stored phase, including replica-confirmed, is still a hint.
+    const settled = prior.phase === "tracking-unavailable" ? prior.lastProvenPhase : prior.phase;
+    if ((settled === "replaced" || settled === "cancelled") && prior.replacedBy !== undefined) {
+      const kept = touch(shell(prior), prior, settled);
+      if (prior.lastError !== undefined) kept.lastError = prior.lastError;
+      return kept;
+    }
+    return pending(prior, prior.nonce);
+  }
+
   async function recover(l1Hash: string): Promise<DepositRecord> {
     const txRaw = await l1.call("eth_getTransactionByHash", [l1Hash]);
     if (!isChainRecord(txRaw)) throw new ProtocolError("recover: transaction not found");
@@ -334,6 +346,7 @@ export function createTracker(options: {
     if (!sameIntent || matched === null) {
       const cancelled = shell(original);
       cancelled.nonce = original.nonce;
+      cancelled.replacedBy = txHash;
       const done = touch(cancelled, original, "cancelled");
       done.lastError = "replacement is not the same deposit";
       return { status: "cancelled", original: done };
