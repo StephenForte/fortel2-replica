@@ -32,6 +32,10 @@ _API_KEY_SEGMENT = re.compile(
 )
 _DECIMAL_WEI = re.compile(r"^[0-9]+$")
 _ADDRESS = re.compile(r"^0x[0-9a-f]{40}$")
+# Retired chain id. Reject the value, not the digit sequence: a genesis hash
+# or address may legally contain the characters 851.
+_LEGACY_CHAIN_ID = 851
+_LEGACY_CHAIN_HEX = hex(_LEGACY_CHAIN_ID)
 
 
 def _load_generator():
@@ -55,6 +59,27 @@ def _walk(value):
             yield from _walk(item)
     else:
         yield value
+
+
+def _legacy_chain_hits(value):
+    """Yield where chain id 851 appears as a number or as its own hex string."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            yield from (
+                f"{key}.{hit}" for hit in _legacy_chain_hits(item)
+            )
+    elif isinstance(value, list):
+        for index, item in enumerate(value):
+            yield from (
+                f"[{index}].{hit}" for hit in _legacy_chain_hits(item)
+            )
+    elif type(value) is int and value == _LEGACY_CHAIN_ID:
+        yield "value"
+    elif isinstance(value, str) and value.lower() in (
+        str(_LEGACY_CHAIN_ID),
+        _LEGACY_CHAIN_HEX,
+    ):
+        yield "value"
 
 
 class BridgeConfigTests(unittest.TestCase):
@@ -116,10 +141,28 @@ class BridgeConfigTests(unittest.TestCase):
         self.assertRegex(cfg["l2"]["genesisHash"], r"^0x[0-9a-f]{64}$")
 
     def test_chain_id_851_appears_nowhere(self):
-        text = self.committed.decode("utf-8")
-        self.assertNotIn("851", text)
-        ints = [item for item in _walk(self.config) if type(item) is int]
-        self.assertNotIn(851, ints)
+        hits = list(_legacy_chain_hits(self.config))
+        self.assertEqual([], hits)
+        for side in ("l1", "l2"):
+            self.assertNotEqual(_LEGACY_CHAIN_ID, self.config[side]["chainId"])
+            self.assertNotEqual(
+                _LEGACY_CHAIN_HEX,
+                self.config[side]["chainIdHex"],
+            )
+
+    def test_digits_851_inside_a_hash_are_not_chain_851(self):
+        cfg = json.loads(self.committed.decode("utf-8"))
+        cfg["l2"]["genesisHash"] = "0x" + ("851" * 21) + "ab"
+        self.assertIn("851", cfg["l2"]["genesisHash"])
+        self.assertEqual([], list(_legacy_chain_hits(cfg)))
+
+    def test_chain_id_field_851_is_rejected(self):
+        cfg = json.loads(self.committed.decode("utf-8"))
+        cfg["l2"]["chainId"] = _LEGACY_CHAIN_ID
+        cfg["l2"]["chainIdHex"] = _LEGACY_CHAIN_HEX
+        hits = list(_legacy_chain_hits(cfg))
+        self.assertIn("l2.chainId.value", hits)
+        self.assertIn("l2.chainIdHex.value", hits)
 
     def test_urls_have_no_credentials_query_or_api_key_segments(self):
         seen = False
