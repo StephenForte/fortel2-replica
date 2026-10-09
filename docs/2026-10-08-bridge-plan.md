@@ -35,7 +35,8 @@ Source: the operator's PRD "ForteL2 ETH Bridge in the Replica Gateway" (2026-10-
 | **B4** | Tracker + journal | `gateway/bridge/src/{tracker.ts,journal.ts}`, `gateway/bridge/test/{tracker,journal}.test.ts` | `gateway/bridge/test/fixtures/**` (new files only), `gateway/bridge/src/types.ts` (new optional `DepositRecord` fields only) | 2 | B1 merged |
 | **B5** | Wallet, config verify, quote, deposit | `gateway/bridge/src/{wallet.ts,config.ts,quote.ts,deposit.ts}`, `gateway/bridge/test/{wallet,config,quote,deposit}.test.ts`, `gateway/bridge/test/mock-eip1193.ts` | `gateway/bridge/test/fixtures/**` (new files only) | 2 | B1 merged |
 | **B6** | UI shell, accessibility, flow tests, docs | `gateway/bridge/index.html` (replaces stub), `gateway/bridge/build.mjs` (wire `src/main.ts` + `src/styles.css` into the existing hashed-asset and bundle-check pipeline; the checks may not be loosened), `gateway/bridge/src/main.ts`, `gateway/bridge/src/ui/**`, `gateway/bridge/src/styles.css`, `gateway/bridge/test/ui*.test.ts`, `gateway/bridge/README.md` | — | 3 | B3, B4, B5 merged |
-| **G** | Release gate (operator + planner) | Render manual deploy of `fortel2-replica-rpc` only; live MetaMask deposit; real-browser CSP/CORS | `DECISIONS.md` R-0026 (planner) | 4 | B6 merged |
+| **B5-fix** | Priority-fee fallback (MetaMask returns -32601 for `eth_maxPriorityFeePerGas`) | `gateway/bridge/src/quote.ts`, `gateway/bridge/test/quote.test.ts`, `gateway/bridge/src/ui/app.ts` (createQuote wiring + fee-source line only) | `gateway/bridge/test/ui.test.ts` (new tests only) | 4 | B6 merged |
+| **G** | Release gate (operator + planner) | Render manual deploy of `fortel2-replica-rpc` only; live MetaMask deposit; real-browser CSP/CORS | `DECISIONS.md` R-0026 (planner) | 5 | B6, B5-fix merged |
 
 ## Interface contracts (fixed here so wave 2 can run in parallel)
 
@@ -102,7 +103,8 @@ Fields taken from `config/rollup.json`: `l1.chainId`, `l2.chainId`, `l2.genesisH
 1. **Wave 1, in parallel:** B1 and B2. They share no files. B2's file sits in `gateway/bridge/`, but B1 does not create `bridge-config.json`.
 2. **Wave 2, in parallel after B1 and B2 merge:** B3, B4, B5. Merge B4 and B5 in either order. Both append new files under `test/fixtures/`, so they will not collide unless they pick the same filename. Prefix filenames with `b4-` or `b5-`.
 3. **Wave 3:** B6 starts after B3, B4, and B5 merge.
-4. **Release:** G.
+4. **Wave 4:** B5-fix, after B6 merged and deployed. It was opened when real MetaMask returned -32601 for `eth_maxPriorityFeePerGas` on the live `/bridge`.
+5. **Release:** G, only after B5-fix has merged and the gateway has been redeployed with it.
 
 **Expected conflicts.**
 - `.github/workflows/tests.yml`: only B1 appended a job (`bridge-node`). B3 added no CI job (Wave 2 amendments), so this file had no wave-2 conflict.
