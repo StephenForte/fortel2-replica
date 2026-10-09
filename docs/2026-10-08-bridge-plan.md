@@ -34,7 +34,7 @@ Source: the operator's PRD "ForteL2 ETH Bridge in the Replica Gateway" (2026-10-
 | **B3** | Gateway packaging, routing, CSP, status link | `gateway/Dockerfile`, `gateway/nginx.conf.template`, `gateway/.dockerignore`, `gateway/README.md` | `gateway/status.html` (link + "Sepolia testnet" label only), `tests/test_gateway_config.py`, `.github/workflows/tests.yml` (new job `gateway-image`) | 2 | B1, B2 merged |
 | **B4** | Tracker + journal | `gateway/bridge/src/{tracker.ts,journal.ts}`, `gateway/bridge/test/{tracker,journal}.test.ts` | `gateway/bridge/test/fixtures/**` (new files only) | 2 | B1 merged |
 | **B5** | Wallet, config verify, quote, deposit | `gateway/bridge/src/{wallet.ts,config.ts,quote.ts,deposit.ts}`, `gateway/bridge/test/{wallet,config,quote,deposit}.test.ts`, `gateway/bridge/test/mock-eip1193.ts` | `gateway/bridge/test/fixtures/**` (new files only) | 2 | B1 merged |
-| **B6** | UI shell, accessibility, flow tests, docs | `gateway/bridge/index.html` (replaces stub), `gateway/bridge/src/main.ts`, `gateway/bridge/src/ui/**`, `gateway/bridge/src/styles.css`, `gateway/bridge/test/ui*.test.ts`, `gateway/bridge/README.md` | — | 3 | B3, B4, B5 merged |
+| **B6** | UI shell, accessibility, flow tests, docs | `gateway/bridge/index.html` (replaces stub), `gateway/bridge/build.mjs` (wire `src/main.ts` + `src/styles.css` into the existing hashed-asset and bundle-check pipeline; the checks may not be loosened), `gateway/bridge/src/main.ts`, `gateway/bridge/src/ui/**`, `gateway/bridge/src/styles.css`, `gateway/bridge/test/ui*.test.ts`, `gateway/bridge/README.md` | — | 3 | B3, B4, B5 merged |
 | **G** | Release gate (operator + planner) | Render manual deploy of `fortel2-replica-rpc` only; live MetaMask deposit; real-browser CSP/CORS | `DECISIONS.md` R-0026 (planner) | 4 | B6 merged |
 
 ## Interface contracts (fixed here so wave 2 can run in parallel)
@@ -94,7 +94,7 @@ Fields taken from `config/rollup.json`: `l1.chainId`, `l2.chainId`, `l2.genesisH
 
 ## Model tiering and run order
 
-Record the actual model used per task in the Status table when it is dispatched.
+Record the actual model used per task in the Status table when it is dispatched. Cursor mapping: **strongest** = Grok 4.7. **mid** and **cheap** = Cursor `auto`, which usually picks Sonnet.
 
 | ID | Tier | Why |
 |---|---|---|
@@ -121,6 +121,10 @@ Record the actual model used per task in the Status table when it is dispatched.
 
 ## Open items
 
+- **Carried from the B1 review into B4.** `decodeDepositEvent` decodes `isCreation=1` and does not check `log.removed`. The tracker must reject creation deposits and removed logs, and must compare the event's `to`, `mint` and `value` to the matched L1 call.
+- **Bundle check scope.** `build.mjs` bundles a stub until B6 wires `src/main.ts` into it. The `eval` and `Function` gate runs on the real bundle only from B6 onward. B5 adds `BrowserProvider`, so re-run the ethers probe when B5 is reviewed.
+- **Local Mac unittest.** The 5 `test_snapshot_reth_state` failures are the capture guard detecting the sequencer's live op-reth. They are environmental. CI is the gate.
+
 - **Lab source.** The operator may attach the lab files (`site/lib/*.ts`, `site/scripts/test-bridge.mjs`, `site/evidence/bridge-history-validation-2026-10-08.json`) as optional reference for B1 and B4. They are not required.
 - **Real-browser e2e.** CI covers the UI with happy-dom and a mock EIP-1193 provider. Real Brave and Chrome with the MetaMask extension are checked by hand at G. No Playwright in this release.
 - **Status page CSP** keeps `'unsafe-inline'` and PublicNode. Out of scope.
@@ -129,10 +133,10 @@ Record the actual model used per task in the Status table when it is dispatched.
 
 | ID | State | Branch / PR | Model | Notes |
 |---|---|---|---|---|
-| B1 | ready to dispatch | — | — | |
-| B2 | ready to dispatch | — | — | |
-| B3 | blocked on B1, B2 | — | — | |
-| B4 | blocked on B1 | — | — | |
-| B5 | blocked on B1 | — | — | |
+| B1 | **merged** (#69 → `de9d4f3`) | `bridge/b1-protocol-core` / #69 @ `c166c0d` | Grok 4.7 | Planner re-ran in a scratch clone: typecheck, build, vitest 19/19. 5 probes passed, and breaking the wrapper inner-value check turns both suites red. An ethers 6.17.0 bundle has 0 `eval(` and 0 `new Function`. The event `from` equals the L1 tx `from` (no 7702 alias). Wall-clock 36 min. |
+| B2 | **merged** (#68 → `1db7c8b`) | `bridge/b2-config-artifact` / #68 | Cursor auto (usually Sonnet) | Planner probes: changing the Portal or genesis hash in rollup.json, or hand-editing `capWei` in the artifact, gives 3 unittest FAILs. CI: 177 tests OK. Wall-clock 20 min. |
+| B3 | ready to dispatch | — | — | |
+| B4 | ready to dispatch | — | — | |
+| B5 | ready to dispatch | — | — | |
 | B6 | blocked on B3–B5 | — | — | |
 | G | blocked on B6 | — | operator | |
