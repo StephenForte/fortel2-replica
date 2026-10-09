@@ -54,9 +54,7 @@ export async function createQuote(input: QuoteInput, deps: QuoteDeps): Promise<D
   const recipient = validateRecipient(input.recipient);
   const account = requireAccount(input.account);
 
-  const replicaCode = await recipientCode(deps.replica, recipient);
-  const sequencerCode = await recipientCode(deps.sequencer, recipient);
-  assertRecipientCode(replicaCode, sequencerCode, recipient, account);
+  await confirmRecipientCode(deps, recipient, account);
 
   if (deps.cfg.deposit.l2GasLimit !== decimal(L2_GAS)) {
     throw new QuoteError("L2 gas limit must stay 100000");
@@ -148,6 +146,16 @@ async function recipientCode(replica: RpcClient, recipient: string): Promise<str
     throw new QuoteError("recipient code is unreadable");
   }
   return code;
+}
+
+export async function confirmRecipientCode(
+  clients: { replica: RpcClient; sequencer: RpcClient },
+  recipient: string,
+  account: string,
+): Promise<void> {
+  const replicaCode = await recipientCode(clients.replica, recipient);
+  const sequencerCode = await recipientCode(clients.sequencer, recipient);
+  assertRecipientCode(replicaCode, sequencerCode, recipient, account);
 }
 
 function assertRecipientCode(replicaCode: string, sequencerCode: string, recipient: string, account: string): void {

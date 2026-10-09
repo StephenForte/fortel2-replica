@@ -5,7 +5,7 @@
  */
 
 import { verifyConfig } from "./config";
-import { isQuoteValid, type QuoteContext } from "./quote";
+import { confirmRecipientCode, isQuoteValid, QuoteError, type QuoteContext } from "./quote";
 import type { RpcClient } from "./rpc";
 import type { BridgeConfig, DepositQuote, DepositRecord } from "./types";
 import type { Eip1193Provider } from "./wallet";
@@ -83,6 +83,8 @@ async function submitOnce(quote: DepositQuote, deps: SubmitDeps): Promise<Submit
 
   const tx = transactionFromQuote(quote);
   if (tx === null) return { kind: "blocked", reason: "quote cannot be encoded" };
+  const recipientNow = await recheckRecipient(deps, quote);
+  if (recipientNow !== null) return recipientNow;
   const walletNow = await readWalletNow(deps.provider, quote);
   if (walletNow !== null) return walletNow;
 
@@ -162,6 +164,20 @@ function transactionFromQuote(quote: DepositQuote): Record<string, string> | nul
 }
 
 const SEPOLIA_CHAIN = 11155111n;
+
+async function recheckRecipient(deps: SubmitDeps, quote: DepositQuote): Promise<SubmitResult | null> {
+  try {
+    await confirmRecipientCode(
+      { replica: deps.replica, sequencer: deps.sequencer },
+      quote.recipient,
+      quote.account,
+    );
+    return null;
+  } catch (err) {
+    const reason = err instanceof QuoteError ? err.message : "recipient code unavailable";
+    return { kind: "blocked", reason };
+  }
+}
 
 async function readWalletNow(provider: Eip1193Provider, quote: DepositQuote): Promise<SubmitResult | null> {
   let chain: unknown;

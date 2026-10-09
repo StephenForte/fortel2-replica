@@ -24,12 +24,16 @@ function word(address: string): string {
   return `0x${address.slice(2).toLowerCase().padStart(64, "0")}`;
 }
 
-function scripted(handlers: Record<string, () => unknown>): { client: RpcClient; calls: number } {
+type RpcLog = { method: string; params: readonly unknown[] | undefined };
+
+function scripted(handlers: Record<string, () => unknown>): { client: RpcClient; calls: number; log: RpcLog[] } {
+  const log: RpcLog[] = [];
   let calls = 0;
   return {
     client: {
-      async call(method: string) {
+      async call(method: string, params?: readonly unknown[]) {
         calls += 1;
+        log.push({ method, params });
         const handler = handlers[method];
         if (!handler) throw new Error(`unexpected ${method}`);
         return handler();
@@ -38,27 +42,36 @@ function scripted(handlers: Record<string, () => unknown>): { client: RpcClient;
     get calls() {
       return calls;
     },
+    log,
   };
 }
 
-function chainClients(l1Chain: string = cfg.l1.chainIdHex) {
+function chainClients(options: {
+  l1Chain?: string;
+  sequencerCode?: () => string;
+  replicaCode?: () => string;
+} = {}) {
   const l1 = scripted({
-    eth_chainId: () => l1Chain,
+    eth_chainId: () => options.l1Chain ?? cfg.l1.chainIdHex,
     eth_getCode: () => "0x6000",
     eth_call: () => word(cfg.contracts.systemConfig),
   });
   const sequencer = scripted({
     eth_chainId: () => cfg.l2.chainIdHex,
     eth_getBlockByNumber: () => ({ hash: cfg.l2.genesisHash }),
+    eth_getCode: () => (options.sequencerCode ? options.sequencerCode() : "0x"),
   });
   const replica = scripted({
     eth_chainId: () => cfg.l2.chainIdHex,
     eth_getBlockByNumber: () => ({ hash: cfg.l2.genesisHash }),
+    eth_getCode: () => (options.replicaCode ? options.replicaCode() : "0x"),
   });
   return { l1, sequencer, replica };
 }
 
-async function quoted(options: { estimate: bigint; legacy?: boolean }): Promise<DepositQuote> {
+const DELEGATION = `0xef0100${"11".repeat(20)}`;
+
+async function quoted(options: { estimate: bigint; legacy?: boolean; recipient?: string }): Promise<DepositQuote> {
   const provider = createMockEip1193();
   provider.handle("eth_estimateGas", () => hex(options.estimate));
   provider.handle("eth_getBlockByNumber", () => (options.legacy ? { baseFeePerGas: null } : { baseFeePerGas: "0x1" }));
@@ -68,7 +81,7 @@ async function quoted(options: { estimate: bigint; legacy?: boolean }): Promise<
   const replica = scripted({ eth_getCode: () => "0x" });
   const sequencer = scripted({ eth_getCode: () => "0x" });
   return createQuote(
-    { amount: "0.002", recipient: ACCOUNT, account: ACCOUNT },
+    { amount: "0.002", recipient: options.recipient ?? ACCOUNT, account: ACCOUNT },
     {
       cfg,
       replica: replica.client,
@@ -98,9 +111,17 @@ function submitter(options: {
   balance?: string;
   chainOnSend?: string;
   accountsOnSend?: string[];
+  sequencerCode?: () => string;
+  replicaCode?: () => string;
   send?: (callIndex: number) => unknown;
   onHash?: SubmitDeps["onHash"];
-}): { deps: SubmitDeps; provider: MockEip1193; l1Calls: { readonly calls: number } } {
+}): {
+  deps: SubmitDeps;
+  provider: MockEip1193;
+  l1Calls: { readonly calls: number };
+  sequencer: { log: RpcLog[] };
+  replica: { log: RpcLog[] };
+} {
   const provider = createMockEip1193();
   provider.handle("eth_chainId", (_params, callIndex) => {
     if (options.chainOnSend !== undefined && callIndex > 1) return options.chainOnSend;
@@ -112,7 +133,11 @@ function submitter(options: {
     if (options.send) return options.send(callIndex);
     return HASH;
   });
-  const chains = chainClients(options.l1Chain);
+  const chains = chainClients({
+    ...(options.l1Chain !== undefined ? { l1Chain: options.l1Chain } : {}),
+    ...(options.sequencerCode !== undefined ? { sequencerCode: options.sequencerCode } : {}),
+    ...(options.replicaCode !== undefined ? { replicaCode: options.replicaCode } : {}),
+  });
   const deps: SubmitDeps = {
     provider,
     cfg,
@@ -123,7 +148,7 @@ function submitter(options: {
     ctx: options.context ?? ctx(options.quote),
     onHash: options.onHash ?? (async () => undefined),
   };
-  return { deps, provider, l1Calls: chains.l1 };
+  return { deps, provider, l1Calls: chains.l1, sequencer: chains.sequencer, replica: chains.replica };
 }
 
 describe("submitDeposit", () => {
@@ -131,7 +156,7 @@ describe("submitDeposit", () => {
     const quote = await quoted({ estimate: 100_000n });
     const order: string[] = [];
     let seenHash = "";
-    const { deps, provider } = submitter({
+    const { deps, provider, sequencer, replica } = submitter({
       quote,
       now: quote.createdAt,
       onHash: async (record) => {
@@ -161,6 +186,10 @@ describe("submitDeposit", () => {
       "eth_accounts",
       "eth_sendTransaction",
     ]);
+    for (const side of [sequencer, replica]) {
+      const codeCalls = side.log.filter((entry) => entry.method === "eth_getCode");
+      expect(codeCalls).toEqual([{ method: "eth_getCode", params: [quote.recipient, "latest"] }]);
+    }
 
     const tx = (provider.calls("eth_sendTransaction")[0]?.params as Record<string, string>[])[0];
     expect(tx).toEqual({
@@ -248,6 +277,78 @@ describe("submitDeposit", () => {
     const { deps, provider } = submitter({ quote, now: quote.createdAt, accountsOnSend: [OTHER] });
     const result = await submitDeposit(quote, deps);
     expect(result).toEqual({ kind: "blocked", reason: "wallet account changed" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("sends nothing if the recipient is a contract by submit time", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const code = () => "0x6000";
+    const { deps, provider, sequencer, replica } = submitter({
+      quote,
+      now: quote.createdAt,
+      sequencerCode: code,
+      replicaCode: code,
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "recipient is a contract" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+    expect(sequencer.log.filter((entry) => entry.method === "eth_getCode")).toHaveLength(1);
+    expect(replica.log.filter((entry) => entry.method === "eth_getCode")).toHaveLength(1);
+  });
+
+  it("sends nothing if sequencer and replica recipient code disagree", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      replicaCode: () => "0x",
+      sequencerCode: () => "0x6000",
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "recipient code differs between sequencer and replica" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("sends nothing if the recipient code check is unavailable", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      sequencerCode: () => {
+        throw new Error("down");
+      },
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "recipient code unavailable" });
+    expect(result).not.toMatchObject({ kind: "uncertain" });
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
+  });
+
+  it("still sends when both sides report the account's own EIP-7702 designator", async () => {
+    const quote = await quoted({ estimate: 100_000n });
+    const code = () => DELEGATION;
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      sequencerCode: code,
+      replicaCode: code,
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result.kind).toBe("submitted");
+    expect(provider.calls("eth_sendTransaction")).toHaveLength(1);
+  });
+
+  it("sends nothing when a custom recipient gains an EIP-7702 designator", async () => {
+    const quote = await quoted({ estimate: 100_000n, recipient: OTHER });
+    const code = () => DELEGATION;
+    const { deps, provider } = submitter({
+      quote,
+      now: quote.createdAt,
+      sequencerCode: code,
+      replicaCode: code,
+    });
+    const result = await submitDeposit(quote, deps);
+    expect(result).toEqual({ kind: "blocked", reason: "EIP-7702 recipient is not the connected account" });
     expect(provider.calls("eth_sendTransaction")).toHaveLength(0);
   });
 
