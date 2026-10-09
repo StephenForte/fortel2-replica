@@ -1,0 +1,26 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": {
+    "type": "0x7e",
+    "sourceHash": "0xe020a2def6498d67eef5fc37796193bd43da221463ca384b915e38fa83794712",
+    "from": "0xb84982a02a96c88676df643b6ee6b691bcded019",
+    "to": "0xa88f59f35864a15e3dc995c18f82bd815555e30e",
+    "mint": "0x71afd498d0000",
+    "value": "0x71afd498d0000",
+    "gas": "0x186a0",
+    "input": "0x",
+    "hash": "0x6229a0743818135998ce745362f93b72dfca952e9cd1b71c1e81b54d3d2c53b9",
+    "r": "0x0",
+    "s": "0x0",
+    "yParity": "0x0",
+    "v": "0x0",
+    "blockHash": "0xb1cb4fbb9ee170702d9548a1f7ca327061cfa594d2380025d66bfcf1dbb87b9f",
+    "blockNumber": "0x19bb43",
+    "transactionIndex": "0x1",
+    "blockTimestamp": "0x6abd87ce",
+    "depositReceiptVersion": "0x1",
+    "gasPrice": "0x0",
+    "nonce": "0x0"
+  }
+}

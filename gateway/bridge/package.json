@@ -1,0 +1,24 @@
+{
+  "name": "fortel2-bridge",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build": "node build.mjs",
+    "check:bundle": "node build.mjs --check"
+  },
+  "dependencies": {
+    "ethers": "6.17.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "happy-dom": "20.14.6",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  }
+}
