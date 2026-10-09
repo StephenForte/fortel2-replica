@@ -52,7 +52,7 @@ enter the image. The build context is still this directory.
 | Route | Methods | What it serves |
 |---|---|---|
 | `/bridge` | GET, HEAD | Built `index.html`. `Cache-Control: no-cache`. Bridge `Content-Security-Policy` (script and style are `'self'` only). |
-| `/bridge/` | GET, HEAD | `301` with `Location: /bridge`. The location is a path. nginx would otherwise emit `http://<host>:10000/bridge`, which is dead behind Render's TLS. |
+| `/bridge/` | GET, HEAD | `301` with `Location: /bridge`. The location is a path. nginx would otherwise emit `http://<host>:10000/bridge`, which is dead behind Render's TLS. The redirect is issued after the method check and the rate limit; any other method is `405`. |
 | `/bridge/assets/` | GET, HEAD | Hashed files only. `Cache-Control: public, max-age=31536000, immutable`. `.js` is `application/javascript`, `.css` is `text/css`. A missing file is 404 and is not proxied. |
 | `/bridge-config.json` | GET, HEAD | Committed `bridge/bridge-config.json`. `application/json`. `Cache-Control: no-cache`. |
 

@@ -163,13 +163,20 @@ server {
         add_header Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://fortel2-sequencer-rpc.onrender.com https://sepolia.gateway.tenderly.co; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" always;
     }
 
+    # Do not redirect from this block with return or rewrite. Those run
+    # in the rewrite phase, before limit_req and limit_except, so a
+    # disallowed method would be 301 and a GET would skip the limiter.
+    # try_files is the content phase: both checks have already run. The
+    # sentinel file is not shipped, so the named location sends the
+    # path-only 301.
     location = /bridge/ {
         limit_req zone=rpc burst=${RPC_BURST} nodelay;
         error_page 403 =405 @bridge_method_not_allowed;
         limit_except GET HEAD {
             deny all;
         }
-        return 301 /bridge;
+        root /usr/share/nginx/html;
+        try_files /bridge/.slash-redirect-never @bridge_slash_redirect;
     }
 
     # ^~ : longest-prefix wins over regex, and a missing file is the
@@ -208,6 +215,10 @@ server {
     location @bridge_method_not_allowed {
         default_type text/plain;
         return 405;
+    }
+
+    location @bridge_slash_redirect {
+        return 301 /bridge;
     }
 
     # Everything else, including GET /, goes to the replica method filter.

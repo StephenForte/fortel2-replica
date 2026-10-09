@@ -603,6 +603,16 @@ class BridgeRouteStaticTests(unittest.TestCase):
             self.assertIn("limit_req zone=rpc burst=${RPC_BURST} nodelay;", block)
             self.assertNotIn("proxy_pass", block)
             self.assertIn("limit_except GET HEAD", block)
+        slash = _block(raw, "location = /bridge/ {")
+        self.assertNotRegex(slash, r"(?m)^\s*return\b")
+        self.assertNotRegex(slash, r"(?m)^\s*rewrite\b")
+        self.assertIn(
+            "try_files /bridge/.slash-redirect-never @bridge_slash_redirect;",
+            slash,
+        )
+        redirect = _block(raw, "location @bridge_slash_redirect")
+        self.assertIn("return 301 /bridge;", redirect)
+        self.assertNotIn("proxy_pass", redirect)
         self.assertIn("absolute_redirect off;", raw)
         assets = _block(raw, "location ^~ /bridge/assets/")
         self.assertIn("try_files $uri =404;", assets)
@@ -1149,9 +1159,14 @@ class GatewayDockerTests(unittest.TestCase):
             expected = (GATEWAY / "bridge" / "bridge-config.json").read_bytes()
             self.assertEqual(expected, body)
 
+            for method in ("POST", "OPTIONS", "PUT"):
+                st, _payload, hdrs = _raw_http(method, f"{url}/bridge/", CHAIN_ID_REQ)
+                self.assertEqual(405, st, method)
+                self.assertNotIn("location", hdrs, method)
             for path in ("/bridge", "/bridge-config.json", real_asset):
-                st, _payload, _h = _raw_http("POST", f"{url}{path}", CHAIN_ID_REQ)
+                st, _payload, hdrs = _raw_http("POST", f"{url}{path}", CHAIN_ID_REQ)
                 self.assertEqual(405, st, path)
+                self.assertNotIn("location", hdrs, path)
 
             status, body, _hdrs = _raw_http("GET", f"{url}/bridge/../status")
             self.assertNotIn(passwd, body)
