@@ -31,8 +31,8 @@ Source: the operator's PRD "ForteL2 ETH Bridge in the Replica Gateway" (2026-10-
 |---|---|---|---|---|---|
 | **B1** | Toolchain, shared types, protocol core, RPC client, fixtures | `gateway/bridge/{package.json,package-lock.json,tsconfig.json,build.mjs,vitest.config.ts,.gitignore,index.html}` (stub shell), `gateway/bridge/src/{types.ts,bridge-protocol.ts,rpc.ts}`, `gateway/bridge/test/fixtures/**`, `gateway/bridge/test/protocol.test.ts`, `gateway/bridge/test/rpc.test.ts` | `.github/workflows/tests.yml` (new job `bridge-node`) | 1 | — |
 | **B2** | Public config artifact + parity check | `scripts/gen-bridge-config.py`, `gateway/bridge/bridge-config.json`, `tests/test_bridge_config.py` | `Makefile` (target `bridge-config`) | 1 | — |
-| **B3** | Gateway packaging, routing, CSP, status link | `gateway/Dockerfile`, `gateway/nginx.conf.template`, `gateway/.dockerignore`, `gateway/README.md` | `gateway/status.html` (link + "Sepolia testnet" label only), `tests/test_gateway_config.py`, `.github/workflows/tests.yml` (new job `gateway-image`) | 2 | B1, B2 merged |
-| **B4** | Tracker + journal | `gateway/bridge/src/{tracker.ts,journal.ts}`, `gateway/bridge/test/{tracker,journal}.test.ts` | `gateway/bridge/test/fixtures/**` (new files only) | 2 | B1 merged |
+| **B3** | Gateway packaging, routing, CSP, status link | `gateway/Dockerfile`, `gateway/nginx.conf.template`, `gateway/.dockerignore`, `gateway/README.md` | `gateway/status.html` (link + "Sepolia testnet" label only), `tests/test_gateway_config.py` | 2 | B1, B2 merged |
+| **B4** | Tracker + journal | `gateway/bridge/src/{tracker.ts,journal.ts}`, `gateway/bridge/test/{tracker,journal}.test.ts` | `gateway/bridge/test/fixtures/**` (new files only), `gateway/bridge/src/types.ts` (new optional `DepositRecord` fields only) | 2 | B1 merged |
 | **B5** | Wallet, config verify, quote, deposit | `gateway/bridge/src/{wallet.ts,config.ts,quote.ts,deposit.ts}`, `gateway/bridge/test/{wallet,config,quote,deposit}.test.ts`, `gateway/bridge/test/mock-eip1193.ts` | `gateway/bridge/test/fixtures/**` (new files only) | 2 | B1 merged |
 | **B6** | UI shell, accessibility, flow tests, docs | `gateway/bridge/index.html` (replaces stub), `gateway/bridge/build.mjs` (wire `src/main.ts` + `src/styles.css` into the existing hashed-asset and bundle-check pipeline; the checks may not be loosened), `gateway/bridge/src/main.ts`, `gateway/bridge/src/ui/**`, `gateway/bridge/src/styles.css`, `gateway/bridge/test/ui*.test.ts`, `gateway/bridge/README.md` | — | 3 | B3, B4, B5 merged |
 | **G** | Release gate (operator + planner) | Render manual deploy of `fortel2-replica-rpc` only; live MetaMask deposit; real-browser CSP/CORS | `DECISIONS.md` R-0026 (planner) | 4 | B6 merged |
@@ -79,6 +79,15 @@ Fields taken from `config/rollup.json`: `l1.chainId`, `l2.chainId`, `l2.genesisH
 - `config.ts` (B5): `loadConfig(fetch)` and `verifyConfig({ cfg, l1, sequencer, replica, wallet })`. Mismatch returns `configuration-mismatch` with a reason.
 - `quote.ts` (B5): `createQuote(input, deps): Promise<DepositQuote>` (frozen; gas policy per PRD §6) and `isQuoteValid(q, ctx, now)`.
 - `deposit.ts` (B5): `submitDeposit(quote, deps)`. It re-runs preflight, persists the hash through an injected `onHash` *before* returning, and maps 4001 to `wallet-rejected`. It never retries a send on its own.
+
+## Wave 2 amendments (2026-10-08, before dispatch)
+
+- **B3 adds no CI job.** The existing `Python and Docker tests` job already builds the gateway image and runs `GatewayDockerTests` against a dummy upstream. On main @ `39ff8a5` none of those tests were skipped. B3 extends that harness.
+- **B4 owns additive `DepositRecord` fields** in `types.ts`: `nonce?`, `replacedBy?`, `replaces?`, `lastProvenPhase?`, `reviewedAt?`, `approvedAt?`, `l1IncludedObservedAt?`, `l2ObservedAt?`, `replicaObservedAt?`. B5 and B6 do not edit `types.ts`. B6 fills `reviewedAt` and `approvedAt`.
+- **Outage semantics.** On an outage, `refresh` returns `phase: "tracking-unavailable"`, keeps every proven field, and sets `lastProvenPhase`. The next refresh re-derives everything from the chain.
+- **Submission path.** B5 sends with a raw EIP-1193 `eth_sendTransaction` (PRD §5 allows "or equivalent"). That keeps `BrowserProvider` out of the bundle. No retry happens on any error.
+- **Recipient code rule.** Any non-empty L2 code rejects the recipient. One exception: an EIP-7702 delegation designator (`0xef0100` + 20 bytes) is allowed when the recipient is the connected account itself.
+- **Live checks, 2026-10-08.** `eth_call systemConfig()` (`0x33d7e2bd`) on the Portal via Tenderly returns `0x7c79…6bde`. Portal code is non-empty. Sequencer and replica block 0 hash both equal `0xe242…386d`. The replica returns the fixture L2 tx with the same `sourceHash` and block. `isSystemTx` is absent (null) on both nodes, so treat absent as false.
 
 ## Integration order and expected conflicts
 
