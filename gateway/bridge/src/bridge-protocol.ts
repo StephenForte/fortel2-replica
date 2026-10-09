@@ -218,17 +218,19 @@ export function decodeDepositEvent(log: RpcLog, portal: string): DecodedDeposit 
 /**
  * User-deposit source hash (domain 0) and the type-0x7e L2 transaction hash.
  * The event `from` is already the L2 sender; do not alias it again.
+ * Contract creation uses a nil `to` (empty RLP string). A call uses the 20-byte recipient.
  * The RLP boolean is `isSystemTx = false`, which is not the portal `isCreation` flag.
  */
 export function deriveDeposit(decoded: DecodedDeposit): { sourceHash: string; l2Hash: string } {
   const sourceHash = userDepositSourceHash(decoded.l1BlockHash, decoded.logIndex);
+  const to = decoded.isCreation ? "0x" : addressBytes(decoded.to, "to");
   const l2Hash = keccak256(
     concat([
       "0x7e",
       encodeRlp([
         bytes32(sourceHash, "sourceHash"),
         addressBytes(decoded.from, "from"),
-        addressBytes(decoded.to, "to"),
+        to,
         rlpUint(decoded.mint),
         rlpUint(decoded.value),
         rlpUint(decoded.gas),

@@ -76,48 +76,53 @@ export function createRpcClient(options: {
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), options.timeoutMs);
-      let response: Response;
       try {
-        response = await fetch(options.url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body,
-          signal: controller.signal,
-        });
-      } catch (err) {
-        throw new RpcUnavailableError(isAbort(err) ? "timeout" : "network");
+        let response: Response;
+        try {
+          response = await fetch(options.url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+            signal: controller.signal,
+          });
+        } catch (err) {
+          throw new RpcUnavailableError(unavailableReason(err, controller.signal));
+        }
+
+        if (response.status === 429) {
+          throw new RpcUnavailableError("HTTP 429");
+        }
+
+        let text: string;
+        try {
+          text = await response.text();
+        } catch (err) {
+          throw new RpcUnavailableError(unavailableReason(err, controller.signal));
+        }
+
+        if (!response.ok) {
+          throw new RpcUnavailableError(`HTTP ${response.status}`);
+        }
+
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          throw new RpcError("malformed JSON");
+        }
+        return readSuccess(parsed, id);
       } finally {
         clearTimeout(timer);
       }
-
-      if (response.status === 429) {
-        throw new RpcUnavailableError("HTTP 429");
-      }
-
-      let text: string;
-      try {
-        text = await response.text();
-      } catch {
-        throw new RpcUnavailableError("network");
-      }
-
-      if (!response.ok) {
-        throw new RpcUnavailableError(`HTTP ${response.status}`);
-      }
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        throw new RpcError("malformed JSON");
-      }
-      return readSuccess(parsed, id);
     },
   };
 }
 
-function isAbort(err: unknown): boolean {
-  return err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError");
+function unavailableReason(err: unknown, signal: AbortSignal): "timeout" | "network" {
+  if (signal.aborted || (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError"))) {
+    return "timeout";
+  }
+  return "network";
 }
 
 /** A result is returned only when the id matches and the body has no error. */

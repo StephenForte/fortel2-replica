@@ -1,4 +1,15 @@
-import { AbiCoder, Interface, concat, getAddress, getBytes, hexlify, toBeHex, zeroPadValue } from "ethers";
+import {
+  AbiCoder,
+  Interface,
+  concat,
+  encodeRlp,
+  getAddress,
+  getBytes,
+  hexlify,
+  keccak256,
+  toBeHex,
+  zeroPadValue,
+} from "ethers";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -75,6 +86,31 @@ const l1Block = l1BlockFile.result;
 const l2Tx = l2TxFile.result;
 const l2Receipt = l2ReceiptFile.result;
 const portalLog = l1Receipt.logs[0];
+
+function rlpUint(n: bigint): string {
+  if (n === 0n) return "0x";
+  let hex = n.toString(16);
+  if (hex.length % 2 === 1) hex = `0${hex}`;
+  return `0x${hex}`;
+}
+
+function depositHash(sourceHash: string, decoded: DecodedDeposit, to: string): string {
+  return keccak256(
+    concat([
+      "0x7e",
+      encodeRlp([
+        sourceHash,
+        hexlify(getBytes(decoded.from)),
+        to,
+        rlpUint(decoded.mint),
+        rlpUint(decoded.value),
+        rlpUint(decoded.gas),
+        "0x",
+        "0x",
+      ]),
+    ]),
+  );
+}
 
 function directTx(input: string, value: bigint, to = cfg.contracts.optimismPortal): RpcTransaction {
   return { to, value: toBeHex(value), input };
@@ -163,6 +199,16 @@ describe("fixture 0x57b6…8fa3", () => {
     const wrongBlock = deriveDeposit({ ...decoded, l1BlockHash: flipped });
     expect(wrongBlock.sourceHash).not.toBe(SOURCE_HASH);
     expect(wrongBlock.l2Hash).not.toBe(L2_HASH);
+  });
+
+  it("encodes a contract-creation deposit with a nil recipient", () => {
+    const decoded = decodeDepositEvent(portalLog, cfg.contracts.optimismPortal);
+    const created = { ...decoded, isCreation: true };
+    const derived = deriveDeposit(created);
+    expect(derived.sourceHash).toBe(SOURCE_HASH);
+    expect(derived.l2Hash).toBe(depositHash(derived.sourceHash, created, "0x"));
+    expect(derived.l2Hash).not.toBe(depositHash(derived.sourceHash, created, hexlify(getBytes(created.to))));
+    expect(deriveDeposit(decoded).l2Hash).toBe(L2_HASH);
   });
 });
 

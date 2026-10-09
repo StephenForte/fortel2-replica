@@ -160,6 +160,24 @@ describe("createRpcClient", () => {
     await expect(slow.call("eth_chainId", [])).rejects.toBeInstanceOf(RpcUnavailableError);
   });
 
+  it("aborts a body that stalls after the headers", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: RequestInit) => {
+        const stream = new ReadableStream({
+          start(controller) {
+            const fail = () => controller.error(new DOMException("The operation was aborted", "AbortError"));
+            if (init.signal?.aborted) fail();
+            else init.signal?.addEventListener("abort", fail, { once: true });
+          },
+        });
+        return Promise.resolve(new Response(stream, { status: 200 }));
+      }),
+    );
+    const client = createRpcClient({ url, allowedMethods: L1_READ, timeoutMs: 30 });
+    await expect(client.call("eth_chainId", [])).rejects.toBeInstanceOf(RpcUnavailableError);
+  });
+
   it("does not treat an HTTP error body as a result", async () => {
     vi.stubGlobal(
       "fetch",
