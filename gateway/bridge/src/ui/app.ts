@@ -8,10 +8,10 @@ import { parseEthAmount, validateRecipient } from "../bridge-protocol";
 import { loadConfig, verifyConfig } from "../config";
 import { submitDeposit } from "../deposit";
 import { createJournal, type Journal, type JournalStorage } from "../journal";
-import { createQuote, isQuoteValid, type QuoteContext } from "../quote";
+import { createQuote, isQuoteValid, type FeeSource, type QuoteContext, type QuotedDeposit } from "../quote";
 import { L1_READ, L2_READ, createRpcClient, type RpcClient } from "../rpc";
 import { createPoller, createTracker, type Poller, type PollerTimer, type Tracker } from "../tracker";
-import type { BridgeConfig, DepositQuote, DepositRecord } from "../types";
+import type { BridgeConfig, DepositRecord } from "../types";
 import {
   createWallet,
   discoverMetaMask,
@@ -90,7 +90,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
   let sepoliaGen = 0;
   let forteGen = 0;
   let exportUrl: string | null = null;
-  let quote: DepositQuote | null = null;
+  let quote: QuotedDeposit | null = null;
   let submitting = false;
   let reviewing = false;
   let journal: Journal | null = null;
@@ -154,6 +154,8 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     ]) {
       setText(id, "");
     }
+    const feeSource = doc.getElementById("review-fee-source");
+    if (feeSource) feeSource.textContent = "";
     syncButtons();
   }
 
@@ -236,7 +238,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     setText("review-countdown", `Expires in ${left}s`);
   }
 
-  function renderReview(current: DepositQuote): void {
+  function renderReview(current: QuotedDeposit): void {
     reviewPanel.hidden = false;
     if (!cfg) return;
     setText("review-source", cfg.l1.name);
@@ -245,8 +247,23 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
     setText("review-amount", formatEthLabel(current.amountWei));
     setText("review-gas", current.l1GasEstimate);
     setText("review-fee", formatEthLabel(current.maxNetworkFeeWei));
+    showFeeSource(current.feeSource);
     setText("review-debit", formatEthLabel(current.maxWalletDebitWei));
     updateCountdown();
+  }
+
+  function showFeeSource(source: FeeSource | undefined): void {
+    const fee = requireElement<HTMLElement>("review-fee");
+    const label = fee.previousElementSibling;
+    if (!(label instanceof HTMLElement)) return;
+    let node = doc.getElementById("review-fee-source");
+    if (!node) {
+      node = el("span");
+      node.id = "review-fee-source";
+      label.append(node);
+    }
+    const words = feeSourceWords(source);
+    node.textContent = words === "" ? "" : ` ${words}`;
   }
 
   function sortedRecords(): DepositRecord[] {
@@ -538,7 +555,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
 
   async function onReview(): Promise<void> {
     if (reviewing || submitting || !canReview()) return;
-    if (!wallet || !cfg || !provider || !replica || !sequencer || !account) return;
+    if (!wallet || !cfg || !provider || !replica || !sequencer || !l1 || !account) return;
     reviewing = true;
     syncButtons();
     try {
@@ -553,7 +570,7 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
       const recipient = validateRecipient(recipientInput.value.trim());
       const built = await createQuote(
         { amount: amountInput.value.trim(), recipient, account },
-        { cfg, replica, sequencer, wallet: provider, now },
+        { cfg, replica, sequencer, wallet: provider, l1, now },
       );
       const ctx = liveCtx();
       if (!ctx || !isQuoteValid(built, ctx, now())) {
@@ -885,6 +902,13 @@ export async function startBridge(options: BridgeStart = {}): Promise<BridgeHand
 function defaultEvery(ms: number, fn: () => void): () => void {
   const handle = setInterval(fn, ms);
   return () => clearInterval(handle);
+}
+
+function feeSourceWords(source: FeeSource | undefined): string {
+  if (source === "wallet") return "from the wallet";
+  if (source === "wallet-feeHistory") return "from wallet fee history";
+  if (source === "l1") return "from the public L1 client";
+  return "";
 }
 
 function parseQuantity(value: unknown): bigint {

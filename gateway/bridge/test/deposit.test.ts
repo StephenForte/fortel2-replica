@@ -87,6 +87,11 @@ async function quoted(options: { estimate: bigint; legacy?: boolean; recipient?:
       replica: replica.client,
       sequencer: sequencer.client,
       wallet: provider,
+      l1: {
+        async call(): Promise<unknown> {
+          throw new Error("unexpected l1");
+        },
+      },
       now: () => 1_700_000_000_000,
     },
   );

@@ -45,7 +45,11 @@ function wallet(options: {
   balance?: bigint;
   baseFee?: string | null;
   priority?: bigint;
+  priorityResult?: unknown;
+  priorityThrows?: boolean;
   gasPrice?: bigint;
+  feeHistory?: unknown;
+  feeHistoryThrows?: boolean;
 }): { provider: MockEip1193; order: string[] } {
   const provider = createMockEip1193();
   const order: string[] = [];
@@ -60,7 +64,16 @@ function wallet(options: {
   });
   provider.handle("eth_maxPriorityFeePerGas", () => {
     order.push("priority");
+    if (options.priorityThrows) throw new Error("eth_maxPriorityFeePerGas unavailable");
+    if (options.priorityResult !== undefined) return options.priorityResult;
     return hex(options.priority ?? 0n);
+  });
+  provider.handle("eth_feeHistory", () => {
+    order.push("feeHistory");
+    if (options.feeHistoryThrows || options.feeHistory === undefined) {
+      throw new Error("eth_feeHistory unavailable");
+    }
+    return options.feeHistory;
   });
   provider.handle("eth_gasPrice", () => {
     order.push("gasPrice");
@@ -71,6 +84,34 @@ function wallet(options: {
     return hex(options.balance ?? 10n ** 30n);
   });
   return { provider, order };
+}
+
+function idleL1(): RpcClient {
+  return {
+    async call(method: string): Promise<unknown> {
+      throw new Error(`unexpected l1 ${method}`);
+    },
+  };
+}
+
+type L1Call = { method: string; params: readonly unknown[] | undefined };
+
+function scriptedL1(result: unknown | (() => unknown)): { client: RpcClient; calls: L1Call[] } {
+  const calls: L1Call[] = [];
+  return {
+    calls,
+    client: {
+      async call(method: string, params?: readonly unknown[]) {
+        calls.push({ method, params });
+        if (typeof result === "function") return result();
+        return result;
+      },
+    },
+  };
+}
+
+function rewards(...values: string[]): { reward: string[][] } {
+  return { reward: values.map((value) => [value]) };
 }
 
 function codePair(replicaCode: string, sequencerCode = replicaCode) {
@@ -85,8 +126,13 @@ async function quoteWith(options: {
   account?: string;
   baseFee?: string | null;
   priority?: bigint;
+  priorityResult?: unknown;
+  priorityThrows?: boolean;
   gasPrice?: bigint;
   balance?: bigint;
+  feeHistory?: unknown;
+  feeHistoryThrows?: boolean;
+  l1?: RpcClient;
 }) {
   const l2 = codePair(options.code ?? "0x", options.sequencerCode ?? options.code ?? "0x");
   const node = wallet(options);
@@ -96,7 +142,14 @@ async function quoteWith(options: {
       recipient: options.recipient ?? ACCOUNT,
       account: options.account ?? ACCOUNT,
     },
-    { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
+    {
+      cfg,
+      replica: l2.replica.client,
+      sequencer: l2.sequencer.client,
+      wallet: node.provider,
+      l1: options.l1 ?? idleL1(),
+      now: () => CREATED_AT,
+    },
   );
   return { quote, l2, node };
 }
@@ -175,7 +228,14 @@ describe("createQuote", () => {
     await expect(
       createQuote(
         { amount: "0.002", recipient: ACCOUNT, account: ACCOUNT },
-        { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
+        {
+          cfg,
+          replica: l2.replica.client,
+          sequencer: l2.sequencer.client,
+          wallet: node.provider,
+          l1: idleL1(),
+          now: () => CREATED_AT,
+        },
       ),
     ).rejects.toThrow(/1200000 exceeds the ceiling of 1000000/);
     expect(node.order).toEqual(["estimate"]);
@@ -194,7 +254,14 @@ describe("createQuote", () => {
     const node = wallet({ estimate: 100_000n, baseFee: hex(1n) });
     const error = await createQuote(
       { amount: "0.002", recipient: OTHER, account: ACCOUNT },
-      { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
+      {
+        cfg,
+        replica: l2.replica.client,
+        sequencer: l2.sequencer.client,
+        wallet: node.provider,
+        l1: idleL1(),
+        now: () => CREATED_AT,
+      },
     ).then(
       () => null,
       (err: unknown) => err,
@@ -212,7 +279,14 @@ describe("createQuote", () => {
     await expect(
       createQuote(
         { amount: "0.002", recipient: OTHER, account: ACCOUNT },
-        { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
+        {
+          cfg,
+          replica: l2.replica.client,
+          sequencer: l2.sequencer.client,
+          wallet: node.provider,
+          l1: idleL1(),
+          now: () => CREATED_AT,
+        },
       ),
     ).rejects.toThrow(/differs between sequencer and replica/);
     expect(node.provider.calls("eth_estimateGas")).toHaveLength(0);
@@ -235,7 +309,14 @@ describe("createQuote", () => {
     await expect(
       createQuote(
         { amount: "0.002", recipient: OTHER, account: ACCOUNT },
-        { cfg, replica: l2.replica.client, sequencer: l2.sequencer.client, wallet: node.provider, now: () => CREATED_AT },
+        {
+          cfg,
+          replica: l2.replica.client,
+          sequencer: l2.sequencer.client,
+          wallet: node.provider,
+          l1: idleL1(),
+          now: () => CREATED_AT,
+        },
       ),
     ).rejects.toThrow(/EIP-7702/);
     expect(node.provider.calls("eth_estimateGas")).toHaveLength(0);
@@ -250,6 +331,7 @@ describe("createQuote", () => {
           replica: longer.replica.client,
           sequencer: longer.sequencer.client,
           wallet: blocked.provider,
+          l1: idleL1(),
           now: () => CREATED_AT,
         },
       ),
@@ -264,6 +346,7 @@ describe("createQuote", () => {
       replica: l2.replica.client,
       sequencer: l2.sequencer.client,
       wallet: node.provider,
+      l1: idleL1(),
       now: () => CREATED_AT,
     };
     await expect(createQuote({ amount: "0", recipient: ACCOUNT, account: ACCOUNT }, deps)).rejects.toBeInstanceOf(
@@ -313,5 +396,156 @@ describe("isQuoteValid", () => {
     expect(isQuoteValid(quote, { ...ctx, recipient: OTHER }, quote.createdAt)).toBe(false);
     expect(isQuoteValid(quote, { ...ctx, amountWei: "1" }, quote.createdAt)).toBe(false);
     expect(isQuoteValid(quote, { ...ctx, configVersion: "other" }, quote.createdAt)).toBe(false);
+  });
+});
+
+describe("priority fee source", () => {
+  it("uses the feeHistory median when eth_maxPriorityFeePerGas throws and does not call L1", async () => {
+    const l1 = scriptedL1("0x63");
+    const { quote, node } = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(1n),
+      priorityThrows: true,
+      feeHistory: rewards("0x10", "0x2", "0x3", "0x4", "0x5"),
+      l1: l1.client,
+    });
+    expect(quote.maxPriorityFeePerGasWei).toBe("4");
+    expect(quote.feeSource).toBe("wallet-feeHistory");
+    expect(quote.maxFeePerGasWei).toBe("6");
+    expect(node.provider.calls("eth_maxPriorityFeePerGas")).toHaveLength(1);
+    expect(node.provider.calls("eth_feeHistory")).toEqual([
+      { method: "eth_feeHistory", params: ["0x5", "latest", [50]] },
+    ]);
+    expect(l1.calls).toHaveLength(0);
+    expect(Object.isFrozen(quote)).toBe(true);
+  });
+
+  it("uses the L1 client when the wallet throws on both priority methods", async () => {
+    const l1 = scriptedL1("0x2a");
+    const { quote, node } = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(1n),
+      priorityThrows: true,
+      feeHistoryThrows: true,
+      l1: l1.client,
+    });
+    expect(quote.feeSource).toBe("l1");
+    expect(quote.maxPriorityFeePerGasWei).toBe("42");
+    expect(quote.maxFeePerGasWei).toBe("44");
+    expect(node.provider.calls("eth_maxPriorityFeePerGas")).toHaveLength(1);
+    expect(node.provider.calls("eth_feeHistory")).toHaveLength(1);
+    expect(l1.calls).toEqual([{ method: "eth_maxPriorityFeePerGas", params: [] }]);
+  });
+
+  it("throws priority fee unavailable when the wallet and the L1 client all fail", async () => {
+    const l1 = scriptedL1(() => {
+      throw new Error("l1 down");
+    });
+    const error = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(1n),
+      priorityThrows: true,
+      feeHistoryThrows: true,
+      l1: l1.client,
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(QuoteError);
+    expect(error).not.toBeNull();
+    expect((error as QuoteError).message).toBe("priority fee unavailable");
+    expect((error as QuoteError).unavailable).toBe(true);
+    expect(l1.calls).toEqual([{ method: "eth_maxPriorityFeePerGas", params: [] }]);
+  });
+
+  it.each([
+    ["missing reward", { oldestBlock: "0x1" }],
+    ["a non-hex reward", rewards("0x10", "nope", "0x3", "0x4", "0x5")],
+    ["fewer than 1 block", { reward: [] }],
+  ])("falls through a malformed feeHistory (%s) to L1", async (_name, feeHistory) => {
+    const l1 = scriptedL1("0x10");
+    const { quote, node } = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(1n),
+      priorityThrows: true,
+      feeHistory,
+      l1: l1.client,
+    });
+    expect(quote.feeSource).toBe("l1");
+    expect(quote.maxPriorityFeePerGasWei).toBe("16");
+    expect(quote.maxPriorityFeePerGasWei).not.toBe("nope");
+    expect(node.provider.calls("eth_feeHistory")).toHaveLength(1);
+    expect(l1.calls).toEqual([{ method: "eth_maxPriorityFeePerGas", params: [] }]);
+  });
+
+  it("keeps today's numbers when the wallet answers eth_maxPriorityFeePerGas", async () => {
+    const baseFee = 7_750_000_000_000_000n;
+    const priority = 1n;
+    const l1 = scriptedL1("0x63");
+    const { quote, node } = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(baseFee),
+      priority,
+      feeHistory: rewards("0x10", "0x2", "0x3", "0x4", "0x5"),
+      l1: l1.client,
+    });
+    expect(quote.maxFeePerGasWei).toBe("15500000000000001");
+    expect(quote.maxPriorityFeePerGasWei).toBe("1");
+    expect(quote.gasPriceWei).toBeUndefined();
+    expect(quote.maxNetworkFeeWei).toBe("7750000000000000500000");
+    expect(quote.maxWalletDebitWei).toBe("7750002000000000500000");
+    expect(quote.feeSource).toBe("wallet");
+    expect(node.order).toEqual(["estimate", "block", "priority", "balance"]);
+    expect(node.provider.calls("eth_maxPriorityFeePerGas")).toHaveLength(1);
+    expect(node.provider.calls("eth_feeHistory")).toHaveLength(0);
+    expect(l1.calls).toHaveLength(0);
+  });
+
+  it("treats a malformed wallet priority fee as that source failing", async () => {
+    const l1 = scriptedL1("0x63");
+    const { quote, node } = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(1n),
+      priorityResult: "nope",
+      feeHistory: rewards("0x10", "0x2", "0x3", "0x4", "0x5"),
+      l1: l1.client,
+    });
+    expect(quote.feeSource).toBe("wallet-feeHistory");
+    expect(quote.maxPriorityFeePerGasWei).toBe("4");
+    expect(node.provider.calls("eth_feeHistory")).toHaveLength(1);
+    expect(l1.calls).toHaveLength(0);
+  });
+
+  it("treats a malformed L1 priority fee as unavailable and returns no quote", async () => {
+    const l1 = scriptedL1("nope");
+    const error = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(1n),
+      priorityThrows: true,
+      feeHistoryThrows: true,
+      l1: l1.client,
+    }).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(error).toBeInstanceOf(QuoteError);
+    expect((error as QuoteError).message).toBe("priority fee unavailable");
+    expect((error as QuoteError).unavailable).toBe(true);
+  });
+
+  it("keeps a zero priority fee reported by the wallet", async () => {
+    const l1 = scriptedL1("0x63");
+    const { quote, node } = await quoteWith({
+      estimate: 100_000n,
+      baseFee: hex(1n),
+      priority: 0n,
+      feeHistory: rewards("0x10", "0x2", "0x3", "0x4", "0x5"),
+      l1: l1.client,
+    });
+    expect(quote.maxPriorityFeePerGasWei).toBe("0");
+    expect(quote.maxFeePerGasWei).toBe("2");
+    expect(quote.feeSource).toBe("wallet");
+    expect(node.provider.calls("eth_feeHistory")).toHaveLength(0);
+    expect(l1.calls).toHaveLength(0);
   });
 });
