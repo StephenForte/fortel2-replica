@@ -7,7 +7,122 @@
   <link rel="stylesheet" href="/bridge/assets/bridge.css">
 </head>
 <body>
-  <main></main>
+  <main>
+    <header>
+      <h1>ForteL2 Bridge</h1>
+      <span class="sub">Sepolia testnet</span>
+      <a href="/status">Back to status</a>
+    </header>
+    <p id="live" class="live" role="status" aria-live="polite"></p>
+    <div class="grid">
+      <section class="card" aria-labelledby="wallet-heading">
+        <h2 id="wallet-heading">Wallet</h2>
+        <p id="wallet-guidance" class="guidance" hidden></p>
+        <p id="config-status"></p>
+        <button type="button" id="connect">Connect MetaMask</button>
+        <dl>
+          <dt>Account</dt>
+          <dd id="account" class="hash">Not connected</dd>
+          <dt>Sepolia balance</dt>
+          <dd id="sepolia-balance">–</dd>
+          <dt>Sepolia balance time</dt>
+          <dd id="sepolia-balance-time">–</dd>
+          <dt>Sepolia balance status</dt>
+          <dd id="sepolia-balance-error"></dd>
+          <dt>ForteL2 balance</dt>
+          <dd id="forte-balance">–</dd>
+          <dt>ForteL2 balance time</dt>
+          <dd id="forte-balance-time">–</dd>
+          <dt>ForteL2 balance status</dt>
+          <dd id="forte-balance-error"></dd>
+        </dl>
+      </section>
+
+      <section class="card" aria-labelledby="deposit-heading">
+        <h2 id="deposit-heading">Deposit</h2>
+        <div id="presets" role="group" aria-label="Amount presets"></div>
+        <div class="field">
+          <label for="amount">Amount (ETH)</label>
+          <input id="amount" name="amount" type="text" inputmode="decimal" autocomplete="off" value="0.002">
+        </div>
+        <p id="amount-error" class="error"></p>
+        <div class="field">
+          <label for="recipient">Recipient</label>
+          <input id="recipient" name="recipient" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <p id="recipient-error" class="error"></p>
+        <button type="button" id="review" disabled>Review deposit</button>
+        <div id="review-panel" hidden>
+          <dl>
+            <dt>Source</dt>
+            <dd id="review-source"></dd>
+            <dt>Destination</dt>
+            <dd id="review-destination"></dd>
+            <dt>Recipient</dt>
+            <dd id="review-recipient" class="hash"></dd>
+            <dt>Amount</dt>
+            <dd id="review-amount"></dd>
+            <dt>Estimated gas</dt>
+            <dd id="review-gas"></dd>
+            <dt>Max network fee</dt>
+            <dd id="review-fee"></dd>
+            <dt>Max wallet debit</dt>
+            <dd id="review-debit"></dd>
+            <dt>Expires</dt>
+            <dd id="review-countdown"></dd>
+          </dl>
+        </div>
+        <button type="button" id="approve" disabled>Approve in MetaMask</button>
+        <div id="deposit-result"></div>
+        <div id="uncertain-recovery" hidden>
+          <div class="field">
+            <label for="paste-hash">Paste L1 transaction hash</label>
+            <input id="paste-hash" name="paste-hash" type="text" autocomplete="off" spellcheck="false">
+          </div>
+          <button type="button" id="paste-recover">Recover pasted hash</button>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="progress-heading">
+        <h2 id="progress-heading">Progress</h2>
+        <div id="progress-list"></div>
+      </section>
+
+      <section class="card" aria-labelledby="history-heading">
+        <h2 id="history-heading">History</h2>
+        <p id="fee-total">Actual L1 network fees <span id="fee-total-value">0 ETH</span></p>
+        <p id="principal-total">ETH transferred <span id="principal-total-value">0 ETH</span></p>
+        <div id="history-list"></div>
+        <button type="button" id="export-json">Export JSON</button>
+        <div class="field">
+          <label for="import-file">Import JSON</label>
+          <input id="import-file" name="import-file" type="file" accept="application/json,.json">
+        </div>
+        <p id="import-result"></p>
+        <button type="button" id="clear-history">Clear history</button>
+        <div id="clear-confirm" hidden>
+          <p id="clear-warning">On-chain transactions remain visible by hash</p>
+          <button type="button" id="clear-yes">Confirm clear</button>
+          <button type="button" id="clear-no">Keep history</button>
+        </div>
+        <div class="field">
+          <label for="recover-hash">Recover by L1 hash</label>
+          <input id="recover-hash" name="recover-hash" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <button type="button" id="recover">Recover by L1 hash</button>
+        <div class="field">
+          <label for="replace-original">Original L1 hash</label>
+          <input id="replace-original" name="replace-original" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="replace-new">Replacement L1 hash</label>
+          <input id="replace-new" name="replace-new" type="text" autocomplete="off" spellcheck="false">
+        </div>
+        <button type="button" id="link-replacement">Link replacement</button>
+        <p id="history-status"></p>
+      </section>
+    </div>
+  </main>
   <script src="/bridge/assets/bridge.js"></script>
 </body>
 </html>

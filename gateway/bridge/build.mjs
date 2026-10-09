@@ -38,12 +38,7 @@ async function build() {
   await mkdir(assets, { recursive: true });
 
   const jsResult = await esbuild.build({
-    stdin: {
-      contents: 'document.querySelector("main");\n',
-      loader: "js",
-      sourcefile: "stub.js",
-      resolveDir: root,
-    },
+    entryPoints: [path.join(root, "src/main.ts")],
     bundle: true,
     write: false,
     format: "iife",
@@ -53,7 +48,7 @@ async function build() {
     minify: true,
   });
   const js = jsResult.outputFiles[0].contents;
-  const css = new TextEncoder().encode("main {\n  display: block;\n}\n");
+  const css = await readFile(path.join(root, "src/styles.css"));
   const jsName = `bridge-${sha8(js)}.js`;
   const cssName = `bridge-${sha8(css)}.css`;
   await writeFile(path.join(assets, jsName), js);
