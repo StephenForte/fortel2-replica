@@ -103,7 +103,8 @@ Fields taken from `config/rollup.json`: `l1.chainId`, `l2.chainId`, `l2.genesisH
 1. **Wave 1, in parallel:** B1 and B2. They share no files. B2's file sits in `gateway/bridge/`, but B1 does not create `bridge-config.json`.
 2. **Wave 2, in parallel after B1 and B2 merge:** B3, B4, B5. Merge B4 and B5 in either order. Both append new files under `test/fixtures/`, so they will not collide unless they pick the same filename. Prefix filenames with `b4-` or `b5-`.
 3. **Wave 3:** B6 starts after B3, B4, and B5 merge.
-4. **Release:** G.
+4. **Wave 4:** B5-fix, after B6 merged and deployed. It was opened when real MetaMask returned -32601 for `eth_maxPriorityFeePerGas` on the live `/bridge`.
+5. **Release:** G, only after B5-fix has merged and the gateway has been redeployed with it.
 
 **Expected conflicts.**
 - `.github/workflows/tests.yml`: only B1 appended a job (`bridge-node`). B3 added no CI job (Wave 2 amendments), so this file had no wave-2 conflict.
