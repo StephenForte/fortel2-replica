@@ -101,6 +101,15 @@ export type DepositRecord = DepositIntent & {
   lastCheckedAt?: number;
   phase: Phase;
   lastError?: string;
+  nonce?: number;
+  replacedBy?: string;
+  replaces?: string;
+  lastProvenPhase?: Phase;
+  reviewedAt?: number;
+  approvedAt?: number;
+  l1IncludedObservedAt?: number;
+  l2ObservedAt?: number;
+  replicaObservedAt?: number;
 };
 
 /** One OptimismPortal `TransactionDeposited` log, after the version-0 layout check. */
