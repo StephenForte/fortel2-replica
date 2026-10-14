@@ -685,4 +685,27 @@ R-0026 records the bridge release-gate evidence.
 
 **Rollback.** Redeploy the previous gateway commit on `fortel2-replica-rpc`. On-chain deposits stay traceable by hash, and no chain state depends on the page.
 
-Next free R-id is **R-0027**.
+---
+
+## R-0027 — /status absorbs the public pipeline viewer; transactions by block scan, no index
+
+*2026-10-14 · operator decision. Dispatched as task S1 (branch `status-tx-grid`). Supersedes the public deployment of ForteL2 `viewer/` (`https://fortel2-viewer.onrender.com`, ForteL2 D-0095).*
+
+**Decision.** There is one public pipeline page: `https://fortel2-replica-rpc.onrender.com/status` (`gateway/status.html`). It gains a transaction grid. The `fortel2-viewer` Render static site is retired after S1 is live; the operator deletes it in the Render dashboard and records that in ForteL2 (planner-owned there, not edited from this repo).
+
+**Why.** The two pages show the same six panels with the same verdict rules. The viewer adds only a recent-transactions list (10 rows, 128-block lookback, ForteL2 `viewer/lib.js` `RECENT_L2_TX_*`). `/status` adds the `/bridge` link and costs no extra Render service.
+
+**No paging, no indexer (operator decision).** The public replica has no list-transactions method, so finding a transaction means reading blocks. Measured 2026-10-14 against the public replica at tip 2,292,975: the last 3,000 blocks held 3,000 transactions, all type `0x7e` from the L1 attributes depositor; the last 60,000 blocks (~33 h) held 5 non-system transactions, the newest ~6,700 blocks back; the 60,000-block scan took 141 s from one client in batches of 100 headers. A real page of 25 at that density would scan ~40,000 blocks. A sidecar indexer in `fortel2-replica-reth` was considered and declined. The grid instead loads a first window and offers a user-started **Scan older** button that walks backward in bounded chunks with visible progress and a stop control.
+
+**Transaction kinds** (from block data plus `eth_getCode`, both on the public allowlist):
+- **System** — type `0x7e` from `0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001` (one L1 attributes deposit per block). Hidden by default.
+- **Deposit** — type `0x7e` from any other sender (L1→L2, e.g. `/bridge`).
+- **dApp call** — non-deposit tx whose `to` has code.
+- **Transfer** — non-deposit tx whose `to` has no code.
+- **Contract creation** — non-deposit tx with `to` null.
+
+Sort and filter are client-side over the rows loaded so far. Filtering to dApp calls needs no server change.
+
+**Not changed.** The `/status` CSP (`tests/test_gateway_config.py` `STATUS_CSP`): the grid reads only the replica (`'self'`). Explorer links are navigation, not fetches. Execution node, method filter, Render services and env, `render.yaml`. Deploy only `fortel2-replica-rpc`. Rollback is to redeploy the previous gateway commit.
+
+Next free R-id is **R-0028**.
