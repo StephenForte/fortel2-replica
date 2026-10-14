@@ -582,6 +582,25 @@ class StatusPageTests(unittest.TestCase):
         self.assertEqual(str(rollup["l1_chain_id"]), cfg("l1ChainId"))
         self.assertEqual(str(rollup["l2_chain_id"]), cfg("l2ChainId"))
 
+    def test_status_page_builds_tx_cells_without_html_sinks(self):
+        html = self.PAGE.read_text(encoding="utf-8")
+        for sink in ("innerHTML", "outerHTML", "insertAdjacentHTML", "document.write"):
+            self.assertNotIn(sink, html, sink)
+
+    def test_tx_explorer_prefix_is_split_outside_header_and_cfg(self):
+        html = self.PAGE.read_text(encoding="utf-8")
+        self.assertIn(
+            '"https:" + "//settlementos-explorer-ihgo.onrender.com/fortel2-sepolia/tx/"',
+            html,
+        )
+        self.assertNotIn("https://settlementos-explorer-ihgo.onrender.com", html)
+        header = html.split("<header>", 1)[1].split("</header>", 1)[0]
+        self.assertNotIn("settlementos-explorer", header)
+        cfg = html.split("const CFG = {", 1)[1].split("};", 1)[0]
+        self.assertNotIn("settlementos-explorer", cfg)
+        self.assertIn(">Transactions<", html)
+        self.assertIn("Scan older", html)
+
 
 class BridgeRouteStaticTests(unittest.TestCase):
     """Gateway routing for the static /bridge page. Existing tests stay as they are."""

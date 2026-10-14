@@ -13,6 +13,8 @@
   Served as a static file by gateway/nginx.conf.template `location = /status`.
   The CSP there lists exactly these three origins; change both together.
   Addresses below must match config/rollup.json (tests/test_gateway_config.py).
+  The transaction grid reads only the replica (same origin). Explorer links are
+  navigation, not fetches, so they are not connect-src origins.
 -->
 <style>
 :root {
@@ -29,9 +31,9 @@
   }
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--ink);
+body { margin: 0; overflow-x: hidden; background: var(--bg); color: var(--ink);
   font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; overflow-x: hidden; }
 header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 20px; }
 h1 { font-size: 22px; margin: 0; letter-spacing: -0.01em; }
 .sub { color: var(--muted); font-size: 13px; }
@@ -51,6 +53,37 @@ dd { margin: 0; font-family: var(--mono); font-size: 13px; text-align: right; ov
 .dot.live { background: var(--ok); }
 .dot.err { background: var(--bad); }
 a { color: inherit; }
+.tx-section { margin-top: 22px; min-width: 0; }
+.tx-section h2 { font-size: 18px; margin: 0 0 10px; letter-spacing: -0.01em; }
+.tx-controls { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 8px; }
+.tx-kinds { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 13px; }
+.tx-kinds label { display: inline-flex; align-items: center; gap: 4px; }
+.tx-q { flex: 1 1 180px; min-width: 0; font-size: 13px; color: var(--muted); }
+.tx-q input {
+  display: block; width: 100%; margin-top: 4px; font: 13px var(--mono); color: var(--ink);
+  background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px;
+}
+.tx-actions { display: flex; gap: 8px; }
+.tx-actions button {
+  font: 600 13px system-ui, sans-serif; color: var(--ink); background: var(--card);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer;
+}
+.tx-actions button:disabled { opacity: 0.55; cursor: default; }
+.tx-status { color: var(--muted); font-size: 13px; margin: 0 0 8px; min-height: 1.2em; }
+.tx-scroll { overflow-x: auto; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+.tx-table { border-collapse: collapse; width: max-content; min-width: 100%; }
+.tx-table th, .tx-table td {
+  padding: 6px 10px; text-align: left; font-size: 13px; white-space: nowrap;
+  border-bottom: 1px solid var(--line); vertical-align: top;
+}
+.tx-sort {
+  background: none; border: 0; padding: 0; margin: 0; color: var(--muted); cursor: pointer;
+  font: 600 12px/1.2 system-ui, sans-serif; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.tx-table td { font-family: var(--mono); font-size: 12px; }
+.tx-table td.tx-empty {
+  font-family: system-ui, sans-serif; color: var(--muted); white-space: normal; max-width: 70ch;
+}
 .errors { margin-top: 14px; color: var(--bad); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
 details { margin-top: 14px; }
 summary { cursor: pointer; color: var(--muted); font-size: 13px; }
@@ -133,6 +166,27 @@ footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
     </section>
   </div>
 
+  <section class="tx-section" id="tx-section" aria-busy="false">
+    <h2>Transactions</h2>
+    <div class="tx-controls">
+      <div class="tx-kinds" id="tx-kinds"></div>
+      <label class="tx-q" for="tx-query">Filter
+        <input id="tx-query" type="search" autocomplete="off" spellcheck="false" placeholder="hash, from, or to">
+      </label>
+      <div class="tx-actions">
+        <button type="button" id="tx-older" disabled>Scan older</button>
+        <button type="button" id="tx-stop" hidden>Stop</button>
+      </div>
+    </div>
+    <p class="tx-status" id="tx-status" aria-live="polite"></p>
+    <div class="tx-scroll">
+      <table class="tx-table">
+        <thead><tr id="tx-head"></tr></thead>
+        <tbody id="tx-body"></tbody>
+      </table>
+    </div>
+  </section>
+
   <div class="errors" id="errors"></div>
 
   <details>
@@ -197,6 +251,337 @@ const hex = (v) => (v == null ? null : parseInt(v, 16));
 const toHex = (n) => "0x" + n.toString(16);
 const nowSec = () => Date.now() / 1000;
 
+/* TX_GRID_LOGIC_START */
+"use strict";
+// Pure transaction-grid logic. No DOM and no RPC: the node tests eval this
+// slice, and the page calls it. Filter and sort must stay in here.
+const TX_INITIAL_BLOCKS = 2000;
+const TX_INITIAL_ROWS = 25;
+const TX_OLDER_CHUNK = 5000;
+const TX_BATCH_SIZE = 100;
+const TX_SYSTEM_WINDOW = 200;
+const TX_DOM_CAP = 1000;
+const TX_KINDS = ["System", "Deposit", "dApp call", "Transfer", "Contract creation"];
+const TX_SYSTEM_FROM = "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001";
+const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+const TX_EXPLORER_PREFIX =
+  "https:" + "//settlementos-explorer-ihgo.onrender.com/fortel2-sepolia/tx/";
+const TX_EMPTY_NOUN = {
+  System: "system transactions",
+  Deposit: "deposits",
+  "dApp call": "dApp calls",
+  Transfer: "transfers",
+  "Contract creation": "contract creations",
+};
+
+function defaultKinds() {
+  return {
+    System: false,
+    Deposit: true,
+    "dApp call": true,
+    Transfer: true,
+    "Contract creation": true,
+  };
+}
+
+function normalizeTxType(type) {
+  if (typeof type === "number" && Number.isFinite(type)) return "0x" + type.toString(16);
+  if (typeof type !== "string") return "";
+  return type.toLowerCase();
+}
+
+function classifyTx(tx, hasCode) {
+  if (!tx || typeof tx !== "object") return "Transfer";
+  const from = typeof tx.from === "string" ? tx.from.toLowerCase() : "";
+  if (normalizeTxType(tx.type) === "0x7e") {
+    return from === TX_SYSTEM_FROM ? "System" : "Deposit";
+  }
+  if (tx.to == null) return "Contract creation";
+  return hasCode ? "dApp call" : "Transfer";
+}
+
+function codeIsPresent(code) {
+  return typeof code === "string" && code.toLowerCase() !== "0x";
+}
+
+function addressesNeedingCode(txs, cache) {
+  const out = [];
+  const seen = new Set();
+  for (const tx of txs) {
+    if (!tx || typeof tx !== "object") continue;
+    if (normalizeTxType(tx.type) === "0x7e") continue;
+    if (typeof tx.to !== "string") continue;
+    const key = tx.to.toLowerCase();
+    if (!/^0x[0-9a-f]{40}$/.test(key)) continue;
+    if ((cache && cache.has(key)) || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function hexQty(v) {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v !== "string" || !v) return null;
+  const n = parseInt(v, 16);
+  return Number.isFinite(n) ? n : null;
+}
+
+function rowsFromBlocks(blocks, codeHas) {
+  const rows = [];
+  const has = typeof codeHas === "function" ? codeHas : () => false;
+  for (const block of blocks || []) {
+    if (!block || typeof block !== "object") continue;
+    const blockNumber = hexQty(block.number);
+    const timestamp = hexQty(block.timestamp);
+    const txs = Array.isArray(block.transactions) ? block.transactions : [];
+    for (let i = 0; i < txs.length; i++) {
+      const tx = txs[i];
+      if (!tx || typeof tx !== "object") continue;
+      const to = tx.to == null ? null : String(tx.to);
+      const key = to == null ? "" : to.toLowerCase();
+      rows.push({
+        hash: typeof tx.hash === "string" ? tx.hash : "",
+        kind: classifyTx(tx, key ? has(key) === true : false),
+        blockNumber: blockNumber == null ? 0 : blockNumber,
+        timestamp,
+        from: typeof tx.from === "string" ? tx.from : "",
+        to,
+        value: typeof tx.value === "string" ? tx.value : "0x0",
+        index: hexQty(tx.transactionIndex) ?? i,
+      });
+    }
+  }
+  return rows;
+}
+
+// Descending inclusive block numbers, capped by the budget, the batch size, and block 0.
+function nextBlockBatch(cursor, left, batchSize) {
+  if (!Number.isFinite(cursor) || !Number.isFinite(left) || !Number.isFinite(batchSize)) return [];
+  if (cursor < 0 || left <= 0 || batchSize <= 0) return [];
+  const n = Math.min(Math.floor(batchSize), Math.floor(left), Math.floor(cursor) + 1);
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = Math.floor(cursor) - i;
+  return out;
+}
+
+function forwardBlockBatch(newest, head, batchSize) {
+  if (!Number.isFinite(newest) || !Number.isFinite(head) || head <= newest) return [];
+  const n = Math.min(Math.floor(batchSize), Math.floor(head) - Math.floor(newest));
+  const out = new Array(n);
+  for (let i = 0; i < n; i++) out[i] = Math.floor(newest) + 1 + i;
+  return out;
+}
+
+function createScan(startBlock, maxBlocks, stopAtRows, batchSize) {
+  return {
+    cursor: startBlock,
+    left: maxBlocks,
+    rows: 0,
+    stopAtRows,
+    batchSize,
+    blocksRequested: 0,
+    batchCount: 0,
+  };
+}
+
+function createInitialScan(head) {
+  if (typeof head !== "number" || !Number.isFinite(head) || head < 0) return null;
+  const tip = Math.floor(head);
+  return createScan(tip, Math.min(TX_INITIAL_BLOCKS, tip + 1), TX_INITIAL_ROWS, TX_BATCH_SIZE);
+}
+
+function createOlderScan(oldestScanned) {
+  if (typeof oldestScanned !== "number" || !Number.isFinite(oldestScanned) || oldestScanned <= 0) return null;
+  const oldest = Math.floor(oldestScanned);
+  return createScan(oldest - 1, Math.min(TX_OLDER_CHUNK, oldest), Infinity, TX_BATCH_SIZE);
+}
+
+function takeBatch(scan) {
+  if (!scan || scan.rows >= scan.stopAtRows) return null;
+  const batch = nextBlockBatch(scan.cursor, scan.left, scan.batchSize);
+  return batch.length ? batch : null;
+}
+
+function commitBatch(scan, batch, newNonSystem) {
+  scan.blocksRequested += batch.length;
+  scan.batchCount += 1;
+  scan.rows += Number(newNonSystem) || 0;
+  scan.left -= batch.length;
+  scan.cursor = batch[batch.length - 1] - 1;
+}
+
+async function runScanLoop(scan, opts) {
+  const stop = opts.stop || (() => false);
+  const hidden = opts.hidden || (() => false);
+  const waitVisible = opts.waitVisible || (async () => {});
+  while (true) {
+    if (stop()) return scan;
+    if (hidden()) await waitVisible();
+    if (stop()) return scan;
+    const batch = takeBatch(scan);
+    if (!batch) return scan;
+    const found = await opts.ingest(batch);
+    commitBatch(scan, batch, found);
+    if (opts.afterBatch) opts.afterBatch(scan, batch);
+  }
+}
+
+function chunkList(items, size) {
+  const out = [];
+  const n = Math.max(1, size);
+  for (let i = 0; i < items.length; i += n) out.push(items.slice(i, i + n));
+  return out;
+}
+
+function inSystemWindow(row, newest) {
+  if (!row || row.kind !== "System") return true;
+  if (newest == null || !Number.isFinite(newest)) return false;
+  return row.blockNumber >= newest - (TX_SYSTEM_WINDOW - 1);
+}
+
+function retainRows(rows, newest) {
+  return rows.filter((row) => inSystemWindow(row, newest));
+}
+
+function filterRows(rows, kindsOn, query) {
+  const q = String(query || "").trim().toLowerCase();
+  return rows.filter((row) => {
+    if (!kindsOn || !kindsOn[row.kind]) return false;
+    if (!q) return true;
+    const to = row.to == null ? "" : String(row.to);
+    return String(row.hash).toLowerCase().includes(q)
+      || String(row.from).toLowerCase().includes(q)
+      || to.toLowerCase().includes(q);
+  });
+}
+
+function compareRows(a, b, key) {
+  switch (key) {
+    case "kind":
+      return TX_KINDS.indexOf(a.kind) - TX_KINDS.indexOf(b.kind);
+    case "tx":
+      return a.hash.toLowerCase() < b.hash.toLowerCase() ? -1 : a.hash.toLowerCase() > b.hash.toLowerCase() ? 1 : 0;
+    case "block":
+      if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber;
+      return a.index - b.index;
+    case "age":
+      return (b.timestamp - a.timestamp);
+    case "from":
+      return a.from.toLowerCase() < b.from.toLowerCase() ? -1 : a.from.toLowerCase() > b.from.toLowerCase() ? 1 : 0;
+    case "to": {
+      const as = (a.to || "").toLowerCase();
+      const bs = (b.to || "").toLowerCase();
+      return as < bs ? -1 : as > bs ? 1 : 0;
+    }
+    case "value": {
+      let av = 0n;
+      let bv = 0n;
+      try { av = BigInt(a.value); } catch { av = 0n; }
+      try { bv = BigInt(b.value); } catch { bv = 0n; }
+      return av < bv ? -1 : av > bv ? 1 : 0;
+    }
+    default:
+      return 0;
+  }
+}
+
+function sortRows(rows, key, dir) {
+  const sign = dir === "asc" ? 1 : -1;
+  return rows
+    .map((row, i) => ({ row, i }))
+    .sort((a, b) => {
+      const aNull = key === "age" && a.row.timestamp == null;
+      const bNull = key === "age" && b.row.timestamp == null;
+      if (aNull || bNull) {
+        if (aNull && bNull) return a.i - b.i;
+        return aNull ? 1 : -1;
+      }
+      const cmp = compareRows(a.row, b.row, key);
+      if (cmp !== 0) return cmp * sign;
+      return a.i - b.i;
+    })
+    .map((item) => item.row);
+}
+
+function toggleSortDir(currentKey, currentDir, clicked) {
+  if (currentKey === clicked) return { key: clicked, dir: currentDir === "desc" ? "asc" : "desc" };
+  return { key: clicked, dir: "desc" };
+}
+
+function selectRows(rows, view, newest) {
+  const windowed = retainRows(rows, newest);
+  const filtered = filterRows(windowed, view.kinds, view.query);
+  const sorted = sortRows(filtered, view.sortKey, view.sortDir);
+  const capped = sorted.length > TX_DOM_CAP;
+  return {
+    rows: capped ? sorted.slice(0, TX_DOM_CAP) : sorted.slice(),
+    matched: sorted.length,
+    capped,
+  };
+}
+
+function formatBlockNum(n) {
+  return Number(n).toLocaleString("en-US");
+}
+
+function scannedLabel(oldest, newest) {
+  if (oldest == null || newest == null || oldest > newest) return "";
+  return `blocks ${formatBlockNum(oldest)}–${formatBlockNum(newest)} scanned`;
+}
+
+function emptyMessage(kindsOn, query, oldest, newest) {
+  const range = oldest == null || newest == null
+    ? "the scanned blocks"
+    : `blocks ${formatBlockNum(oldest)}–${formatBlockNum(newest)}`;
+  const tail = " Scan older to look further back.";
+  const q = String(query || "").trim();
+  if (q) return `No transactions matching "${q}" in ${range}.${tail}`;
+  const on = TX_KINDS.filter((kind) => kindsOn && kindsOn[kind]);
+  if (on.length === 1) return `No ${TX_EMPTY_NOUN[on[0]]} in ${range}.${tail}`;
+  return `No matching transactions in ${range}.${tail}`;
+}
+
+function explorerHref(hash) {
+  if (typeof hash !== "string" || !TX_HASH_RE.test(hash)) return null;
+  return TX_EXPLORER_PREFIX + hash;
+}
+
+function formatEth(valueHex) {
+  let wei;
+  try { wei = BigInt(valueHex); } catch { return "–"; }
+  const sign = wei < 0n ? "-" : "";
+  if (wei < 0n) wei = -wei;
+  const whole = wei / 1000000000000000000n;
+  const frac = wei % 1000000000000000000n;
+  if (frac === 0n) return sign + whole.toString();
+  let digits = frac.toString().padStart(18, "0").slice(0, 8).replace(/0+$/, "");
+  if (!digits) return sign + "<0.00000001";
+  return sign + whole.toString() + "." + digits;
+}
+
+function shortHex(h) {
+  if (typeof h !== "string" || h.length < 18) return h || "–";
+  return `${h.slice(0, 10)}…${h.slice(-6)}`;
+}
+
+function systemWindowNote(systemOn) {
+  if (!systemOn) return "";
+  return `System rows are shown only for the newest ${TX_SYSTEM_WINDOW} scanned blocks.`;
+}
+
+function capNote(matched, capped) {
+  if (!capped) return "";
+  return `Showing the first ${formatBlockNum(TX_DOM_CAP)} of ${formatBlockNum(matched)} matching rows.`;
+}
+
+function progressText(mode, done, total, rowsFound) {
+  const verb = mode === "older" ? "Scanning older" : "Scanning";
+  return `${verb}… ${formatBlockNum(done)} / ${formatBlockNum(total)} blocks · ${formatBlockNum(rowsFound)} non-system rows`;
+}
+/* TX_GRID_LOGIC_END */
+
 // ---------- pollers ----------
 function headOf(b) { return b ? { number: hex(b.number), timestamp: hex(b.timestamp) } : null; }
 
@@ -217,6 +602,11 @@ async function pollL2() {
     delete S.errors.replica;
   } else S.errors.replica = String(repRes.reason.message || repRes.reason);
   if (seqRes.status === "rejected" && repRes.status === "rejected") throw new Error("both L2 reads failed");
+  if (S.rep || S.seq) S.lastOk = Date.now();
+  render();
+  if (S.rep && S.rep.latest && Number.isFinite(S.rep.latest.number)) {
+    await txFollowHead(S.rep.latest.number);
+  }
 }
 
 async function fillL2Window(tip) {
@@ -487,6 +877,382 @@ function render() {
   set("live-text", document.hidden ? "paused (tab hidden)"
     : fresh ? `live · updated ${new Date(S.lastOk).toLocaleTimeString()}` : "waiting for data…");
   set("json", JSON.stringify(d, null, 2));
+  refreshTxAges();
+}
+
+// ---------- transactions (R-0027) ----------
+// One replica batch at a time. Head follow reuses pollL2 (paused while hidden)
+// and takes at most one batch per poll. Scan older is the only way past the
+// initial 2,000-block window. Filter and sort call selectRows and never RPC.
+const TX = {
+  mode: "idle",
+  started: false,
+  stop: false,
+  oldest: null,
+  newest: null,
+  rows: [],
+  seen: new Set(),
+  code: new Map(),
+  error: null,
+  progress: "",
+  lastTiming: "",
+  capNote: "",
+  sortKey: "block",
+  sortDir: "desc",
+  query: "",
+  kinds: defaultKinds(),
+};
+const TX_COLS = [
+  ["kind", "Kind"],
+  ["tx", "Tx"],
+  ["block", "Block"],
+  ["age", "Age"],
+  ["from", "From"],
+  ["to", "To"],
+  ["value", "Value (ETH)"],
+];
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sleepInterruptible(ms) {
+  let left = ms;
+  while (left > 0) {
+    if (TX.stop) return;
+    const step = Math.min(200, left);
+    await sleep(step);
+    left -= step;
+  }
+}
+
+function waitVisibleOrStop() {
+  if (!document.hidden || TX.stop) return Promise.resolve();
+  return new Promise((resolve) => {
+    const onVis = () => {
+      if (!document.hidden || TX.stop) {
+        document.removeEventListener("visibilitychange", onVis);
+        resolve();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+  });
+}
+
+function noteTxError(err) {
+  const msg = String(err && err.message ? err.message : err);
+  if (msg === "stopped") return;
+  TX.error = msg;
+}
+
+async function rpcBatchBackoff(url, calls) {
+  if (calls.length > TX_BATCH_SIZE) throw new Error("batch exceeds 100");
+  let delay = 2000;
+  for (let attempt = 0; ; attempt++) {
+    if (TX.stop) throw new Error("stopped");
+    try {
+      return await rpcBatch(url, calls);
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err);
+      if (!/HTTP \d+/.test(msg) || attempt >= 3) throw err;
+      TX.progress = `Replica returned ${msg}. Waiting ${Math.round(delay / 1000)}s before retry.`;
+      renderTxStatus();
+      await sleepInterruptible(delay);
+      if (TX.stop) throw new Error("stopped");
+      delay = Math.min(delay * 2, 30000);
+    }
+  }
+}
+
+async function ingestBlocks(blockNums) {
+  if (!blockNums.length) return 0;
+  const blocks = await rpcBatchBackoff(
+    CFG.replica,
+    blockNums.map((n) => ["eth_getBlockByNumber", [toHex(n), true]]),
+  );
+  const txs = [];
+  for (const block of blocks) {
+    if (!block || !Array.isArray(block.transactions)) continue;
+    for (const tx of block.transactions) if (tx && typeof tx === "object") txs.push(tx);
+  }
+  for (const group of chunkList(addressesNeedingCode(txs, TX.code), TX_BATCH_SIZE)) {
+    const codes = await rpcBatchBackoff(
+      CFG.replica,
+      group.map((addr) => ["eth_getCode", [addr, "latest"]]),
+    );
+    group.forEach((addr, i) => TX.code.set(addr, codeIsPresent(codes[i])));
+  }
+  const rows = rowsFromBlocks(blocks, (key) => TX.code.get(key) === true);
+  let added = 0;
+  for (const row of rows) {
+    if (!row.hash || TX.seen.has(row.hash)) continue;
+    TX.seen.add(row.hash);
+    TX.rows.push(row);
+    if (row.kind !== "System") added++;
+  }
+  return added;
+}
+
+function dropHiddenSystem() {
+  const kept = retainRows(TX.rows, TX.newest);
+  if (kept.length !== TX.rows.length) TX.rows = kept;
+}
+
+async function runDirected(scan, mode) {
+  const total = scan.left;
+  TX.stop = false;
+  TX.error = null;
+  await runScanLoop(scan, {
+    stop: () => TX.stop,
+    hidden: () => document.hidden,
+    waitVisible: waitVisibleOrStop,
+    ingest: (batch) => ingestBlocks(batch),
+    afterBatch(_scan, batch) {
+      const low = batch[batch.length - 1];
+      const high = batch[0];
+      if (TX.newest == null || high > TX.newest) TX.newest = high;
+      if (TX.oldest == null || low < TX.oldest) TX.oldest = low;
+      TX.progress = progressText(mode, _scan.blocksRequested, total, _scan.rows);
+      dropHiddenSystem();
+      renderTx();
+    },
+  });
+}
+
+async function txFollowHead(head) {
+  if (TX.mode !== "idle") return;
+  if (!TX.started) {
+    TX.started = true;
+    TX.mode = "initial";
+    renderTx();
+    try {
+      const scan = createInitialScan(head);
+      if (scan) await runDirected(scan, "initial");
+    } catch (err) {
+      noteTxError(err);
+    } finally {
+      if (TX.oldest == null) TX.oldest = head + 1;
+      TX.mode = "idle";
+      TX.progress = "";
+      renderTx();
+    }
+    return;
+  }
+  const batch = forwardBlockBatch(TX.newest, head, TX_BATCH_SIZE);
+  if (!batch.length) return;
+  TX.mode = "follow";
+  renderTx();
+  try {
+    await ingestBlocks(batch);
+    TX.newest = batch[batch.length - 1];
+    dropHiddenSystem();
+  } catch (err) {
+    noteTxError(err);
+  } finally {
+    TX.mode = "idle";
+    renderTx();
+  }
+}
+
+async function runOlder() {
+  if (TX.mode !== "idle" || TX.oldest == null || TX.oldest <= 0) return;
+  const scan = createOlderScan(TX.oldest);
+  if (!scan) return;
+  TX.mode = "older";
+  TX.lastTiming = "";
+  renderTx();
+  const startedAt = Date.now();
+  try {
+    await runDirected(scan, "older");
+    if (!TX.stop && !TX.error) {
+      const sec = ((Date.now() - startedAt) / 1000).toFixed(1);
+      TX.lastTiming = `${scan.blocksRequested.toLocaleString("en-US")} blocks in ${sec}s`;
+    }
+  } catch (err) {
+    noteTxError(err);
+  } finally {
+    TX.mode = "idle";
+    TX.progress = "";
+    renderTx();
+  }
+}
+
+function onTxFilter() {
+  TX.query = document.getElementById("tx-query").value;
+  renderTxBody();
+  renderTxStatus();
+}
+
+function onTxKind(kind, checked) {
+  TX.kinds[kind] = checked;
+  renderTxBody();
+  renderTxStatus();
+}
+
+function onTxSort(key) {
+  const next = toggleSortDir(TX.sortKey, TX.sortDir, key);
+  TX.sortKey = next.key;
+  TX.sortDir = next.dir;
+  renderTxHead();
+  renderTxBody();
+  renderTxStatus();
+}
+
+function renderTxStatus() {
+  const scanning = TX.mode === "initial" || TX.mode === "older" || TX.mode === "follow";
+  const older = document.getElementById("tx-older");
+  const stop = document.getElementById("tx-stop");
+  older.disabled = scanning || !TX.started || TX.oldest == null || TX.oldest === 0;
+  older.textContent = TX.oldest === 0 ? "Reached block 0" : "Scan older";
+  stop.hidden = !(TX.mode === "initial" || TX.mode === "older");
+  document.getElementById("tx-section").setAttribute("aria-busy", scanning ? "true" : "false");
+  const parts = [];
+  if (TX.progress) parts.push(TX.progress);
+  const range = scannedLabel(TX.oldest, TX.newest);
+  if (range) parts.push(range);
+  if (!scanning && TX.lastTiming) parts.push("Last older scan: " + TX.lastTiming);
+  const sys = systemWindowNote(!!TX.kinds.System);
+  if (sys) parts.push(sys);
+  if (TX.capNote) parts.push(TX.capNote);
+  if (TX.error) parts.push(TX.error);
+  document.getElementById("tx-status").textContent = parts.join(" · ");
+}
+
+function renderTxHead() {
+  const row = document.getElementById("tx-head");
+  row.replaceChildren();
+  for (const [key, label] of TX_COLS) {
+    const th = document.createElement("th");
+    th.scope = "col";
+    const active = TX.sortKey === key;
+    th.setAttribute("aria-sort", active ? (TX.sortDir === "asc" ? "ascending" : "descending") : "none");
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tx-sort";
+    btn.textContent = label + (active ? (TX.sortDir === "desc" ? " ↓" : " ↑") : "");
+    btn.addEventListener("click", () => onTxSort(key));
+    th.appendChild(btn);
+    row.appendChild(th);
+  }
+}
+
+function cellText(text) {
+  const td = document.createElement("td");
+  td.textContent = text;
+  return td;
+}
+
+function cellAddr(addr) {
+  const td = document.createElement("td");
+  if (!addr) {
+    td.textContent = "–";
+    return td;
+  }
+  td.textContent = shortHex(addr);
+  td.title = addr;
+  return td;
+}
+
+function cellHash(hash) {
+  const td = document.createElement("td");
+  const href = explorerHref(hash);
+  if (!href) {
+    td.textContent = shortHex(hash);
+    if (hash) td.title = hash;
+    return td;
+  }
+  const link = document.createElement("a");
+  link.href = href;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = shortHex(hash);
+  link.title = hash;
+  td.appendChild(link);
+  return td;
+}
+
+function renderTxRow(row, now) {
+  const tr = document.createElement("tr");
+  tr.appendChild(cellText(row.kind));
+  tr.appendChild(cellHash(row.hash));
+  tr.appendChild(cellText(fmtN(row.blockNumber)));
+  const ageCell = document.createElement("td");
+  if (row.timestamp == null) {
+    ageCell.textContent = "–";
+  } else {
+    ageCell.setAttribute("data-ts", String(row.timestamp));
+    ageCell.textContent = fmtAge(Math.max(0, Math.round(now - row.timestamp)));
+  }
+  tr.appendChild(ageCell);
+  tr.appendChild(cellAddr(row.from));
+  tr.appendChild(cellAddr(row.to));
+  tr.appendChild(cellText(formatEth(row.value)));
+  return tr;
+}
+
+function renderTxBody() {
+  const body = document.getElementById("tx-body");
+  body.replaceChildren();
+  const view = selectRows(TX.rows, {
+    kinds: TX.kinds,
+    query: TX.query,
+    sortKey: TX.sortKey,
+    sortDir: TX.sortDir,
+  }, TX.newest);
+  TX.capNote = capNote(view.matched, view.capped);
+  if (!view.rows.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = TX_COLS.length;
+    td.className = "tx-empty";
+    td.textContent = TX.started || TX.oldest != null
+      ? emptyMessage(TX.kinds, TX.query, TX.oldest, TX.newest)
+      : "Waiting for the replica head…";
+    tr.appendChild(td);
+    body.appendChild(tr);
+    return;
+  }
+  const now = nowSec();
+  for (const row of view.rows) body.appendChild(renderTxRow(row, now));
+}
+
+function refreshTxAges() {
+  const body = document.getElementById("tx-body");
+  if (!body) return;
+  const now = nowSec();
+  for (const td of body.querySelectorAll("td[data-ts]")) {
+    const ts = Number(td.getAttribute("data-ts"));
+    if (!Number.isFinite(ts)) continue;
+    td.textContent = fmtAge(Math.max(0, Math.round(now - ts)));
+  }
+}
+
+function renderTx() {
+  renderTxHead();
+  renderTxBody();
+  renderTxStatus();
+}
+
+function wireTxControls() {
+  const kinds = document.getElementById("tx-kinds");
+  for (const kind of TX_KINDS) {
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = !!TX.kinds[kind];
+    box.addEventListener("change", () => onTxKind(kind, box.checked));
+    label.appendChild(box);
+    label.appendChild(document.createTextNode(" " + kind));
+    kinds.appendChild(label);
+  }
+  document.getElementById("tx-query").addEventListener("input", onTxFilter);
+  document.getElementById("tx-older").addEventListener("click", () => { runOlder(); });
+  document.getElementById("tx-stop").addEventListener("click", () => {
+    TX.stop = true;
+    TX.progress = "Stopping after this batch…";
+    renderTxStatus();
+  });
+  renderTx();
 }
 
 // ---------- scheduling ----------
@@ -503,6 +1269,7 @@ function loop(fn, ms, errKey) {
   setInterval(tick, ms);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) tick(); });
 }
+wireTxControls();
 loop(pollL2, CFG.poll.l2Ms, null);
 loop(pollBatcher, CFG.poll.l1Ms, "l1_batcher");
 loop(pollProposer, CFG.poll.proposerMs, "l1_proposer");
