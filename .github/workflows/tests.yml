@@ -51,6 +51,9 @@ jobs:
       - name: Run test suite
         run: python -m unittest discover -s tests -v
 
+      - name: Status transaction grid logic
+        run: node --test --test-concurrency=1 tests/status-tx-grid.test.mjs
+
   op-reth-image:
     name: Build op-reth image and boot-smoke
     runs-on: ubuntu-latest
