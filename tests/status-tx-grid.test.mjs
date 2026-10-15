@@ -19,6 +19,7 @@ const api = new Function(
 return {
   TX_KINDS, TX_SYSTEM_FROM, TX_INITIAL_BLOCKS, TX_INITIAL_ROWS, TX_OLDER_CHUNK,
   TX_BATCH_SIZE, TX_SYSTEM_WINDOW, TX_DOM_CAP, TX_EXPLORER_PREFIX, TX_HASH_RE,
+  TX_METHOD_RE, methodSelector,
   classifyTx, codeIsPresent, addressesNeedingCode, rowsFromBlocks, chunkList,
   createInitialScan, createOlderScan, runScanLoop, nextBlockBatch, forwardBlockBatch,
   sortRows, toggleSortDir, filterRows, selectRows, emptyMessage, explorerHref,
@@ -357,6 +358,136 @@ test("a failed initial scan retries, and stop does not stick", () => {
   const poll = functionBody(html, "pollL2");
   assert.match(poll, /if \(shouldRunInitial\(TX\)\) void txFollowHead\(/);
   assert.match(poll, /else await txFollowHead\(/);
+});
+
+function txRow(over) {
+  return {
+    hash: "0x" + "ab".repeat(32),
+    type: "0x2",
+    from: "0xf8b8b3b58ebac9fc530d9244c22f391e90cc8ae2",
+    to: "0x481175bc15ee6e22eab97176540a98ab6a2925ef",
+    value: "0x0",
+    transactionIndex: "0x0",
+    input: "0x",
+    ...over,
+  };
+}
+
+function oneRow(tx, hasCode) {
+  const codeTo = "0x481175bc15ee6e22eab97176540a98ab6a2925ef";
+  const block = { number: "0x22e1ad", timestamp: "0x65", transactions: [tx] };
+  const rows = api.rowsFromBlocks([block], (key) => hasCode && key === codeTo);
+  assert.equal(rows.length, 1);
+  return rows[0];
+}
+
+test("dApp method is a 4-byte selector and other kinds stay blank", () => {
+  assert.equal(String(api.TX_METHOD_RE), "/^0x[0-9a-fA-F]{8,}/");
+  const codeTo = "0x481175bc15ee6e22eab97176540a98ab6a2925ef";
+  const call = oneRow(txRow({ input: "0x8271B6ACdeadbeef" }), true);
+  assert.equal(call.kind, "dApp call");
+  assert.equal(call.method, "0x8271b6ac");
+  assert.match(call.method, /^0x[0-9a-f]{8}$/);
+  assert.equal(api.methodSelector("dApp call", "0xF08C5761"), "0xf08c5761");
+
+  const transfer = oneRow(txRow({
+    to: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    input: "0x8271b6ac" + "00".repeat(16),
+  }), false);
+  assert.equal(transfer.kind, "Transfer");
+  assert.equal(transfer.method, null);
+
+  const created = oneRow(txRow({
+    to: null,
+    input: "0x60806040" + "ff".repeat(40),
+  }), true);
+  assert.equal(created.kind, "Contract creation");
+  assert.equal(created.method, null);
+
+  const deposit = oneRow(txRow({
+    type: "0x7e",
+    from: "0xf8b8b3b58ebac9fc530d9244c22f391e90cc8ae2",
+    input: "0x8271b6ac" + "00".repeat(8),
+  }), true);
+  assert.equal(deposit.kind, "Deposit");
+  assert.equal(deposit.method, null);
+
+  const traps = [
+    "0xzzzzzzzzzzzz",
+    "0x8271b6",
+    "0x<script>alert(1)</script>",
+    "0x8271b6ac<img src=x onerror=alert(1)>",
+    "0xf08c5761" + "ab".repeat(60000),
+  ];
+  assert.ok(traps[4].length >= 100 * 1024);
+  for (const input of traps) {
+    const row = oneRow(txRow({ to: codeTo, input }), true);
+    assert.equal(row.kind, "dApp call");
+    assert.equal(Object.hasOwn(row, "input"), false);
+    if (row.method == null) {
+      assert.equal(row.method, null);
+    } else {
+      assert.match(row.method, /^0x[0-9a-f]{8}$/);
+    }
+    assert.ok(JSON.stringify(row).length < 500, input.slice(0, 24));
+    assert.equal(JSON.stringify(row).includes("<"), false);
+  }
+  assert.equal(oneRow(txRow({ to: codeTo, input: traps[0] }), true).method, null);
+  assert.equal(oneRow(txRow({ to: codeTo, input: traps[1] }), true).method, null);
+  assert.equal(oneRow(txRow({ to: codeTo, input: traps[2] }), true).method, null);
+  assert.equal(oneRow(txRow({ to: codeTo, input: traps[3] }), true).method, "0x8271b6ac");
+  const huge = oneRow(txRow({ to: codeTo, input: traps[4] }), true);
+  assert.equal(huge.method, "0xf08c5761");
+  assert.equal(huge.method.length, 10);
+});
+
+test("method column sorts with nulls last ascending and the filter matches the selector", () => {
+  let fetches = 0;
+  const previous = globalThis.fetch;
+  globalThis.fetch = () => {
+    fetches++;
+    return Promise.reject(new Error("fetch"));
+  };
+  try {
+    const rows = [
+      row({ kind: "Transfer", method: null, hash: "0x" + "11".repeat(32), from: "0x1111111111111111111111111111111111111111", to: "0x2222222222222222222222222222222222222222" }),
+      row({ kind: "dApp call", method: "0xf08c5761", hash: "0x" + "22".repeat(32), from: "0x3333333333333333333333333333333333333333", to: "0x4444444444444444444444444444444444444444" }),
+      row({ kind: "dApp call", method: "0x8271b6ac", hash: "0x" + "33".repeat(32), from: "0x5555555555555555555555555555555555555555", to: "0x6666666666666666666666666666666666666666" }),
+    ];
+    const before = fetches;
+    const asc = api.sortRows(rows, "method", "asc");
+    assert.deepEqual(asc.map((r) => r.method), ["0x8271b6ac", "0xf08c5761", null]);
+    const flipped = api.toggleSortDir("method", "asc", "method");
+    assert.deepEqual(flipped, { key: "method", dir: "desc" });
+    const desc = api.sortRows(rows, flipped.key, flipped.dir);
+    assert.deepEqual(desc.map((r) => r.method), ["0xf08c5761", "0x8271b6ac", null]);
+    const back = api.toggleSortDir(flipped.key, flipped.dir, "method");
+    assert.deepEqual(back, { key: "method", dir: "asc" });
+    assert.deepEqual(rows.map((r) => r.hash), [
+      "0x" + "11".repeat(32),
+      "0x" + "22".repeat(32),
+      "0x" + "33".repeat(32),
+    ]);
+
+    const kinds = api.defaultKinds();
+    const hit = api.filterRows(rows, kinds, "8271b6");
+    assert.equal(hit.length, 1);
+    assert.equal(hit[0].method, "0x8271b6ac");
+    const upper = api.filterRows(rows, kinds, "F08C");
+    assert.equal(upper.length, 1);
+    assert.equal(upper[0].method, "0xf08c5761");
+    assert.equal(fetches, before);
+  } finally {
+    if (previous === undefined) delete globalThis.fetch;
+    else globalThis.fetch = previous;
+  }
+
+  const cols = html.slice(html.indexOf("const TX_COLS = ["), html.indexOf("];", html.indexOf("const TX_COLS = [")) + 2);
+  assert.match(cols, /\["to", "To"\],\s*\["method", "Method"\],\s*\["value", "Value \(ETH\)"\]/);
+  assert.match(html, /placeholder="hash, from, to, or method"/);
+  const rowFn = functionBody(html, "renderTxRow");
+  assert.match(rowFn, /cellText\(row\.method == null \? "–" : row\.method\)/);
+  assert.equal(/innerHTML|outerHTML|insertAdjacentHTML/.test(rowFn), false);
 });
 
 test("head follow requests at most one batch and code lookups are chunked at 100", () => {

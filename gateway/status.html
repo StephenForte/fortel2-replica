@@ -171,7 +171,7 @@ footer { margin-top: 18px; color: var(--muted); font-size: 12px; }
     <div class="tx-controls">
       <div class="tx-kinds" id="tx-kinds"></div>
       <label class="tx-q" for="tx-query">Filter
-        <input id="tx-query" type="search" autocomplete="off" spellcheck="false" placeholder="hash, from, or to">
+        <input id="tx-query" type="search" autocomplete="off" spellcheck="false" placeholder="hash, from, to, or method">
       </label>
       <div class="tx-actions">
         <button type="button" id="tx-older" disabled>Scan older</button>
@@ -264,6 +264,7 @@ const TX_DOM_CAP = 1000;
 const TX_KINDS = ["System", "Deposit", "dApp call", "Transfer", "Contract creation"];
 const TX_SYSTEM_FROM = "0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001";
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
+const TX_METHOD_RE = /^0x[0-9a-fA-F]{8,}/;
 const TX_EXPLORER_PREFIX =
   "https:" + "//settlementos-explorer-ihgo.onrender.com/fortel2-sepolia/tx/";
 const TX_EMPTY_NOUN = {
@@ -328,6 +329,14 @@ function hexQty(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Four-byte selector only. tx.input is untrusted and unbounded; a row keeps
+// the validated slice and never the calldata itself.
+function methodSelector(kind, input) {
+  if (kind !== "dApp call" || typeof input !== "string") return null;
+  if (!TX_METHOD_RE.test(input)) return null;
+  return input.slice(0, 10).toLowerCase();
+}
+
 function rowsFromBlocks(blocks, codeHas) {
   const rows = [];
   const has = typeof codeHas === "function" ? codeHas : () => false;
@@ -341,13 +350,15 @@ function rowsFromBlocks(blocks, codeHas) {
       if (!tx || typeof tx !== "object") continue;
       const to = tx.to == null ? null : String(tx.to);
       const key = to == null ? "" : to.toLowerCase();
+      const kind = classifyTx(tx, key ? has(key) === true : false);
       rows.push({
         hash: typeof tx.hash === "string" ? tx.hash : "",
-        kind: classifyTx(tx, key ? has(key) === true : false),
+        kind,
         blockNumber: blockNumber == null ? 0 : blockNumber,
         timestamp,
         from: typeof tx.from === "string" ? tx.from : "",
         to,
+        method: methodSelector(kind, tx.input),
         value: typeof tx.value === "string" ? tx.value : "0x0",
         index: hexQty(tx.transactionIndex) ?? i,
       });
@@ -451,9 +462,11 @@ function filterRows(rows, kindsOn, query) {
     if (!kindsOn || !kindsOn[row.kind]) return false;
     if (!q) return true;
     const to = row.to == null ? "" : String(row.to);
+    const method = row.method == null ? "" : String(row.method);
     return String(row.hash).toLowerCase().includes(q)
       || String(row.from).toLowerCase().includes(q)
-      || to.toLowerCase().includes(q);
+      || to.toLowerCase().includes(q)
+      || method.toLowerCase().includes(q);
   });
 }
 
@@ -482,6 +495,11 @@ function compareRows(a, b, key) {
       try { bv = BigInt(b.value); } catch { bv = 0n; }
       return av < bv ? -1 : av > bv ? 1 : 0;
     }
+    case "method": {
+      const as = String(a.method).toLowerCase();
+      const bs = String(b.method).toLowerCase();
+      return as < bs ? -1 : as > bs ? 1 : 0;
+    }
     default:
       return 0;
   }
@@ -492,8 +510,10 @@ function sortRows(rows, key, dir) {
   return rows
     .map((row, i) => ({ row, i }))
     .sort((a, b) => {
-      const aNull = key === "age" && a.row.timestamp == null;
-      const bNull = key === "age" && b.row.timestamp == null;
+      const aNull = (key === "age" && a.row.timestamp == null)
+        || (key === "method" && a.row.method == null);
+      const bNull = (key === "age" && b.row.timestamp == null)
+        || (key === "method" && b.row.method == null);
       if (aNull || bNull) {
         if (aNull && bNull) return a.i - b.i;
         return aNull ? 1 : -1;
@@ -934,6 +954,7 @@ const TX_COLS = [
   ["age", "Age"],
   ["from", "From"],
   ["to", "To"],
+  ["method", "Method"],
   ["value", "Value (ETH)"],
 ];
 
@@ -1210,6 +1231,7 @@ function renderTxRow(row, now) {
   tr.appendChild(ageCell);
   tr.appendChild(cellAddr(row.from));
   tr.appendChild(cellAddr(row.to));
+  tr.appendChild(cellText(row.method == null ? "–" : row.method));
   tr.appendChild(cellText(formatEth(row.value)));
   return tr;
 }
