@@ -24,6 +24,7 @@ return {
   sortRows, toggleSortDir, filterRows, selectRows, emptyMessage, explorerHref,
   formatEth, shortHex, scannedLabel, systemWindowNote, capNote, progressText,
   defaultKinds, inSystemWindow, retainRows,
+  shouldRunInitial, settleInitial,
 };
 `,
 )();
@@ -317,6 +318,42 @@ test("one Scan older click requests 5000 blocks in batches of at most 100", asyn
   assert.equal(stopped.batches, 1);
   assert.equal(stopped.blocks.length, 100);
   assert.equal(stopped.blocks[0], 9999);
+});
+
+test("a failed initial scan retries, and stop does not stick", () => {
+  const failed = {
+    newest: null, oldest: null, initialSkipped: false, stop: false,
+    started: false, mode: "initial", progress: "scanning",
+  };
+  api.settleInitial(failed, 100, false);
+  assert.equal(failed.stop, false);
+  assert.equal(failed.newest, null);
+  assert.equal(failed.initialSkipped, false);
+  assert.equal(api.shouldRunInitial(failed), true);
+  assert.deepEqual(api.forwardBlockBatch(failed.newest, 100, 100), []);
+
+  const halted = {
+    newest: null, oldest: null, initialSkipped: false, stop: true,
+    started: false, mode: "initial", progress: "scanning",
+  };
+  api.settleInitial(halted, 100, true);
+  assert.equal(halted.stop, false);
+  assert.equal(halted.initialSkipped, true);
+  assert.equal(halted.oldest, 101);
+  assert.equal(halted.started, true);
+  assert.equal(api.shouldRunInitial(halted), false);
+
+  const partial = {
+    newest: 90, oldest: 80, initialSkipped: false, stop: true,
+    started: true, mode: "older", progress: "scanning", error: "Replica returned / HTTP 429",
+  };
+  api.settleInitial(partial, 100, true);
+  assert.equal(partial.stop, false);
+  assert.equal(partial.newest, 90);
+  assert.equal(partial.error, "Replica returned / HTTP 429");
+  assert.equal(api.shouldRunInitial(partial), false);
+  assert.match(functionBody(html, "txFollowHead"), /TX\.error = null/);
+  assert.match(functionBody(html, "runOlder"), /TX\.stop = false/);
 });
 
 test("head follow requests at most one batch and code lookups are chunked at 100", () => {

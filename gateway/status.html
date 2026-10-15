@@ -580,6 +580,26 @@ function progressText(mode, done, total, rowsFound) {
   const verb = mode === "older" ? "Scanning older" : "Scanning";
   return `${verb}… ${formatBlockNum(done)} / ${formatBlockNum(total)} blocks · ${formatBlockNum(rowsFound)} non-system rows`;
 }
+
+// A failed first batch leaves newest unset, so the next visible poll retries.
+// Stop before any block is different: do not auto-restart, and arm Scan older.
+function shouldRunInitial(tx) {
+  return !!tx && tx.newest == null && !tx.initialSkipped;
+}
+
+function settleInitial(tx, head, stopped) {
+  tx.stop = false;
+  tx.mode = "idle";
+  tx.progress = "";
+  if (tx.newest == null && stopped) {
+    tx.initialSkipped = true;
+    tx.oldest = head + 1;
+    tx.started = true;
+  } else if (tx.newest != null) {
+    tx.started = true;
+  }
+  return tx;
+}
 /* TX_GRID_LOGIC_END */
 
 // ---------- pollers ----------
@@ -901,6 +921,7 @@ const TX = {
   sortDir: "desc",
   query: "",
   kinds: defaultKinds(),
+  initialSkipped: false,
 };
 const TX_COLS = [
   ["kind", "Kind"],
@@ -1021,8 +1042,7 @@ async function runDirected(scan, mode) {
 
 async function txFollowHead(head) {
   if (TX.mode !== "idle") return;
-  if (!TX.started) {
-    TX.started = true;
+  if (shouldRunInitial(TX)) {
     TX.mode = "initial";
     renderTx();
     try {
@@ -1031,9 +1051,7 @@ async function txFollowHead(head) {
     } catch (err) {
       noteTxError(err);
     } finally {
-      if (TX.oldest == null) TX.oldest = head + 1;
-      TX.mode = "idle";
-      TX.progress = "";
+      settleInitial(TX, head, TX.stop);
       renderTx();
     }
     return;
@@ -1046,6 +1064,7 @@ async function txFollowHead(head) {
     await ingestBlocks(batch);
     TX.newest = batch[batch.length - 1];
     dropHiddenSystem();
+    TX.error = null;
   } catch (err) {
     noteTxError(err);
   } finally {
@@ -1071,6 +1090,7 @@ async function runOlder() {
   } catch (err) {
     noteTxError(err);
   } finally {
+    TX.stop = false;
     TX.mode = "idle";
     TX.progress = "";
     renderTx();
