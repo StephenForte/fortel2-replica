@@ -601,6 +601,15 @@ class StatusPageTests(unittest.TestCase):
         self.assertIn(">Transactions<", html)
         self.assertIn("Scan older", html)
 
+    def test_method_column_sits_between_to_and_value(self):
+        html = self.PAGE.read_text(encoding="utf-8")
+        self.assertIn('placeholder="hash, from, to, or method"', html)
+        cols = html.split("const TX_COLS = [", 1)[1].split("];", 1)[0]
+        self.assertLess(cols.find('["to", "To"]'), cols.find('["method", "Method"]'))
+        self.assertLess(cols.find('["method", "Method"]'), cols.find('["value", "Value (ETH)"]'))
+        self.assertIn('cellText(row.method == null ? "–" : row.method)', html)
+        self.assertIn("/^0x[0-9a-fA-F]{8,}/", html)
+
 
 class BridgeRouteStaticTests(unittest.TestCase):
     """Gateway routing for the static /bridge page. Existing tests stay as they are."""
