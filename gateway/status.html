@@ -625,7 +625,11 @@ async function pollL2() {
   if (S.rep || S.seq) S.lastOk = Date.now();
   render();
   if (S.rep && S.rep.latest && Number.isFinite(S.rep.latest.number)) {
-    await txFollowHead(S.rep.latest.number);
+    // The initial scan is many batches. Awaiting it holds loop()'s running
+    // flag, so the health panels stop polling until those blocks finish.
+    // Head follow stays awaited: one batch per poll.
+    if (shouldRunInitial(TX)) void txFollowHead(S.rep.latest.number);
+    else await txFollowHead(S.rep.latest.number);
   }
 }
 

@@ -354,6 +354,9 @@ test("a failed initial scan retries, and stop does not stick", () => {
   assert.equal(api.shouldRunInitial(partial), false);
   assert.match(functionBody(html, "txFollowHead"), /TX\.error = null/);
   assert.match(functionBody(html, "runOlder"), /TX\.stop = false/);
+  const poll = functionBody(html, "pollL2");
+  assert.match(poll, /if \(shouldRunInitial\(TX\)\) void txFollowHead\(/);
+  assert.match(poll, /else await txFollowHead\(/);
 });
 
 test("head follow requests at most one batch and code lookups are chunked at 100", () => {
