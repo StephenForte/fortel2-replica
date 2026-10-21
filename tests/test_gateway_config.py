@@ -718,6 +718,9 @@ class BridgeRouteStaticTests(unittest.TestCase):
         self.assertNotIn("10000", hc)
         self.assertNotIn("CMD [", hc)
         self.assertRegex(hc, r"(?m)^HEALTHCHECK\b.*\\\n\s+CMD\s+\S")
+        # curl's own status must fail the probe; a pipe would keep grep's status only.
+        self.assertRegex(hc, r"code=\$\(curl\b.*\) && \[ \"\$\{code\}\" = 200 \]")
+        self.assertNotIn("|", hc)
 
     def test_template_has_no_client_host_variable_tokens(self):
         """Raw template, comments included. \\b keeps $proxy_host legal."""

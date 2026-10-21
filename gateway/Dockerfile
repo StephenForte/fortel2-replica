@@ -59,6 +59,7 @@ USER nginx
 
 # Local /healthz only (no proxy, no limit_req). Shell form: sh expands ${PORT}
 # at run time. 15s interval, 3s timeout, 10s start-period, 3 retries.
-# curl is installed in this tag; the probe fails unless the status is 200.
+# curl is installed in this tag. Compare the status only after curl exits 0,
+# so a truncated body that still printed 200 cannot look healthy.
 HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
-    CMD curl -fsS --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/healthz" | grep -qx 200
+    CMD code=$(curl -fsS --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/healthz") && [ "${code}" = 200 ]
