@@ -56,3 +56,9 @@ EXPOSE 10000
 # Base image already drops to uid 101; repeat so the non-root contract is visible here.
 USER nginx
 # No VOLUME, no geth, no disk.
+
+# Local /healthz only (no proxy, no limit_req). Shell form: sh expands ${PORT}
+# at run time. 15s interval, 3s timeout, 10s start-period, 3 retries.
+# curl is installed in this tag; the probe fails unless the status is 200.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+    CMD curl -fsS --noproxy '*' -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT}/healthz" | grep -qx 200

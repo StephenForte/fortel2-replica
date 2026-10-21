@@ -703,6 +703,27 @@ class BridgeRouteStaticTests(unittest.TestCase):
         self.assertIn("bridge/node_modules", ignored)
         self.assertIn("bridge/dist", ignored)
 
+    def test_dockerfile_final_stage_healthcheck_probes_healthz_via_port(self):
+        """Final stage: one shell-form HEALTHCHECK, /healthz, runtime PORT."""
+        df = DOCKERFILE.read_text(encoding="utf-8")
+        stages = re.split(r"(?m)^(?=FROM )", df)
+        stages = [part for part in stages if part.startswith("FROM ")]
+        final = stages[-1]
+        checks = re.findall(r"(?m)^HEALTHCHECK\b(?:.*\\\n)*.*$", final)
+        self.assertEqual(1, len(checks), checks)
+        hc = checks[0]
+        self.assertIn("/healthz", hc)
+        self.assertIn("${PORT}", hc)
+        self.assertNotRegex(hc, r":\d+")
+        self.assertNotIn("10000", hc)
+        self.assertNotIn("CMD [", hc)
+        self.assertRegex(hc, r"(?m)^HEALTHCHECK\b.*\\\n\s+CMD\s+\S")
+
+    def test_template_has_no_client_host_variable_tokens(self):
+        """Raw template, comments included. \\b keeps $proxy_host legal."""
+        raw = TEMPLATE.read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"\$(?:host|http_host)\b", raw), raw)
+
     def test_status_html_links_bridge(self):
         html = (GATEWAY / "status.html").read_text(encoding="utf-8")
         header = html.split("<header>", 1)[1].split("</header>", 1)[0]
