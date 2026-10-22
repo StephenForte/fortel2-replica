@@ -756,7 +756,14 @@ op-node version v1.19.11-43c071cb-1792624643
 
 The measured short commit matches the index revision / peeled tag `43c071cbff8ad7512581561aa2d43c990544b650`; the guard uses the executed measurement. The exact binary's `--help` includes all 20 flags passed by the single-container entrypoint. No flags changed. The entrypoint still refuses a digit after the pinned version and a wrong commit. Tests now refuse `v1.19.110`, the wrong-commit v1.19.11 line, and the former v1.19.8 binary and digest, while keeping the pre-Glamsterdam refusal.
 
-**CI evidence.** Pending the PR's existing `Build op-reth image and boot-smoke` job; replace this paragraph with its run URL and verbatim pin-ok lines before hand-back. Its acceptance rule is unchanged: startup checks followed only by the timeout or the exact placeholder-L1 dial failure. Unit tests and the image run must be green before merge.
+**CI evidence.** [GitHub Actions run 39800313201](https://github.com/StephenForte/fortel2-replica/actions/runs/39800313201), `Build op-reth image and boot-smoke`, executed the built linux/amd64 image on the Linux runner. It printed `op-node version v1.19.11-43c071cb-1792624643`, matching the independent Colima measurement. The successful boot log printed these lines verbatim:
+
+```
+op-node pin ok: v1.19.11 commit 43c071cb
+op-reth pin ok: op-reth Version: 2.6.1 / Commit SHA: e16bffa18420c86dbab693097bc33117f74a5f7d
+```
+
+The job also passed command inventory, uid 10001, genesis/rollup hash-check for chain 852, datadir initialization and op-reth start. It exited 1 only after `failed to dial L1 address (https://example.invalid)`, satisfying the unchanged smoke acceptance rule. Full PR-head CI must be green before merge. Local Python ran 189 tests (main: 188): five snapshot failures were the documented live-host `op-reth node` refusal, and one gateway Docker test errored because Colima cannot bind-mount this Mac's temporary path; no checks were weakened for these environmental limits. Local transaction-grid tests passed 13/13.
 
 **Deploy and canary decision.** Operator chooses canary versus direct deploy; recommendation: canary against real Sepolia first, because CI uses a placeholder L1 and cannot prove derivation. No canary or Render change is made by this PR. After merge, operator Manual Deploys `fortel2-replica-reth` from `main`, resumes the existing `/data` archive, and checks both pin-ok lines and advancing L1 / L2 derivation. No datadir wipe, snapshot force, Blueprint re-apply, service rename, or environment change. The Mini sequencer is a separate operator thread.
 
