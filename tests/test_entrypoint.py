@@ -33,10 +33,10 @@ def _pin_constant(name):
 
 PIN_RETH_VERSION_LINE = _pin_constant("VERSION_LINE")
 PIN_RETH_COMMIT_LINE = _pin_constant("COMMIT_LINE")
-# Measured from the linux/amd64 op-node v1.19.8 binary: `op-node --version`.
-PIN_OP_NODE_VERSION = "v1.19.8"
-PIN_OP_NODE_COMMIT = "9f76a9d2"
-PIN_OP_NODE_VERSION_TEXT = "op-node version v1.19.8-9f76a9d2-1790167011\n"
+# Measured from the linux/amd64 op-node v1.19.11 binary: `op-node --version`.
+PIN_OP_NODE_VERSION = "v1.19.11"
+PIN_OP_NODE_COMMIT = "43c071cb"
+PIN_OP_NODE_VERSION_TEXT = "op-node version v1.19.11-43c071cb-1792624643\n"
 EXPECTED_GENESIS_HASH = (
     "0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d"
 )
@@ -578,15 +578,20 @@ printf '%064d\n' 0
             "op-node version v1.19.2-da197e45-1782514747\n"
         )
 
-    def test_refuses_op_node_version_with_trailing_digit(self):
-        # v1.19.8 must not accept v1.19.80.
+    def test_refuses_previous_op_node_pin(self):
         self._assert_op_node_pin_refused(
-            "op-node version v1.19.80-9f76a9d2-1790167011\n"
+            "op-node version v1.19.8-9f76a9d2-1790167011\n"
+        )
+
+    def test_refuses_op_node_version_with_trailing_digit(self):
+        # v1.19.11 must not accept v1.19.110.
+        self._assert_op_node_pin_refused(
+            "op-node version v1.19.110-43c071cb-1792624643\n"
         )
 
     def test_refuses_op_node_wrong_commit(self):
         self._assert_op_node_pin_refused(
-            "op-node version v1.19.8-da197e45-1790167011\n"
+            "op-node version v1.19.11-da197e45-1792624643\n"
         )
 
     def test_accepts_measured_op_node_version(self):
