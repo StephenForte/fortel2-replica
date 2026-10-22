@@ -731,4 +731,33 @@ The commit is the peeled `op-reth/v2.6.1` tag. These lines were not executed loc
 
 **Rollback.** Revert this PR, then Manual Deploy (patch release on the same datadir).
 
-Next free R-id is **R-0029**.
+Next free R-id is **R-0030**.
+
+
+## R-0029 — replica op-node v1.19.11 (CVE-2026-111943)
+
+*2026-10-22 · supersedes the R-0021 op-node pin. Same op-reth v2.6.1 (R-0028), Wolfi runtime, flags, uid 10001 and env knobs.*
+
+**Why.** [op-node v1.19.11](https://github.com/ethereum-optimism/optimism/releases/tag/op-node/v1.19.11), published 2026-10-22T02:51:39Z, is strongly recommended for all operators. Go 1.26.10 (from 1.26.8) rejects compromised eMudhra intermediates in `crypto/x509` (CVE-2026-111943); the included Go 1.26.9 fixes cover `crypto/tls`, `html/template`, `net/http`, `net/textproto` and `os`. op-node makes outbound TLS calls to L1, so the R-0028 runtime trust-store fix alone does not replace this binary update. This release includes the unpublished v1.19.10 changes, a sequencer L1-origin fix for block times >6s, beacon `SLOT_DURATION_MS` support and pruned-L1-genesis startup handling. The skipped [v1.19.9](https://github.com/ethereum-optimism/optimism/releases/tag/op-node/v1.19.9) changes sequencer publishing and removes `op_node_default_rpc_server_*` metrics; a repository search before this entry found no consumers of those metrics. This node remains a verifier.
+
+**Digests, fetched 2026-10-22 from `us-docker.pkg.dev` without credentials (HTTP 200).** Index `op-node:v1.19.11` is `sha256:e9eb72b7f13847a953fcf7d798814f128e2fdaa9edbc83bcffa0b7e6e9427c00`. linux/amd64 manifest is `sha256:dc7a525974c88d0c369bcffaea0f735ca268e64a354507e688328f426c0c363a`, config `sha256:4bbc5dcf35dd356becf7fc34bc76ddf2f4df220f531d00b34d65584aac2eedc0`. One gzip layer: `sha256:5b9ed919c65bcec3685d75db188896cb1fabd83509ea42d52b43762f2280a9f8`. All four downloaded bodies were independently SHA-256 checked against these digests. `Dockerfile.reth` and `docker-compose.yml` pin the index, which also includes linux/arm64. Config labels contain no version or revision.
+
+**Measured binary, before setting the guard.** On the authoring arm64 Mac, the existing Colima Linux VM executed the exact linux/amd64 image under its amd64 emulator:
+
+```sh
+docker --context colima run --rm --platform linux/amd64 --entrypoint op-node us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.11@sha256:e9eb72b7f13847a953fcf7d798814f128e2fdaa9edbc83bcffa0b7e6e9427c00 --version
+```
+
+Verbatim stdout (exit 0):
+
+```
+op-node version v1.19.11-43c071cb-1792624643
+```
+
+The measured short commit matches the index revision / peeled tag `43c071cbff8ad7512581561aa2d43c990544b650`; the guard uses the executed measurement. The exact binary's `--help` includes all 20 flags passed by the single-container entrypoint. No flags changed. The entrypoint still refuses a digit after the pinned version and a wrong commit. Tests now refuse `v1.19.110`, the wrong-commit v1.19.11 line, and the former v1.19.8 binary and digest, while keeping the pre-Glamsterdam refusal.
+
+**CI evidence.** Pending the PR's existing `Build op-reth image and boot-smoke` job; replace this paragraph with its run URL and verbatim pin-ok lines before hand-back. Its acceptance rule is unchanged: startup checks followed only by the timeout or the exact placeholder-L1 dial failure. Unit tests and the image run must be green before merge.
+
+**Deploy and canary decision.** Operator chooses canary versus direct deploy; recommendation: canary against real Sepolia first, because CI uses a placeholder L1 and cannot prove derivation. No canary or Render change is made by this PR. After merge, operator Manual Deploys `fortel2-replica-reth` from `main`, resumes the existing `/data` archive, and checks both pin-ok lines and advancing L1 / L2 derivation. No datadir wipe, snapshot force, Blueprint re-apply, service rename, or environment change. The Mini sequencer is a separate operator thread.
+
+**Rollback.** Revert this PR and Manual Deploy on the same `/data`, restoring the R-0021 op-node pin while retaining op-reth v2.6.1. This restores the vulnerable Go binary and is only an operational fallback; no execution-client or datadir format change is introduced here.
