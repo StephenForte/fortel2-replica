@@ -485,7 +485,7 @@ printf '%064d\n' 0
 
     def test_refuses_reth_version_near_miss(self):
         # Before: a trailing character on "Reth Version: 2.3.0-dev" failed.
-        # After: the same whole-line rule applies to "op-reth Version: 2.6.0"
+        # After: the same whole-line rule applies to "op-reth Version: 2.6.1"
         # and to its commit. A trailing character still fails, and so does
         # the old v2.3.3 version line with a suffix.
         self._assert_reth_pin_refused(

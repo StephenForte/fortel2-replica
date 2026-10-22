@@ -14,8 +14,8 @@
 # commands on that image — copy the binary into this runtime. op-geth is
 # not in this image.
 #
-# Base image config, re-fetched 2026-10-07 (linux/amd64 config blob
-# sha256:0c472a572b96a511a8c62dfdde13a10da0b484ea7bd7c9670524f763d2ff7b0c):
+# Base image config, re-fetched 2026-10-22 (linux/amd64 config blob
+# sha256:6639ffd50f7ccba24a6556eba482d544db2897994bcaef68d295ba69a3a3ae84):
 #   User: "0"
 #   Entrypoint: ["/usr/local/bin/op-reth"]
 #   Cmd: null
@@ -24,7 +24,7 @@
 # because the live /data disk is owned by 10001.
 
 FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.8@sha256:adc6578b8b3c1cd065405c17bf593008ad21c3fc91cef6db72d370344432ba11 AS node
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.6.0@sha256:0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c AS reth
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.6.1@sha256:3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5 AS reth
 
 # Runtime. Same digest as `AS reth` (the only copy of the pin).
 FROM reth
