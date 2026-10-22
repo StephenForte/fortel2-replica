@@ -708,4 +708,27 @@ Sort and filter are client-side over the rows loaded so far. Filtering to dApp c
 
 **Not changed.** The `/status` CSP (`tests/test_gateway_config.py` `STATUS_CSP`): the grid reads only the replica (`'self'`). Explorer links are navigation, not fetches. Execution node, method filter, Render services and env, `render.yaml`. Deploy only `fortel2-replica-rpc`. Rollback is to redeploy the previous gateway commit.
 
-Next free R-id is **R-0028**.
+## R-0028 — replica op-reth v2.6.1 (CVE-2026-111943)
+
+*2026-10-22 · supersedes the R-0023 image pin. Same Wolfi base, same flags, same op-node (R-0021).*
+
+**Why.** op-reth v2.6.1 (released 2026-10-22, tagged `op-reth/v2.6.1`) is marked strongly recommended for all operators. It fixes CVE-2026-111943 (compromised eMudhra certificate authority): `rustls-webpki` 0.103.15 → 0.103.16 (RUSTSEC-2026-0382) rejects the compromised intermediates on outbound TLS, `webpki-roots` 1.0.7 → 1.0.10 (RUSTSEC-2026-0381) drops the eMudhra roots, and the image's `ca-certificates-bundle` `20260909-r3` drops the emSign Root CA G3, C1 and C3. The base CA bundle matters here too: the entrypoint's `curl` (snapshot download) uses the image trust store. v2.7.0 is tagged but has no GitHub release yet; it is not adopted.
+
+**Digests, fetched 2026-10-22 from `us-docker.pkg.dev` with no credentials (HTTP 200).** Index `op-reth:v2.6.1` is `sha256:3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5` (body sha256 re-computed locally, matches). linux/amd64 manifest is `sha256:02be1f9c1eef42abadcf7b6440a311ee0d63fe6e7289e784e544d5cb5a4de473`, config `sha256:6639ffd50f7ccba24a6556eba482d544db2897994bcaef68d295ba69a3a3ae84` (User `0`, Entrypoint `/usr/local/bin/op-reth`, Cmd null, same Env as v2.6.0). One layer, `sha256:0b32c7ead885cfa05b29a5fe3cc03f4d7af73f3d61bd9b63259a5a971f62ff4a`. `Dockerfile.reth` and `docker-compose.yml` pin that index digest.
+
+**Expected `--version` lines.** `scripts/op-reth-pin-check.py` now asserts:
+
+```
+op-reth Version: 2.6.1
+Commit SHA: e16bffa18420c86dbab693097bc33117f74a5f7d
+```
+
+The commit is the peeled `op-reth/v2.6.1` tag. These lines were not executed locally (no Docker daemon on the authoring Mac); the CI `op-reth-image` job runs the binary and the copied checker and must be green before merge.
+
+**Sequencer parity.** The Mini sequencer stays on v2.6.0 (ForteL2 D-0150) until ForteL2 bumps it; that is planner-owned and not edited from this repo. Until then `scripts/snapshot-reth-state.sh` (R-0024) refuses a Mini capture unless `--allow-pin-mismatch`. A v2.6.0-captured snapshot still restores (restore checks only the archive SHA-256).
+
+**Deploy.** Manual Deploy of `fortel2-replica-reth` from `main` after merge. Do not re-apply `render.yaml`. Check the boot log for `op-reth pin ok: op-reth Version: 2.6.1`.
+
+**Rollback.** Revert this PR, then Manual Deploy (patch release on the same datadir).
+
+Next free R-id is **R-0029**.

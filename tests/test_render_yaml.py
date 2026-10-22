@@ -155,7 +155,7 @@ class RenderYamlTests(unittest.TestCase):
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
-            "op-reth:v2.6.0@sha256:0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c",
+            "op-reth:v2.6.1@sha256:3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5",
             docker,
         )
         self.assertNotIn(
@@ -164,6 +164,10 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertNotIn(
             "op-reth:v2.5.0@sha256:6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692",
+            docker,
+        )
+        self.assertNotIn(
+            "0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c",
             docker,
         )
         self.assertIn(
@@ -196,7 +200,7 @@ class RenderYamlTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
         self.assertIn(
-            "op-reth:v2.6.0@sha256:0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c",
+            "op-reth:v2.6.1@sha256:3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5",
             compose,
         )
         self.assertNotIn(
@@ -204,6 +208,7 @@ class RenderYamlTests(unittest.TestCase):
             compose,
         )
         self.assertNotIn("6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692", compose)
+        self.assertNotIn("0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c", compose)
         spec = importlib.util.spec_from_file_location(
             "op_reth_pin_check", ROOT / "scripts" / "op-reth-pin-check.py"
         )
@@ -214,9 +219,9 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertEqual("us-docker.pkg.dev", registry)
         self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
-        self.assertEqual("v2.6.0", tag)
+        self.assertEqual("v2.6.1", tag)
         self.assertEqual(
-            "0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c",
+            "3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5",
             digest,
         )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
