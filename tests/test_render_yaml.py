@@ -155,6 +155,10 @@ class RenderYamlTests(unittest.TestCase):
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
+            "op-reth:v2.8.0@sha256:c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c",
+            docker,
+        )
+        self.assertNotIn(
             "op-reth:v2.6.1@sha256:3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5",
             docker,
         )
@@ -200,7 +204,11 @@ class RenderYamlTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
         self.assertIn(
-            "op-reth:v2.6.1@sha256:3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5",
+            "op-reth:v2.8.0@sha256:c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c",
+            compose,
+        )
+        self.assertNotIn(
+            "3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5",
             compose,
         )
         self.assertNotIn(
@@ -219,9 +227,9 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertEqual("us-docker.pkg.dev", registry)
         self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
-        self.assertEqual("v2.6.1", tag)
+        self.assertEqual("v2.8.0", tag)
         self.assertEqual(
-            "3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5",
+            "c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c",
             digest,
         )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")

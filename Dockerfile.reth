@@ -14,8 +14,8 @@
 # commands on that image — copy the binary into this runtime. op-geth is
 # not in this image.
 #
-# Base image config, re-fetched 2026-10-22 (linux/amd64 config blob
-# sha256:6639ffd50f7ccba24a6556eba482d544db2897994bcaef68d295ba69a3a3ae84):
+# Base image config, re-fetched 2026-10-28 (linux/amd64 config blob
+# sha256:e1ec8994d69793a977f68ec6bb0917a80115a32b04db636615f39af21eb9e557):
 #   User: "0"
 #   Entrypoint: ["/usr/local/bin/op-reth"]
 #   Cmd: null
@@ -24,7 +24,7 @@
 # because the live /data disk is owned by 10001.
 
 FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.11@sha256:e9eb72b7f13847a953fcf7d798814f128e2fdaa9edbc83bcffa0b7e6e9427c00 AS node
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.6.1@sha256:3913266d5d303dd0e37e2478cd3a56ae2893c31c7ceddbba8b970dff08b65ab5 AS reth
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.0@sha256:c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c AS reth
 
 # Runtime. Same digest as `AS reth` (the only copy of the pin).
 FROM reth
@@ -43,7 +43,8 @@ FROM reth
 #     hash, method filter, healthcheck, and L1 router
 #   tzdata — zoneinfo America/Los_Angeles for the L1 router
 #   zstd — `command -v zstd` and GNU tar's zstd program
-# Already in the base, not reinstalled: ca-certificates, busybox 1.38.0-r2
+# Already in the base, not reinstalled: ca-certificates 20261020-r0,
+# ca-certificates-bundle 20261020-r0, busybox 1.38.0-r3, glibc 2.44-r10
 # (sh, sed -E, grep -E, awk, sha256sum, mktemp, id, dirname).
 # apk purges the local op-reth package and removes /usr/local/bin with it.
 # The binary is copied to /opt/fortel2 first (/tmp is wiped during apk add)

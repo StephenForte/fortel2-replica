@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import textwrap
 import threading
@@ -478,6 +479,45 @@ printf '%064d\n' 0
             "Commit SHA: 9f76a9d216f2d9aa99c5f45d7aad674acde93c14\n"
         )
 
+    def test_refuses_v260_executed_lines(self):
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.6.0\n"
+            "Commit SHA: da6d3252491754837a778061db0cc47236ec13c6\n"
+        )
+
+    def test_refuses_v261_executed_lines(self):
+        # Before: these two whole lines were the pin, so this text passed.
+        # After: they are the previous image's output and must fail closed.
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.6.1\n"
+            "Commit SHA: e16bffa18420c86dbab693097bc33117f74a5f7d\n"
+        )
+
+    def test_accepts_exact_v280_version_block(self):
+        # Stdout of linux/amd64 op-reth v2.8.0 --version (R-0030). Extra
+        # lines after the two pin lines must not be required, and these
+        # exact lines must pass.
+        text = (
+            "op-reth Version: 2.8.0\n"
+            "Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3\n"
+            "Build Timestamp: 1792673968\n"
+            "Build Features: unknown\n"
+            "Build Profile: maxperf\n"
+        )
+        result = subprocess.run(
+            [sys.executable, str(PIN_CHECK), "check"],
+            input=text,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "op-reth pin ok: op-reth Version: 2.8.0 / "
+            "Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3",
+            result.stdout,
+        )
+
     def test_refuses_bare_op_reth_tag(self):
         self._assert_reth_pin_refused(
             f"v2.3.3\nop-reth:v2.3.3\n{PIN_RETH_COMMIT_LINE}\n"
@@ -485,9 +525,13 @@ printf '%064d\n' 0
 
     def test_refuses_reth_version_near_miss(self):
         # Before: a trailing character on "Reth Version: 2.3.0-dev" failed.
-        # After: the same whole-line rule applies to "op-reth Version: 2.6.1"
-        # and to its commit. A trailing character still fails, and so does
-        # the old v2.3.3 version line with a suffix.
+        # After: the same whole-line rule applies to "op-reth Version: 2.8.0"
+        # and to its commit. "op-reth Version: 2.8.00" fails, a trailing
+        # character on the commit fails, and so does the old v2.3.3 version
+        # line with a suffix.
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.8.00\n" f"{PIN_RETH_COMMIT_LINE}\n"
+        )
         self._assert_reth_pin_refused(
             f"{PIN_RETH_VERSION_LINE}0\n{PIN_RETH_COMMIT_LINE}\n"
         )
