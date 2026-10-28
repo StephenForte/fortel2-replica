@@ -805,6 +805,29 @@ Stderr under QEMU only was the jemalloc `MADV_DONTNEED` notice. `scripts/op-reth
 
 `node --help` on that same image lists every flag `entrypoint-reth.sh` passes. `--engine.persistence-threshold` shows `[default: 50]`. `--txpool.minimum-priority-fee` is still in the help ("Minimum priority fee required for transaction acceptance into the pool"), with no default line under it. The published release notes do not remove that flag. They say it now also applies to transactions submitted over RPC. This replica does not pass it.
 
+**CI evidence.** [GitHub Actions run 40746782411](https://github.com/StephenForte/fortel2-replica/actions/runs/40746782411), `Build op-reth image and boot-smoke`, commit `794f67d`. Verbatim `op-reth --version` inside the built linux/amd64 image:
+
+```
+op-reth Version: 2.8.0
+Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3
+Build Timestamp: 1792673968
+Build Features: unknown
+Build Profile: maxperf
+```
+
+Those lines equal the Colima measurement above. The same job printed:
+
+```
+op-reth pin ok: op-reth Version: 2.8.0 / Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3
+op-node pin ok: v1.19.11 commit 43c071cb
+uid=10001(fortel2) gid=10001(fortel2)
+genesis/rollup hash-check ok chain=852 hash=0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d
+Initializing op-reth datadir (852; mid-chain rewind = wipe + re-derive, never debug_setHead)
+Starting op-reth (verifier EL, --full) loopback :8546 (cross-block-cache=256MB rpc-cache-blocks=256; public filter :8545)
+```
+
+It then stopped because op-node gave up dialing the placeholder L1 (`failed to dial L1 address (https://example.invalid)`), which the smoke step accepted. The Python job on that run reported `Ran 192 tests` and `OK`. Recording this paragraph does not change the image.
+
 **Change review** (op-reth v2.8.0 release notes, plus the executed help and a repository search):
 
 - `eth_getLogs` with `fromBlock` past the head now returns `-32602` (v2.6.1 returned `[]`). The public gateway allowlists `eth_getLogs` (`rpc-method-filter.py`). In-repo callers use explicit past ranges: `scripts/verify-reth-parity.sh` defaults `LOGS_FROM=473031` and `LOGS_TO=483030`. Nothing in this repo polls at the head, so nothing here breaks. An external client polling at the head may see the new error.
