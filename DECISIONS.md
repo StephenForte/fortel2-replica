@@ -768,3 +768,88 @@ The job also passed command inventory, uid 10001, genesis/rollup hash-check for 
 **Deploy and canary decision.** Operator chooses canary versus direct deploy; recommendation: canary against real Sepolia first, because CI uses a placeholder L1 and cannot prove derivation. No canary or Render change is made by this PR. After merge, operator Manual Deploys `fortel2-replica-reth` from `main`, resumes the existing `/data` archive, and checks both pin-ok lines and advancing L1 / L2 derivation. No datadir wipe, snapshot force, Blueprint re-apply, service rename, or environment change. The Mini sequencer is a separate operator thread.
 
 **Rollback.** Revert this PR and Manual Deploy on the same `/data`, restoring the R-0021 op-node pin while retaining op-reth v2.6.1. This restores the vulnerable Go binary and is only an operational fallback; no execution-client or datadir format change is introduced here.
+
+## R-0030 — replica op-reth v2.8.0
+
+*2026-10-28 · supersedes the R-0028 image pin. Same Wolfi base, same flags, same op-node (R-0029), same uid 10001 and env knobs.*
+
+**Why.** The ForteL2 Mac sequencer (chain 852) moved to op-reth v2.8.0, commit `d6620202d4e563957830e688007a0cab29bd80f3`, on 2026-10-28 at 10:59 PT (ForteL2 D-0155). The replica was still on v2.6.1 (R-0028). This bump restores sequencer parity. `scripts/snapshot-reth-state.sh` (R-0024) refuses a sequencer capture when the pin lines do not match. The published release is [op-reth v2.8.0](https://github.com/ethereum-optimism/optimism/releases/tag/op-reth/v2.8.0) (2026-10-27T20:17:18Z). The annotated tag `op-reth/v2.8.0` peels to that commit. op-node stays at the R-0029 pin.
+
+**Digests, re-fetched 2026-10-28 from `us-docker.pkg.dev` with no credentials.** Token from `https://us-docker.pkg.dev/v2/token?service=us-docker.pkg.dev&scope=repository:oplabs-tools-artifacts/images/op-reth:pull`. Index fetch:
+
+```sh
+curl -fsSL -D index.headers -o index.json \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+  "https://us-docker.pkg.dev/v2/oplabs-tools-artifacts/images/op-reth/manifests/v2.8.0"
+shasum -a 256 index.json
+```
+
+HTTP/2 200. `docker-content-digest: sha256:c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c`. Body sha256 is the same digest. Annotation `org.opencontainers.image.revision=d6620202d4e563957830e688007a0cab29bd80f3`. The index lists linux/amd64 `sha256:1a5118245d0b348c7a5efb65eabbce684279b95e9661728fb15447a43490944f` and linux/arm64 `sha256:393a99bb7435ad0f1f0e25a45ea4b9c190aa74683bf5367dab321abfe92f7f8a`.
+
+linux/amd64 manifest fetch (Accept manifest v1, URL `.../manifests/sha256:1a5118245d0b348c7a5efb65eabbce684279b95e9661728fb15447a43490944f`): HTTP/2 200, `docker-content-digest` matched the body sha256 `1a5118245d0b348c7a5efb65eabbce684279b95e9661728fb15447a43490944f`. Config blob `sha256:e1ec8994d69793a977f68ec6bb0917a80115a32b04db636615f39af21eb9e557` (GET by digest, HTTP/2 200, `docker-content-digest` omitted, body sha256 matched). One layer `sha256:0c91752aa757768bf4af138f7435021e9dc3a4c4a741d6d26df1031de859df4d`, media type `application/vnd.oci.image.layer.v1.tar+gzip`, 55363473 bytes (HTTP/2 302 then 200, `docker-content-digest` omitted, body sha256 matched). Config: User `"0"`, Entrypoint `["/usr/local/bin/op-reth"]`, Cmd null, Env `PATH` plus `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`. `Dockerfile.reth` and `docker-compose.yml` pin the index digest. The runtime stage stays `FROM reth`.
+
+**Base packages in that layer** (`usr/lib/apk/db/installed`): `busybox=1.38.0-r3` (the Dockerfile comment had said r2), `ca-certificates=20261020-r0`, `ca-certificates-bundle=20261020-r0`, `glibc-2.44=2.44-r10`. The nine `apk add` pins still resolve in `https://packages.wolfi.dev/os/x86_64/APKINDEX.tar.gz` fetched the same day (index sha256 `8a01044b1e1e51ccd78f68790e5dc22c7b374153b5f12cacf5d2d53b8b63f775`): `curl=8.22.0-r4`, `libcurl-openssl4=8.22.0-r4`, `gnutar=1.35-r12`, `gnutar-rmt=1.35-r12`, `openssl-4.0=4.0.3-r4`, `python-3.13-base=3.13.16_git20261002-r2`, `python3-as-3.13=0.1.0-r5`, `tzdata=2026e-r0`, `zstd=1.5.7-r10`. None were bumped. Repositories stay `https://packages.wolfi.dev/os` only. A local `docker build --platform linux/amd64 -f Dockerfile.reth` on 2026-10-28 downgraded the base `openssl-4.0` `4.0.3-r8` to the pinned `4.0.3-r4` and finished `OK: 85 MiB in 56 packages`.
+
+**Expected `--version` lines.** Executed on the authoring arm64 Mac under Colima's linux/amd64 emulator (exit 0). Stdout, verbatim:
+
+```
+op-reth Version: 2.8.0
+Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3
+Build Timestamp: 1792673968
+Build Features: unknown
+Build Profile: maxperf
+```
+
+Stderr under QEMU only was the jemalloc `MADV_DONTNEED` notice. `scripts/op-reth-pin-check.py` asserts the first two lines as whole lines. A native linux/amd64 run (CI) must print those same two lines. If it does not, the matcher is not rewritten to fit the printer.
+
+`node --help` on that same image lists every flag `entrypoint-reth.sh` passes. `--engine.persistence-threshold` shows `[default: 50]`. `--txpool.minimum-priority-fee` is still in the help ("Minimum priority fee required for transaction acceptance into the pool"), with no default line under it. The published release notes do not remove that flag. They say it now also applies to transactions submitted over RPC. This replica does not pass it.
+
+**CI evidence.** [GitHub Actions run 40746782411](https://github.com/StephenForte/fortel2-replica/actions/runs/40746782411), `Build op-reth image and boot-smoke`, commit `794f67d`. Verbatim `op-reth --version` inside the built linux/amd64 image:
+
+```
+op-reth Version: 2.8.0
+Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3
+Build Timestamp: 1792673968
+Build Features: unknown
+Build Profile: maxperf
+```
+
+Those lines equal the Colima measurement above. The same job printed:
+
+```
+op-reth pin ok: op-reth Version: 2.8.0 / Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3
+op-node pin ok: v1.19.11 commit 43c071cb
+uid=10001(fortel2) gid=10001(fortel2)
+genesis/rollup hash-check ok chain=852 hash=0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d
+Initializing op-reth datadir (852; mid-chain rewind = wipe + re-derive, never debug_setHead)
+Starting op-reth (verifier EL, --full) loopback :8546 (cross-block-cache=256MB rpc-cache-blocks=256; public filter :8545)
+```
+
+It then stopped because op-node gave up dialing the placeholder L1 (`failed to dial L1 address (https://example.invalid)`), which the smoke step accepted. The Python job on that run reported `Ran 192 tests` and `OK`. Recording this paragraph does not change the image.
+
+**Change review** (op-reth v2.8.0 release notes, plus the executed help and a repository search):
+
+- `eth_getLogs` with `fromBlock` past the head now returns `-32602` (v2.6.1 returned `[]`). The public gateway allowlists `eth_getLogs` (`rpc-method-filter.py`). In-repo callers use explicit past ranges: `scripts/verify-reth-parity.sh` defaults `LOGS_FROM=473031` and `LOGS_TO=483030`. Nothing in this repo polls at the head, so nothing here breaks. An external client polling at the head may see the new error.
+- Flags the release notes call out: BAL flags (`--rpc-cache.max-bals`, `--rpc-cache.cache-computed-bals`, `--rpc-cache.prewarm-bals`, `--engine.disable-bal-parallel-execution`, `--engine.disable-bal-parallel-state-root`, `--engine.disable-bal-batch-io`, `--db.balstore-cache-size`) are absent from `node --help`. `--txpool.max-batch-size` is still in the help (`[default: 1]`; the notes say `0` is rejected at startup, not that the flag was deleted). `--db.rocksdb-block-cache-size` is still in the help (the notes say a configured value now takes effect). A search of `entrypoint-reth.sh` finds none of those flags passed. The compose `command:` list does not pass them either. `--txpool.minimum-priority-fee` remains, as above, and is not passed.
+- `--engine.persistence-threshold` default 7 → 50. The replica does not set it and does not set `RETH_ENGINE_PERSISTENCE_THRESHOLD`. The default stays. The canary measures memory. The live service is Standard; R-0017 recorded a 724 MB RSS peak.
+- v1 proofs storage removal: not applicable. The entrypoint comment says no `--proofs-history`, and the launch command does not pass it.
+- Storage v1 end of support (2027-01-26; the release note says January 2027): not applicable. The planner read `storage_v2: true` in the Render boot log for D-0155. This repo does not select a storage layout.
+- The proofs log line no longer prints `(v2)`. A search of this repo for `(v2)` found no parser of that line.
+
+**Canary (D-0152 / R-0023 gate) — passed 2026-10-28.** Recorded by the planner from the operator's Render logs and Web Shell output. The operator created private service `fortel2-replica-canary-v280` (`srv-dbh4lvon74is73bjv3k0`) in the dashboard: branch `chore/op-reth-v2.8.0`, `Dockerfile.reth`, plan `1c-2g` (Standard, same as live), new 20 GB disk `dsk-dbh4m00n74is73bjv440` mounted at `/data`. The live disk `dsk-dagqucfqj5pc73fdnkbg` was not attached. Env was copied from `fortel2-replica-reth`.
+
+- First boot failed in op-node flag parsing, `invalid value "metered" for flag -l1.rpckind: unknown rpc kind: "metered"`, because `L1_RPC_KIND` was set to `metered` by mistake. This was an env typo, not the image. Before op-node starts, that boot had already logged both pin-ok lines and completed the snapshot restore. The fix set `L1_RPC_KIND=standard`, the live value. README's env table says `quicknode`; the live service runs `standard`, so the table is stale.
+- Boot log: `op-reth pin ok: op-reth Version: 2.8.0 / Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3`, `op-node pin ok: v1.19.11 commit 43c071cb`, `snapshot: restore ok sha256=830d78f62526551d351c65d310c38c80972bffde7ffc0eb9be2cd546cf9c8027` (the same archive as the R-0023 canary).
+- Loopback `eth_getBlockByNumber` `0xc6360` (811872) returned `0x5af991c94b1f83fb50cd561eb8facc72f1d2b1e754edb2fc074a7a2fc23c8ada`, the R-0023 value.
+- Derivation ran on metered L1, because `L1_RPC_FORCE=metered` came across with the copied env: `Starting op-node (… mode=metered … rpckind=standard …)`. Two `optimism_syncStatus` reads were taken about 30 min apart (L2 head age 4158604 s, then 4156807 s). The first read `current_l1 11675978`, `head_l1 12014403`, `unsafe_l2 811875`, `safe_l2 811322`. The second read `current_l1 11676218`, `head_l1 12014416`, `unsafe_l2 812847`, `safe_l2 812847`. v2.8.0 imported and made safe 1525 derived blocks on the restored datadir. QuickNode spend was not measured; the planner's estimate is about 240 L1 blocks × about 40 credits, roughly 10k credits, on the endpoint shared with live.
+- Memory was 18% of the 2 GB plan (Render Metrics) during derivation. That is under the R-0017 live peak of 724 MB with the new `--engine.persistence-threshold` default of 50. This is one sample in a short window, not a sustained-load measurement.
+- Restart: the operator set `L1_RPC_FORCE=public` and saved, which redeployed onto the same disk. The log showed `snapshot: datadir already has db/; skipping restore (set RETH_SNAPSHOT_FORCE=1 to replace)` and `Starting op-node (… mode=public … rpckind=standard …)`. Block 811872 again returned `0x5af991c94b1f83fb50cd561eb8facc72f1d2b1e754edb2fc074a7a2fc23c8ada`. Derivation on public L1 after the restart was not measured; D-0105 says publicnode may return no receipts for old L1 blocks, and that limit belongs to the provider, not to v2.8.0.
+
+The operator suspends the canary, then deletes the service and its disk after the live deploy.
+
+**Deploy.** After the canary passes, the operator Manual Deploys `fortel2-replica-reth` from `main`, on the same `/data`, and checks the boot log for `op-reth pin ok: op-reth Version: 2.8.0`. Do not re-apply `render.yaml`. No service rename, no datadir wipe, no `debug_setHead`, no `L1_RPC_FORCE` change. Whether the canary uses public or metered L1, and whether to canary at all before that deploy, stays with the operator.
+
+**Rollback.** Revert this PR and Manual Deploy. unverified — rollback after v2.8.0 has opened the datadir may require the snapshot path.
+
+Next free R-id is **R-0031**.
