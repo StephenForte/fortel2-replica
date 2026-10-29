@@ -852,4 +852,104 @@ The operator suspends the canary, then deletes the service and its disk after th
 
 **Rollback.** Revert this PR and Manual Deploy. unverified — rollback after v2.8.0 has opened the datadir may require the snapshot path.
 
-Next free R-id is **R-0031**.
+## R-0031 — replica op-node v1.20.0
+
+*2026-10-29 · supersedes the R-0029 op-node pin. Same op-reth v2.8.0 (R-0030), Wolfi runtime, flags, uid 10001 and env knobs.*
+
+**Why.** Sequencer parity. The ForteL2 Mac sequencer moved to op-node v1.20.0 on 2026-10-29 at 10:13 PT (ForteL2 D-0158, #272). This bump closes ForteL2 OD-3. The replica was still on v1.19.11 (R-0029). The published release is [op-node v1.20.0](https://github.com/ethereum-optimism/optimism/releases/tag/op-node/v1.20.0) (2026-10-27T20:17:08Z). It keeps the v1.19.11 security fixes and is built with the same Go 1.26.10 toolchain. op-reth stays at the R-0030 pin. This node remains a verifier.
+
+**Digests, re-fetched 2026-10-29 from `us-docker.pkg.dev` with no credentials.** Token from `https://us-docker.pkg.dev/v2/token?service=us-docker.pkg.dev&scope=repository:oplabs-tools-artifacts/images/op-node:pull`. Index fetch, the R-0030 method:
+
+```sh
+curl -fsSL -D index.headers -o index.json \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+  "https://us-docker.pkg.dev/v2/oplabs-tools-artifacts/images/op-node/manifests/v1.20.0"
+shasum -a 256 index.json
+```
+
+HTTP/2 200. `docker-content-digest: sha256:47436354176f58444c78df3ca8f48c3bab8104e201e6f0fefa42d5d4fa1726ea`. Body sha256 is the same digest. Annotation `org.opencontainers.image.revision=d6620202d4e563957830e688007a0cab29bd80f3`. The index lists linux/amd64 `sha256:7117337b7382f5362f7086f84394a2921e19afc63a74a4ecdc6b183bd0533c1a` and linux/arm64 `sha256:4c5c617513c5f3667d764b1fd933e9458ec1ac5f8943c62c368781592e6ba190`.
+
+linux/amd64 manifest fetch (Accept manifest v1, URL `.../manifests/sha256:7117337b7382f5362f7086f84394a2921e19afc63a74a4ecdc6b183bd0533c1a`): HTTP/2 200, `docker-content-digest` matched the body sha256 `7117337b7382f5362f7086f84394a2921e19afc63a74a4ecdc6b183bd0533c1a`. Config blob `sha256:11bd38863a5d749c73e780d7daff0eafe42e2a9ab86110d19dbb93df74efcee1` (GET by digest, HTTP/2 200, `docker-content-digest` omitted, body sha256 matched). One layer `sha256:834c3522b2ca0608e34554919d70acab5e4448e45c59ed4622c3f59209d01165`, media type `application/vnd.oci.image.layer.v1.tar+gzip`, 34501006 bytes (HTTP/2 302 then 200, `docker-content-digest` omitted, body sha256 matched). Config: User `"0"`, Entrypoint null, Cmd `["op-node"]`, Env `PATH` plus `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt`. Config labels are `created`, `source`, and `title` only: no version and no revision. linux/arm64 manifest fetch: HTTP/2 200, `docker-content-digest` matched the body sha256 `4c5c617513c5f3667d764b1fd933e9458ec1ac5f8943c62c368781592e6ba190`. `Dockerfile.reth` and `docker-compose.yml` pin the index digest. These digests match the planner's 2026-10-29 measurement.
+
+**Measured binary, before setting the guard.** On the authoring arm64 Mac, Colima's Linux VM executed the exact linux/amd64 image under its amd64 emulator:
+
+```sh
+docker --context colima run --rm --platform linux/amd64 --entrypoint op-node us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.0@sha256:47436354176f58444c78df3ca8f48c3bab8104e201e6f0fefa42d5d4fa1726ea --version
+```
+
+Verbatim stdout (exit 0):
+
+```
+op-node version v1.20.0-d6620202-1792673968
+```
+
+The measured short commit matches the index revision `d6620202d4e563957830e688007a0cab29bd80f3`, the same commit as the op-reth v2.8.0 pin. The guard uses the executed measurement. Docker's pull progress was the client stderr; the container stdout was that one line.
+
+**Flags.** `--help` on that same image (exit 0, stderr empty) lists every flag `entrypoint-reth.sh` passes at the op-node launch. All 20 are present:
+
+- `--l1`
+- `--l1.rpckind`
+- `--l1.trustrpc`
+- `--l1.http-poll-interval`
+- `--l1.rpc-rate-limit`
+- `--l1.cache-size`
+- `--l1.max-concurrency`
+- `--l1.rpc-max-batch-size`
+- `--l1.beacon.ignore`
+- `--l1.beacon.slot-duration-override`
+- `--l2`
+- `--l2.jwt-secret`
+- `--l2.enginekind`
+- `--rollup.config`
+- `--sequencer.enabled`
+- `--verifier.l1-confs`
+- `--p2p.disable`
+- `--rpc.addr`
+- `--rpc.port`
+- `--log.level`
+
+No flags changed. `--p2p.sync.req-resp` does not appear in that help (the release marks it hidden). This replica does not pass it.
+
+**Change review** ([op-node v1.20.0](https://github.com/ethereum-optimism/optimism/releases/tag/op-node/v1.20.0) release notes, plus the executed help and a repository search on `cd0b315` before this entry):
+
+- GIWA Sepolia embedded config (`--network giwa-sepolia`, chain ID 91342, #23511). The release says this adds no new activation, and no other chain's activation times or rollup parameters change. Chain 852 is not GIWA. This replica passes `--rollup.config` (`entrypoint-reth.sh`, `docker-compose.yml`) and `config/rollup.json` has `"l2_chain_id": 852`. A search of `*.sh` and `*.yml` finds no `--network` flag on op-node.
+- Req/Resp P2P sync server and its metrics removed (#21499). `--p2p.sync.req-resp` is a hidden no-op and is not in `--help`. This replica already passes `--p2p.disable=true` (`entrypoint-reth.sh`, `docker-compose.yml`). Before this entry, this command returned no hits (exit 1):
+
+```sh
+git grep -n -e 'req-resp' -e 'op_node_default_p2p_req_duration_seconds' -e 'op_node_default_p2p_req_total' -e 'op_node_default_p2p_payload_by_number' -e 'genesis l2'
+```
+
+- `op-node genesis l2` refuses L2 chain ID 10 and writes `osakaTime` for chains that schedule Karst (#23450, #23359). This replica does not run `op-node genesis l2`. The same grep found no `genesis l2`. Chain 852 is not chain ID 10. The baked `config/genesis.json` and `config/rollup.json` are unchanged.
+- Same Go 1.26.10 and CA trust store as v1.19.11 (#23546). No new trust-store change in this image. The op-reth Wolfi base, apk pins, and uid 10001 are untouched.
+
+The entrypoint used to check the version and the commit in two `case` blocks, which accept `v1.20.0-rc.1-d6620202-…`. One `case` now matches the whole prefix `op-node version v1.20.0-d6620202-` followed by a digit. Tests refuse `v1.20.0-rc.1-d6620202-1792673968`, `v1.20.00-d6620202-1792673968`, `v1.20.0-43c071cb-1792624643`, the v1.19.11 line `v1.19.11-43c071cb-1792624643`, and the existing v1.19.2 and v1.19.8 lines. Tests accept the measured line above. The pin-ok line is still printed immediately before `Starting op-node`.
+
+**CI evidence.** [GitHub Actions run 40927216915](https://github.com/StephenForte/fortel2-replica/actions/runs/40927216915), `Build op-reth image and boot-smoke`, commit `ca9f9fc`. Verbatim `op-node --version` inside the built linux/amd64 image:
+
+```
+op-node version v1.20.0-d6620202-1792673968
+```
+
+That line equals the Colima measurement above. The boot log printed these lines verbatim:
+
+```
+op-node pin ok: v1.20.0 commit d6620202
+op-reth pin ok: op-reth Version: 2.8.0 / Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3
+```
+
+The job also passed command inventory, uid 10001, genesis/rollup hash-check for chain 852, datadir initialization and op-reth start. It then stopped because op-node gave up dialing the placeholder L1 (`failed to dial L1 address (https://example.invalid)`), which the smoke step accepted. The Python job on that run reported `Ran 194 tests` and `OK`. Local `python3 -m unittest discover -s tests -v` reported `Ran 194 tests` and `FAILED (failures=5, errors=1)`: five snapshot failures are the live-host `op-reth node` refusal, and one gateway Docker test errored because Colima cannot bind-mount this Mac's temporary path. No checks were weakened. Recording this paragraph does not change the image.
+
+**Deploy and canary decision — no canary.** The operator chose a direct Manual Deploy of `fortel2-replica-reth` after merge, skipping the D-0152 / R-0023 throwaway canary for this bump. This is a recorded exception for an op-node-only bump; it does not change D-0152. Reasons:
+
+- op-node keeps no derivation state on the live disk here (no `--safedb` flags, P2P disabled), so revert plus Manual Deploy returns v1.19.11 on the same `/data` with no datadir risk. This differs from an op-reth bump, where R-0030 left rollback unverified. A search of `*.sh`, `*.yml`, and `*.py` for `safedb` found no hits. Both launch sites pass `--p2p.disable=true`.
+- v1.20.0 changes no activation times for chain 852. The removed Req/Resp sync server is already disabled here (`--p2p.disable=true`). The `genesis l2` changes do not apply.
+- The op-node tag is the same commit (`d6620202`) as the op-reth v2.8.0 pin, which passed a derivation canary in R-0030. That canary ran op-node v1.19.11, so it is not evidence for this binary.
+- Priority is low: the replica derives the same L2 either way, and a canary costs about 10k QuickNode credits (planner estimate from R-0030, unmeasured).
+- What is given up: CI uses a placeholder L1 and cannot prove derivation, so the live deploy is the first real derivation run of v1.20.0 on this replica. The post-deploy checks below are the gate.
+
+**Post-deploy checks:** the boot log shows `op-node pin ok: v1.20.0 commit d6620202` and `op-reth pin ok: op-reth Version: 2.8.0 / Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3`; restore is skipped because `db/` exists; two `optimism_syncStatus` reads show `current_l1` advancing; the L2 head *age* is recorded (not the tip number); `/status` returns 200. If derivation stalls, revert and Manual Deploy. No env change: `L1_RPC_FORCE=metered` stays (D-0136). No wipe, `debug_setHead`, Blueprint re-apply or rename (D-0128).
+
+**Rollback.** Revert this PR and Manual Deploy on the same `/data`, restoring the R-0029 op-node pin while retaining op-reth v2.8.0. This repo passes no `--safedb` flags and passes `--p2p.disable=true`. The only op-node write seen on `/data` in this repo's record is `known-peers.json` in the R-0023 boot log. unverified — this entry does not inspect the live disk, so it does not prove that file is the only op-node write there.
+
+Next free R-id is **R-0032**.

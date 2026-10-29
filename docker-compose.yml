@@ -52,7 +52,7 @@ services:
       - "127.0.0.1:9545:8545"
 
   op-node:
-    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.19.11@sha256:e9eb72b7f13847a953fcf7d798814f128e2fdaa9edbc83bcffa0b7e6e9427c00
+    image: us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.0@sha256:47436354176f58444c78df3ca8f48c3bab8104e201e6f0fefa42d5d4fa1726ea
     depends_on:
       - op-reth
     volumes:

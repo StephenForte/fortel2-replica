@@ -70,10 +70,10 @@ RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
 # op-reth pin lines live in scripts/op-reth-pin-check.py. The image copies
 # that file to /op-reth-pin-check.py. A repo checkout uses the sibling
 # scripts/ file (the unit tests). There is no heredoc fallback.
-# R-0029 (supersedes R-0021). Measured `op-node --version` of the pinned image:
-#   op-node version v1.19.11-43c071cb-1792624643
-PIN_OP_NODE_VERSION='v1.19.11'
-PIN_OP_NODE_COMMIT='43c071cb'
+# R-0031 (supersedes R-0029). Measured `op-node --version` of the pinned image:
+#   op-node version v1.20.0-d6620202-1792673968
+PIN_OP_NODE_VERSION='v1.20.0'
+PIN_OP_NODE_COMMIT='d6620202'
 EXPECTED_L2_CHAIN_ID='852'
 EXPECTED_GENESIS_HASH='0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d'
 
@@ -264,9 +264,9 @@ if ! printf '%s\n' "$RETH_VER" | python3 "$OP_RETH_PIN_CHECK" check; then
   exit 1
 fi
 
-# Fail closed unless op-node is the R-0029 pin. v1.19.11 must not match
-# v1.19.110: the character after the version is non-digit, or the version ends
-# the text. The pin-ok line is printed later, next to the op-node start, so a
+# Fail closed unless op-node is the R-0031 pin. One match on the whole
+# prefix, so v1.20.0-rc.1-d6620202-…, v1.20.00-…, and a wrong commit all
+# fail. The pin-ok line is printed later, next to the op-node start, so a
 # boot that never launches op-node does not claim the pin.
 if ! command -v op-node >/dev/null 2>&1; then
   echo "ERROR: op-node binary not found on PATH" >&2
@@ -274,16 +274,7 @@ if ! command -v op-node >/dev/null 2>&1; then
 fi
 NODE_VER="$(op-node --version 2>&1 || true)"
 case "$NODE_VER" in
-  *"${PIN_OP_NODE_VERSION}"[!0-9]*|*"${PIN_OP_NODE_VERSION}") ;;
-  *)
-    echo "ERROR: op-node pin mismatch" >&2
-    echo "  expected: op-node version ${PIN_OP_NODE_VERSION}-${PIN_OP_NODE_COMMIT}-… (no digit after ${PIN_OP_NODE_VERSION})" >&2
-    echo "  got: $(printf '%s' "$NODE_VER" | tr '\n' ' ')" >&2
-    exit 1
-    ;;
-esac
-case "$NODE_VER" in
-  *"${PIN_OP_NODE_COMMIT}"*) ;;
+  *"op-node version ${PIN_OP_NODE_VERSION}-${PIN_OP_NODE_COMMIT}-"[0-9]*) ;;
   *)
     echo "ERROR: op-node pin mismatch" >&2
     echo "  expected: op-node version ${PIN_OP_NODE_VERSION}-${PIN_OP_NODE_COMMIT}-… (no digit after ${PIN_OP_NODE_VERSION})" >&2
