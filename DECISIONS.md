@@ -925,7 +925,20 @@ git grep -n -e 'req-resp' -e 'op_node_default_p2p_req_duration_seconds' -e 'op_n
 
 The entrypoint used to check the version and the commit in two `case` blocks, which accept `v1.20.0-rc.1-d6620202-…`. One `case` now matches the whole prefix `op-node version v1.20.0-d6620202-` followed by a digit. Tests refuse `v1.20.0-rc.1-d6620202-1792673968`, `v1.20.00-d6620202-1792673968`, `v1.20.0-43c071cb-1792624643`, the v1.19.11 line `v1.19.11-43c071cb-1792624643`, and the existing v1.19.2 and v1.19.8 lines. Tests accept the measured line above. The pin-ok line is still printed immediately before `Starting op-node`.
 
-**CI evidence.** Local `python3 -m unittest discover -s tests -v` reported `Ran 194 tests` and `FAILED (failures=5, errors=1)`. The five snapshot failures are the live-host `op-reth node` refusal (`ERROR: an 'op-reth node' process is alive`). One gateway Docker test errored because Colima cannot bind-mount this Mac's temporary path. No checks were weakened. The PR-head run URL, the verbatim pin-ok lines, and the CI test count are added from the boot-smoke log. Recording that paragraph does not change the image.
+**CI evidence.** [GitHub Actions run 40927216915](https://github.com/StephenForte/fortel2-replica/actions/runs/40927216915), `Build op-reth image and boot-smoke`, commit `ca9f9fc`. Verbatim `op-node --version` inside the built linux/amd64 image:
+
+```
+op-node version v1.20.0-d6620202-1792673968
+```
+
+That line equals the Colima measurement above. The boot log printed these lines verbatim:
+
+```
+op-node pin ok: v1.20.0 commit d6620202
+op-reth pin ok: op-reth Version: 2.8.0 / Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3
+```
+
+The job also passed command inventory, uid 10001, genesis/rollup hash-check for chain 852, datadir initialization and op-reth start. It then stopped because op-node gave up dialing the placeholder L1 (`failed to dial L1 address (https://example.invalid)`), which the smoke step accepted. The Python job on that run reported `Ran 194 tests` and `OK`. Local `python3 -m unittest discover -s tests -v` reported `Ran 194 tests` and `FAILED (failures=5, errors=1)`: five snapshot failures are the live-host `op-reth node` refusal, and one gateway Docker test errored because Colima cannot bind-mount this Mac's temporary path. No checks were weakened. Recording this paragraph does not change the image.
 
 **Deploy and canary decision — no canary.** The operator chose a direct Manual Deploy of `fortel2-replica-reth` after merge, skipping the D-0152 / R-0023 throwaway canary for this bump. This is a recorded exception for an op-node-only bump; it does not change D-0152. Reasons:
 
