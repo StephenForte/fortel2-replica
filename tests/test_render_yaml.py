@@ -175,6 +175,10 @@ class RenderYamlTests(unittest.TestCase):
             docker,
         )
         self.assertIn(
+            "op-node:v1.20.0@sha256:47436354176f58444c78df3ca8f48c3bab8104e201e6f0fefa42d5d4fa1726ea",
+            docker,
+        )
+        self.assertNotIn(
             "op-node:v1.19.11@sha256:e9eb72b7f13847a953fcf7d798814f128e2fdaa9edbc83bcffa0b7e6e9427c00",
             docker,
         )
@@ -315,6 +319,10 @@ class RenderYamlTests(unittest.TestCase):
         old_tag = "op-node:v1.19.2"
         old_digest = "3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a"
         new_pin = (
+            "op-node:v1.20.0@sha256:"
+            "47436354176f58444c78df3ca8f48c3bab8104e201e6f0fefa42d5d4fa1726ea"
+        )
+        previous_pin = (
             "op-node:v1.19.11@sha256:"
             "e9eb72b7f13847a953fcf7d798814f128e2fdaa9edbc83bcffa0b7e6e9427c00"
         )
@@ -328,6 +336,7 @@ class RenderYamlTests(unittest.TestCase):
                 text,
                 path.name,
             )
+            self.assertNotIn(previous_pin, text, path.name)
             self.assertIn(new_pin, text, path.name)
 
     def test_reth_runtime_base_is_not_bookworm(self):
