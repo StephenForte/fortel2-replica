@@ -1012,7 +1012,27 @@ Local amd64 Docker build passed all nine existing apk version pins; none changed
 
 **Coverage.** Accepted fixtures now use measured versions. Two added methods reject previous op-reth v2.8.0 and op-node v1.20.0 binaries. Existing rejection properties now target v1.20.1 rc, v1.20.10, old d6620202 commit, and op-reth 2.8.10; older rejection cases remain. Both previous digests are explicitly refused in both image files. Test count is 196 (baseline 194 plus two). No check is weakened.
 
-**CI evidence.** Pending PR-head CI; will record successful run and verbatim version/pin lines before hand-back. Boot smoke uses placeholder L1 and proves initialization/startup only, no derivation.
+**CI evidence.** [GitHub Actions run 42286422554](https://github.com/StephenForte/fortel2-replica/actions/runs/42286422554), commit `9826252`, passed all three jobs: Build op-reth image and boot-smoke, Python and Docker tests (196 tests, OK), and bridge-node (typecheck, tests, build, bundle). The transaction-grid check passed 13/13. Semgrep and Trivy passed in the companion security workflow. Verbatim versions inside the built native linux/amd64 image match the independent Colima measurements:
+
+```
+op-reth Version: 2.8.1
+Commit SHA: 722072949ce583f361424a160082186ee14cac71
+Build Timestamp: 1793851100
+Build Features: unknown
+Build Profile: maxperf
+op-node version v1.20.1-f73158e5-1793585300
+```
+
+Verbatim pin lines from that run:
+
+```
+op-reth pin ok: op-reth Version: 2.8.1 / Commit SHA: 722072949ce583f361424a160082186ee14cac71
+op-node pin ok: v1.20.1 commit f73158e5
+```
+
+The job also confirmed uid 10001, command inventory, tar/zstd, all apk pins, unchanged genesis/rollup hash, datadir initialization and op-reth startup. It exited 1 after `failed to dial L1 address (https://example.invalid)`, accepted by the unchanged smoke rule. Boot smoke proves initialization/startup only, **no derivation**.
+
+After fetching and rebasing onto hand-back `origin/main` `89d6ce87ce9738050ec3528cc3f11ff85b543056`, the required local suite, Linux fetch-and-check and stale-pin grep were repeated. Local Python ran 196 tests: 190 passed, five snapshot tests failed because the live-host `op-reth node` process guard refuses capture, and one gateway Docker integration errored on Colima's Mac temporary-file bind mount, matching R-0031's environmental limitations. No checks were weakened. Direct macOS fetch-and-check verifies digests but cannot execute ELF; the Linux-container invocation passed. The initial sandboxed suite lacked socket/process permissions and was superseded by the full-access run. The stale-pin grep returned only rejection fixtures/assertNotIn lists; there were no other hits. Historical decision entries are byte-for-byte unchanged. The final evidence-only commit must also have green CI before hand-back.
 
 **Deploy and canary decision: open, operator decides before merge.** This includes an op-reth change, so D-0152 / R-0023 applies unless waived. R-0031's op-node-only waiver does not carry over. No Render deploy or env change is authorized here. Do not merge until the ForteL2 mini bump has merged.
 
