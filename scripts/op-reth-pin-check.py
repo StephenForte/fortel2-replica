@@ -24,14 +24,14 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Whole lines from `op-reth --version` executed inside the v2.8.0 Wolfi image
-# (R-0030). The v2.3.3 lines ("Reth Version: 2.3.0-dev" / 9384bc53…), the
+# Whole lines from `op-reth --version` executed inside the v2.8.1 Wolfi image
+# (R-0032). The v2.3.3 lines ("Reth Version: 2.3.0-dev" / 9384bc53…), the
 # Mac v2.5.0 lines ("op-reth Version: 2.5.0"), the pre-CVE v2.6.0 lines
 # ("op-reth Version: 2.6.0" / da6d3252…), and the v2.6.1 lines
 # ("op-reth Version: 2.6.1" / e16bffa1…) do not match. A trailing
 # character or a bare tag does not match either.
-VERSION_LINE = "op-reth Version: 2.8.0"
-COMMIT_LINE = "Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3"
+VERSION_LINE = "op-reth Version: 2.8.1"
+COMMIT_LINE = "Commit SHA: 722072949ce583f361424a160082186ee14cac71"
 
 # Flags entrypoint-reth.sh passes to op-reth. init and node help are combined.
 ENTRYPOINT_FLAGS = (

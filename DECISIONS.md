@@ -960,4 +960,84 @@ The job also passed command inventory, uid 10001, genesis/rollup hash-check for 
 
 **Rollback.** Revert this PR and Manual Deploy on the same `/data`, restoring the R-0029 op-node pin while retaining op-reth v2.8.0. This repo passes no `--safedb` flags and passes `--p2p.disable=true`. The only op-node write seen on `/data` in this repo's record is `known-peers.json` in the R-0023 boot log. unverified — this entry does not inspect the live disk, so it does not prove that file is the only op-node write there.
 
-Next free R-id is **R-0032**.
+## R-0032 — replica op-reth v2.8.1 + op-node v1.20.1
+
+*2026-11-06 · supersedes the R-0030 op-reth and R-0031 op-node pins. Same flags, uid 10001, genesis, ports, env knobs and memory settings.*
+
+**Why.** Parity with the ForteL2 Mac mini sequencer, which has run op-node v1.20.1 and op-reth v2.8.1 since 2026-11-06 12:57 PT (ForteL2 D-0165, #286, merge `41c69e2`). The parity has a correctness reason. op-reth v2.8.1 moves its reth dependency from `op-v2.6.0-1` to `op-v2.6.0-2`, which carries `fix(trie): tighten iterator seek boundary` (upstream #28264, `crates/trie/trie/src/node_iter.rs`). The release notes do not mention it. ForteL2 D-0165 records that the old code could drop an inserted leaf from an incremental state-root calculation, so a replica on v2.8.0 could disagree with the sequencer on a block if that path triggers. Planner correction: the R-0032 brief told the worker that neither release fixes a defect on this replica. That was taken from the release notes alone and was wrong for op-reth. The op-node release is still parity only.
+
+**Digests, independently re-fetched 2026-11-06 without credentials.** Obtain a token from `https://us-docker.pkg.dev/v2/token?service=us-docker.pkg.dev&scope=repository:oplabs-tools-artifacts/images/<image>:pull`, then fetch each tag index:
+
+```sh
+curl -fsSL -D index.headers -o index.json \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+  "https://us-docker.pkg.dev/v2/oplabs-tools-artifacts/images/$IMAGE/manifests/$TAG"
+shasum -a 256 index.json
+```
+
+For `IMAGE=op-reth TAG=v2.8.1`, HTTP 200, index header and body both `sha256:de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3`; revision `722072949ce583f361424a160082186ee14cac71`; linux/amd64 `sha256:e01d3c5a0a281de1aba59aa7280ae9337c08eaa3f25d4f46432ab1e6420cd7e4`; linux/arm64 `sha256:dae7e34f33951c8a77b2c4f48bc2f3b0a3ed6fdba12630ec7218752ea76c9c34`.
+
+For `IMAGE=op-node TAG=v1.20.1`, HTTP 200, index header and body both `sha256:b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0`; revision `f73158e5e2437f879801cdc21c63a2baccdc28e7`; linux/amd64 `sha256:dc36705a42927df583bda0694d0558472a81e62f4b48aaad75e57ac427146858`; linux/arm64 `sha256:32399dc763ea8550733b8dd8ca6a291f44687d834f66a5ec2d92e109a854c5df`.
+
+Both amd64 manifest headers matched their body hashes and index descriptors. Fetch `.../manifests/<amd64 digest>` with Accept `application/vnd.oci.image.manifest.v1+json`, then `.../blobs/<config digest>`. Config GETs returned 200 with no digest header; body hashes matched descriptors: op-reth `sha256:d933c94c35ed30bba94de88128bbdad8c2d2507a1bfe03a92b428cbf0f26f18e`, op-node `sha256:8190e746301a1c5dcd5682e6c63881a9a2d2564d3184bd782846a8df363b9284`. op-reth config remains User `"0"`, Entrypoint `["/usr/local/bin/op-reth"]`, Cmd absent (null), Env PATH and SSL_CERT_FILE. op-node is User `"0"`, Entrypoint absent, Cmd `["op-node"]`. Dockerfile and Compose pin the indexes.
+
+GitHub git-ref/tag API independently peeled `op-reth/v2.8.1` through annotated tags `b3570a4e` and `359b1f4f` to `72207294`, and `op-node/v1.20.1` through `2f6d67cb` and `09314139` to `f73158e5`. GitHub compare reports the latter is 40 commits behind the former, with zero behind in the forward comparison. Different binary commits are intentional.
+
+**Measured binaries before setting guards.** The arm64 authoring Mac initially had no colima context and a stopped existing VM. Starting Colima restored it; QEMU executed both exact linux/amd64 images (Rosetta is unavailable). Commands, each exit 0:
+
+```sh
+docker --context colima run --rm --platform linux/amd64 --entrypoint op-reth us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.1@sha256:de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3 --version
+docker --context colima run --rm --platform linux/amd64 --entrypoint op-node us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.1@sha256:b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0 --version
+```
+
+Verbatim stdout:
+
+```
+op-reth Version: 2.8.1
+Commit SHA: 722072949ce583f361424a160082186ee14cac71
+Build Timestamp: 1793851100
+Build Features: unknown
+Build Profile: maxperf
+op-node version v1.20.1-f73158e5-1793585300
+```
+
+op-reth stderr contained only the QEMU jemalloc MADV_DONTNEED notice. The op-reth guard compares whole lines; op-node keeps the existing single-case whole-prefix match with a timestamp digit, without pinning the timestamp.
+
+**Flags and packages.** Exact-image op-node `--help` includes all 20 flags passed by both entrypoint and Compose: `--l1`, `--l1.rpckind`, `--l1.trustrpc`, `--l1.http-poll-interval`, `--l1.rpc-rate-limit`, `--l1.cache-size`, `--l1.max-concurrency`, `--l1.rpc-max-batch-size`, `--l1.beacon.ignore`, `--l1.beacon.slot-duration-override`, `--l2`, `--l2.jwt-secret`, `--l2.enginekind`, `--rollup.config`, `--sequencer.enabled`, `--verifier.l1-confs`, `--p2p.disable`, `--rpc.addr`, `--rpc.port`, `--log.level`. Linux `python3 scripts/op-reth-pin-check.py fetch-and-check` passed the new binary's version and all entrypoint flags (Compose uses a subset). On macOS the same command downloads and verifies the image but cannot execute the Linux ELF (`Exec format error`); the unchanged checker was therefore run successfully inside the built amd64 image with the repository mounted read-only.
+
+Local amd64 Docker build passed all nine existing apk version pins; none changed. Base package inspection found busybox `1.38.0-r3`, CA packages `20261020-r0`, glibc `2.44-r13` (comment updated from r10). User 10001 and loopback RPC settings remain intact.
+
+**Change review.** Official [op-reth v2.8.1](https://github.com/ethereum-optimism/optimism/releases/tag/op-reth/v2.8.1) fixes advertised history below Bedrock in `eth_capabilities`; chains with Bedrock at genesis are unaffected. `config/genesis.json` has bedrockBlock 0; no filter, gateway, sequencer-read, test or script caller uses that method. Official [op-node v1.20.1](https://github.com/ethereum-optimism/optimism/releases/tag/op-node/v1.20.1) is optional, removes `--sequencer.max-safe-lag` and built-in Holesky L1 config, and updates brotli to v1.2.7 for CVE-2026-111497. Go bounds checks already prevented exposure; derivation results are unchanged. The replica uses Sepolia and verifier settings. Baseline search finds no removed flag/env or Holesky reference. `REPLICA_MAX_SAFE_LAG` is an unrelated monitoring threshold and is unchanged.
+
+**Coverage.** Accepted fixtures now use measured versions. Two added methods reject previous op-reth v2.8.0 and op-node v1.20.0 binaries. Existing rejection properties now target v1.20.1 rc, v1.20.10, old d6620202 commit, and op-reth 2.8.10; older rejection cases remain. Both previous digests are explicitly refused in both image files. Test count is 196 (baseline 194 plus two). No check is weakened.
+
+**CI evidence.** [GitHub Actions run 42286422554](https://github.com/StephenForte/fortel2-replica/actions/runs/42286422554), commit `9826252`, passed all three jobs: Build op-reth image and boot-smoke, Python and Docker tests (196 tests, OK), and bridge-node (typecheck, tests, build, bundle). The transaction-grid check passed 13/13. Semgrep and Trivy passed in the companion security workflow. Verbatim versions inside the built native linux/amd64 image match the independent Colima measurements:
+
+```
+op-reth Version: 2.8.1
+Commit SHA: 722072949ce583f361424a160082186ee14cac71
+Build Timestamp: 1793851100
+Build Features: unknown
+Build Profile: maxperf
+op-node version v1.20.1-f73158e5-1793585300
+```
+
+Verbatim pin lines from that run:
+
+```
+op-reth pin ok: op-reth Version: 2.8.1 / Commit SHA: 722072949ce583f361424a160082186ee14cac71
+op-node pin ok: v1.20.1 commit f73158e5
+```
+
+The job also confirmed uid 10001, command inventory, tar/zstd, all apk pins, unchanged genesis/rollup hash, datadir initialization and op-reth startup. It exited 1 after `failed to dial L1 address (https://example.invalid)`, accepted by the unchanged smoke rule. Boot smoke proves initialization/startup only, **no derivation**.
+
+After fetching and rebasing onto hand-back `origin/main` `89d6ce87ce9738050ec3528cc3f11ff85b543056`, the required local suite, Linux fetch-and-check and stale-pin grep were repeated. Local Python ran 196 tests: 190 passed, five snapshot tests failed because the live-host `op-reth node` process guard refuses capture, and one gateway Docker integration errored on Colima's Mac temporary-file bind mount, matching R-0031's environmental limitations. No checks were weakened. Direct macOS fetch-and-check verifies digests but cannot execute ELF; the Linux-container invocation passed. The initial sandboxed suite lacked socket/process permissions and was superseded by the full-access run. The stale-pin grep returned only rejection fixtures/assertNotIn lists; there were no other hits. Historical decision entries are byte-for-byte unchanged. The final evidence-only commit must also have green CI before hand-back.
+
+**Deploy and canary decision — no canary.** The operator chose a direct Manual Deploy of `fortel2-replica-reth` on 2026-11-06, waiving the D-0152 / R-0023 canary for this bump. This is a recorded exception and does not change D-0152. It is the first op-reth bump to skip the canary, so the live deploy is the first real derivation run of both binaries on this replica, on the Render linux/amd64 image. Merge condition met: the ForteL2 mini bump merged first. No env change.
+
+**Post-deploy checks.** Operator checks both new pin-ok lines, existing db restore-skip, uid 10001, unchanged chain 852 genesis hash, two advancing `optimism_syncStatus.current_l1` samples (Web Shell, op-node RPC is loopback only), L2 head age, and HTTP 200 `/status`. Because no canary ran, also compare block hash and state root against the sequencer on blocks derived after the deploy, and read service memory against the Standard plan. No wipe, snapshot force, Blueprint re-apply, service rename, or env change. CI's placeholder L1 cannot substitute for real derivation evidence.
+
+**Rollback.** The op-node half reverts plus Manual Deploy on the same `/data` as in R-0031 (no safedb flags, P2P disabled; live disk contents not inspected). The op-reth half is **unverified once v2.8.1 has opened the live datadir**, as in R-0030. Do not promise an in-place downgrade. ForteL2 D-0165 records a worker hand-run v2.8.0 → v2.8.1 → v2.8.0 on one Mac datadir with block 811872 unchanged at each step. That is encouraging, but it is a different platform and datadir, the ForteL2 planner did not re-run it, and it does not prove the live disk. If v2.8.1 fails on `/data`, try revert plus Manual Deploy first, then the snapshot path. No datadir wipe is performed here.
+
+Next free R-id is **R-0033**.
