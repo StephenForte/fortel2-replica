@@ -70,10 +70,10 @@ RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
 # op-reth pin lines live in scripts/op-reth-pin-check.py. The image copies
 # that file to /op-reth-pin-check.py. A repo checkout uses the sibling
 # scripts/ file (the unit tests). There is no heredoc fallback.
-# R-0031 (supersedes R-0029). Measured `op-node --version` of the pinned image:
-#   op-node version v1.20.0-d6620202-1792673968
-PIN_OP_NODE_VERSION='v1.20.0'
-PIN_OP_NODE_COMMIT='d6620202'
+# R-0032 (supersedes R-0031). Measured `op-node --version` of the pinned image:
+#   op-node version v1.20.1-f73158e5-1793585300
+PIN_OP_NODE_VERSION='v1.20.1'
+PIN_OP_NODE_COMMIT='f73158e5'
 EXPECTED_L2_CHAIN_ID='852'
 EXPECTED_GENESIS_HASH='0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d'
 
@@ -264,8 +264,8 @@ if ! printf '%s\n' "$RETH_VER" | python3 "$OP_RETH_PIN_CHECK" check; then
   exit 1
 fi
 
-# Fail closed unless op-node is the R-0031 pin. One match on the whole
-# prefix, so v1.20.0-rc.1-d6620202-…, v1.20.00-…, and a wrong commit all
+# Fail closed unless op-node is the R-0032 pin. One match on the whole
+# prefix, so v1.20.1-rc.1-f73158e5-…, v1.20.10-…, and a wrong commit all
 # fail. The pin-ok line is printed later, next to the op-node start, so a
 # boot that never launches op-node does not claim the pin.
 if ! command -v op-node >/dev/null 2>&1; then

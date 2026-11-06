@@ -6,16 +6,16 @@
 # are comments only — do not float off the digest. The runtime base is the
 # pinned op-reth image itself (Wolfi, glibc 2.44). The entrypoint asserts
 # the whole-line pin in scripts/op-reth-pin-check.py and fails closed
-# otherwise. op-node must report `op-node version v1.20.0-d6620202-…`
-# (R-0031; supersedes R-0029). The entrypoint matches that whole prefix
+# otherwise. op-node must report `op-node version v1.20.1-f73158e5-…`
+# (R-0032; supersedes R-0031). The entrypoint matches that whole prefix
 # and fails closed otherwise.
 #
 # OP Labs op-node images are distroless (no /bin/sh). Do not RUN shell
 # commands on that image — copy the binary into this runtime. op-geth is
 # not in this image.
 #
-# Base image config, re-fetched 2026-10-28 (linux/amd64 config blob
-# sha256:e1ec8994d69793a977f68ec6bb0917a80115a32b04db636615f39af21eb9e557):
+# Base image config, re-fetched 2026-11-06 (linux/amd64 config blob
+# sha256:d933c94c35ed30bba94de88128bbdad8c2d2507a1bfe03a92b428cbf0f26f18e):
 #   User: "0"
 #   Entrypoint: ["/usr/local/bin/op-reth"]
 #   Cmd: null
@@ -23,8 +23,8 @@
 # Those are overridden explicitly below. USER fortel2 is uid/gid 10001
 # because the live /data disk is owned by 10001.
 
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.0@sha256:47436354176f58444c78df3ca8f48c3bab8104e201e6f0fefa42d5d4fa1726ea AS node
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.0@sha256:c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c AS reth
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.1@sha256:b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0 AS node
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.1@sha256:de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3 AS reth
 
 # Runtime. Same digest as `AS reth` (the only copy of the pin).
 FROM reth
@@ -44,7 +44,7 @@ FROM reth
 #   tzdata — zoneinfo America/Los_Angeles for the L1 router
 #   zstd — `command -v zstd` and GNU tar's zstd program
 # Already in the base, not reinstalled: ca-certificates 20261020-r0,
-# ca-certificates-bundle 20261020-r0, busybox 1.38.0-r3, glibc 2.44-r10
+# ca-certificates-bundle 20261020-r0, busybox 1.38.0-r3, glibc 2.44-r13
 # (sh, sed -E, grep -E, awk, sha256sum, mktemp, id, dirname).
 # apk purges the local op-reth package and removes /usr/local/bin with it.
 # The binary is copied to /opt/fortel2 first (/tmp is wiped during apk add)
