@@ -1038,6 +1038,16 @@ After fetching and rebasing onto hand-back `origin/main` `89d6ce87ce9738050ec352
 
 **Post-deploy checks.** Operator checks both new pin-ok lines, existing db restore-skip, uid 10001, unchanged chain 852 genesis hash, two advancing `optimism_syncStatus.current_l1` samples (Web Shell, op-node RPC is loopback only), L2 head age, and HTTP 200 `/status`. Because no canary ran, also compare block hash and state root against the sequencer on blocks derived after the deploy, and read service memory against the Standard plan. No wipe, snapshot force, Blueprint re-apply, service rename, or env change. CI's placeholder L1 cannot substitute for real derivation evidence.
 
+**Deploy — 2026-11-06, passed.** Recorded by the planner from the Render API and logs and from public RPC samples. After PR #92 merged (main `a80b7aa`, 13:24 PT), the planner triggered deploy `dep-dbn4c2bncjis73e47350` on `fortel2-replica-reth` (`srv-dagquc7qj5pc73fdnjsg`, disk `dsk-dagqucfqj5pc73fdnkbg` at `/data`) at 13:26:33 PT, on the operator's go. It was `live` at 13:27:35 PT. Boot log, verbatim: `op-reth pin ok: op-reth Version: 2.8.1 / Commit SHA: 722072949ce583f361424a160082186ee14cac71`, `snapshot: datadir already has db/; skipping restore (set RETH_SNAPSHOT_FORCE=1 to replace)`, `pruning_mode="archive"`, `storage_v2: true`, `op-node pin ok: v1.20.1 commit f73158e5`, and `Starting op-node (… mode=metered … rpckind=standard …)`. No env change.
+
+- Derivation: `Advancing bq origin … originBehind=false` stepped L1 12079235 → 12079245 between 13:31:13 and 13:33:37 PT.
+- Public replica `latest`: 13:26:14 PT block 3283378 (age 330 s, before the deploy); 13:29:47 PT block 3283558 (age 183 s); 13:33:30 PT block 3283738 (age 46 s). The sequencer tip was 3283762 right after the last sample.
+- Parity: block hash and state root match `fortel2-sequencer-rpc` at blocks 3283379, 3283558, 3283737 and 3283738, all derived after the deploy. 0 mismatches. These are 4 samples, not a full-range comparison.
+- Memory: 180 MB rising to 275 MB in the first 6 minutes of a 2 GiB limit. The previous instance read 948 MB at its end, so this is not yet a steady-state figure.
+- `/status` returned 200.
+- Not new: one `Invalid JWT: Authorization header is missing or invalid` at boot, also on the R-0030 and R-0031 boots. `Beacon client online, but no consensus updates received` warnings appear between batches, and were also present on the previous instance at 13:14, 13:19 and 13:24 PT. No error-level lines after 13:27:40 PT through 13:33:53 PT.
+- `optimism_syncStatus` was not read: op-node RPC is loopback only (Web Shell). The evidence above is from logs and the public RPC.
+
 **Rollback.** The op-node half reverts plus Manual Deploy on the same `/data` as in R-0031 (no safedb flags, P2P disabled; live disk contents not inspected). The op-reth half is **unverified once v2.8.1 has opened the live datadir**, as in R-0030. Do not promise an in-place downgrade. ForteL2 D-0165 records a worker hand-run v2.8.0 → v2.8.1 → v2.8.0 on one Mac datadir with block 811872 unchanged at each step. That is encouraging, but it is a different platform and datadir, the ForteL2 planner did not re-run it, and it does not prove the live disk. If v2.8.1 fails on `/data`, try revert plus Manual Deploy first, then the snapshot path. No datadir wipe is performed here.
 
 Next free R-id is **R-0033**.
