@@ -1090,6 +1090,8 @@ The admission changes have no transaction ingress here: `rpc-method-filter.py:11
 
 **Local suite result.** Updated suite: 198 tests, 192 passed, five failures and one error, matching the clean baseline (196 tests, 190 passed). The five are `SnapshotRethStateTests.test_allow_pin_mismatch_records_false`, `test_appledouble_sibling_is_not_packed`, `test_matching_stub_records_verbatim_pin`, `test_packs_db_and_static_files_excludes_secrets`, and `test_stale_pidfile_does_not_block`; the error is `GatewayDockerTests.test_search_qualified_short_name_resolves`. The initial baseline invocation overlapped file editing and was superseded by the clean immutable baseline run. CI is authoritative for these host-dependent cases.
 
+**Supplementary Linux verification.** An immutable scratch archive of PR commit `48ac077` ran the full suite directly in the existing Colima Linux VM, with Bash, Docker and the host zstd prerequisite: `Ran 198 tests in 83.889s`, `OK`, no skips. This removes the six macOS-only failures above. The unchanged Linux `fetch-and-check` helper also independently fetched/verified the release and passed all entrypoint flags.
+
 **CI evidence.** Pending PR-head native linux/amd64 build and boot-smoke; evidence will be recorded before hand-back. Boot smoke proves initialization/startup only, not derivation.
 
 Deploy: operator decision pending
