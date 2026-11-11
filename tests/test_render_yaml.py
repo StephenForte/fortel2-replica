@@ -155,7 +155,7 @@ class RenderYamlTests(unittest.TestCase):
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
-            "op-reth:v2.8.1@sha256:de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3",
+            "op-reth:v2.8.2@sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466",
             docker,
         )
         self.assertNotIn(
@@ -208,7 +208,7 @@ class RenderYamlTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
         self.assertIn(
-            "op-reth:v2.8.1@sha256:de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3",
+            "op-reth:v2.8.2@sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466",
             compose,
         )
         self.assertNotIn(
@@ -222,6 +222,8 @@ class RenderYamlTests(unittest.TestCase):
         self.assertNotIn("6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692", compose)
         self.assertNotIn("0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c", compose)
         for text in (docker, compose):
+            self.assertNotIn("op-reth:v2.8.1", text)
+            self.assertNotIn("de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3", text)
             self.assertNotIn("op-reth:v2.8.0", text)
             self.assertNotIn("c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c", text)
             self.assertNotIn("op-node:v1.20.0", text)
@@ -236,9 +238,9 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertEqual("us-docker.pkg.dev", registry)
         self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
-        self.assertEqual("v2.8.1", tag)
+        self.assertEqual("v2.8.2", tag)
         self.assertEqual(
-            "de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3",
+            "c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466",
             digest,
         )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")

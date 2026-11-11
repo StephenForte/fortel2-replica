@@ -499,14 +499,25 @@ printf '%064d\n' 0
             "Commit SHA: d6620202d4e563957830e688007a0cab29bd80f3\n"
         )
 
-    def test_accepts_exact_v281_version_block(self):
-        # Stdout of linux/amd64 op-reth v2.8.1 --version (R-0032). Extra
+    def test_refuses_v281_executed_lines(self):
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.8.1\n"
+            "Commit SHA: 722072949ce583f361424a160082186ee14cac71\n"
+        )
+
+    def test_refuses_reth_release_candidate_with_release_commit(self):
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.8.2-rc.1\n" f"{PIN_RETH_COMMIT_LINE}\n"
+        )
+
+    def test_accepts_exact_v282_version_block(self):
+        # Stdout of linux/amd64 op-reth v2.8.2 --version (R-0033). Extra
         # lines after the two pin lines must not be required, and these
         # exact lines must pass.
         text = (
-            "op-reth Version: 2.8.1\n"
-            "Commit SHA: 722072949ce583f361424a160082186ee14cac71\n"
-            "Build Timestamp: 1793851100\n"
+            "op-reth Version: 2.8.2\n"
+            "Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f\n"
+            "Build Timestamp: 1794221480\n"
             "Build Features: unknown\n"
             "Build Profile: maxperf\n"
         )
@@ -519,8 +530,8 @@ printf '%064d\n' 0
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn(
-            "op-reth pin ok: op-reth Version: 2.8.1 / "
-            "Commit SHA: 722072949ce583f361424a160082186ee14cac71",
+            "op-reth pin ok: op-reth Version: 2.8.2 / "
+            "Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f",
             result.stdout,
         )
 
@@ -531,12 +542,12 @@ printf '%064d\n' 0
 
     def test_refuses_reth_version_near_miss(self):
         # Before: a trailing character on "Reth Version: 2.3.0-dev" failed.
-        # After: the same whole-line rule applies to "op-reth Version: 2.8.1"
-        # and to its commit. "op-reth Version: 2.8.10" fails, a trailing
+        # After: the same whole-line rule applies to "op-reth Version: 2.8.2"
+        # and to its commit. "op-reth Version: 2.8.20" fails, a trailing
         # character on the commit fails, and so does the old v2.3.3 version
         # line with a suffix.
         self._assert_reth_pin_refused(
-            "op-reth Version: 2.8.10\n" f"{PIN_RETH_COMMIT_LINE}\n"
+            "op-reth Version: 2.8.20\n" f"{PIN_RETH_COMMIT_LINE}\n"
         )
         self._assert_reth_pin_refused(
             f"{PIN_RETH_VERSION_LINE}0\n{PIN_RETH_COMMIT_LINE}\n"
