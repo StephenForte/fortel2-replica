@@ -1109,8 +1109,6 @@ The final full Linux run on code head `343a66c`, with refreshed `origin/main` st
 - `/status` returned 200.
 - Error search from 14:47 to 14:49:16 PT found only derivation progress lines and no error-level lines. This was a text search, not a full log read.
 
-**Rollback.** Unchanged from the entry above: revert plus Manual Deploy. An in-place downgrade from v2.8.2 on the live `/data` is unverified.
-
 **Rollback.** Revert this PR and Manual Deploy. An in-place downgrade after v2.8.2 has opened the live datadir is unverified; do not promise disk compatibility. Use the existing snapshot recovery path if needed. No datadir wipe or live service change is performed by this work.
 
 Next free R-id is **R-0034**.
