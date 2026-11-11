@@ -1051,3 +1051,49 @@ After fetching and rebasing onto hand-back `origin/main` `89d6ce87ce9738050ec352
 **Rollback.** The op-node half reverts plus Manual Deploy on the same `/data` as in R-0031 (no safedb flags, P2P disabled; live disk contents not inspected). The op-reth half is **unverified once v2.8.1 has opened the live datadir**, as in R-0030. Do not promise an in-place downgrade. ForteL2 D-0165 records a worker hand-run v2.8.0 → v2.8.1 → v2.8.0 on one Mac datadir with block 811872 unchanged at each step. That is encouraging, but it is a different platform and datadir, the ForteL2 planner did not re-run it, and it does not prove the live disk. If v2.8.1 fails on `/data`, try revert plus Manual Deploy first, then the snapshot path. No datadir wipe is performed here.
 
 Next free R-id is **R-0033**.
+
+## R-0033 — replica op-reth v2.8.2
+
+*2026-11-11 · supersedes the R-0032 op-reth pin only. op-node stays v1.20.1, byte-identical; same flags, uid 10001, loopback RPC, genesis, env knobs and nine apk pins.*
+
+**Why.** Sequencer parity: ForteL2 PR #291 (`a8724ea47a86afdd79d1ea022bdac574fc76181d`) moved the Mac mini to v2.8.2 at 11:45 PT on 2026-11-11 (D-0168). The operator's dispatch reports matching block hash and state root on 13/13 sampled blocks 3496520..3496595 at the swap; this worker did not repeat those live samples. Official [op-reth v2.8.2](https://github.com/ethereum-optimism/optimism/releases/tag/op-reth/v2.8.2), published 2026-11-10T00:03:43Z, is the release, not rc.1.
+
+**Digests, independently re-measured 2026-11-11.** Used the R-0032 credential-free token method: GET `https://us-docker.pkg.dev/v2/token?service=us-docker.pkg.dev&scope=repository:oplabs-tools-artifacts/images/op-reth:pull`, then GET `https://us-docker.pkg.dev/v2/oplabs-tools-artifacts/images/op-reth/manifests/v2.8.2` with Bearer token and Accept `application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json`. HTTP 200; `docker-content-digest` and body SHA-256 both `sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466`. Revision annotation `969931cdf14fc219598f0aa44d869e718236df7f`; linux/amd64 `sha256:826e2d062c6dcd1928b79a3a1c5e2da4b3b6de70eeac2d93fd991879c7aa4f80`; linux/arm64 `sha256:49905765139183c129904b9964d9f00141e1f94767cecccc19417b38d56b28fa`. Both image files pin the release index, not an rc image or floating tag.
+
+**Tag peel chain.** GitHub git-ref/tag API independently returned `op-reth/v2.8.2` → annotated tag `5994f674e70daf9661e573324528115d39f1c7f6` → annotated rc tag `d836dc6ed1611429b32ea81631d6c75b3c74bdbe` → commit `969931cdf14fc219598f0aa44d869e718236df7f`. Compare from v2.8.1 reports 18 ahead, 0 behind. The rc and release share a commit, so commit matching alone cannot distinguish them.
+
+**Measured binary, before setting guards.** Colima QEMU on the arm64 authoring Mac executed (exit 0):
+
+```sh
+docker --context colima run --rm --platform linux/amd64 --entrypoint op-reth us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.2@sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466 --version
+```
+
+Verbatim stdout:
+
+```
+op-reth Version: 2.8.2
+Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f
+Build Timestamp: 1794221480
+Build Features: unknown
+Build Profile: maxperf
+```
+
+Stderr after image pull contained only the expected QEMU jemalloc MADV_DONTNEED notice. The checker still requires both complete lines exactly.
+
+**Change review.** Read the [full upstream comparison](https://github.com/ethereum-optimism/optimism/compare/op-reth/v2.8.1...op-reth/v2.8.2), including the Rust patches, independently of the release notes. The notes describe only the interop txpool `endpoint.up` metric fix (#23951); the replica configures no interop. Unlisted #23994 also changes txpool admission: initialize its block gas limit from `provider.latest_header()`, enforce the shared operator gas budget, and reject a transaction's Jovian DA footprint above that budget. `OpGasLimitConfig` moves to reth-optimism-txpool. The payload builder's `gas_limit_config.cap` is an equivalent min-limit refactor. The new startup header read fails with `no latest header` if absent and therefore needs the native boot evidence below. `rust/Cargo.toml` changes only lint-key spellings; no reth dependency revision moves. Cargo.lock adds dependencies for the new tests; this is not a reth revision change.
+
+The admission changes have no transaction ingress here: `rpc-method-filter.py:114`–116 subtracts `eth_sendRawTransaction` from the allowlist; `entrypoint-reth.sh:541`–544 disables txpool gossip and discovery, binds P2P to loopback and sets max peers to zero. Compose likewise uses `--disable-discovery` and `--max-peers=0` (`docker-compose.yml:47`–48). op-node P2P remains disabled (`entrypoint-reth.sh:708`, `docker-compose.yml:88`). These files and flags are unchanged.
+
+**Coverage.** Baseline current origin/main `6d77faa` has 196 tests, confirmed in a clean archive of that commit. Updated suite has 198: added previous-v2.8.1 refusal and rc.1-with-release-commit refusal. The accepted fixture is the independently measured stdout above; existing near-miss coverage now rejects 2.8.20, and wrong-commit and trailing-character checks remain. Both image files assert the new release digest and explicitly refuse the previous v2.8.1 digest. No existing check was weakened or removed. Stale-pin grep outside decision history returns only deliberate refusal tests.
+
+**Local verification.** Both `docker build --platform linux/amd64 -f Dockerfile.reth` and `DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose --profile render build replica-reth` passed; all nine apk pins are unchanged. Compose was initially unavailable, so official Compose v5.7.1 was downloaded into scratch, its published SHA-256 verified, and used with the existing Homebrew Buildx. Placeholder `L1_RPC_URL=https://example.invalid` was used for interpolation; no secret file was created. Clean baseline has five snapshot failures from its live-host process guard and one gateway Docker bind-mount error, the R-0032 host limitations. Local amd64 boot reaches pin-ok and the 852 genesis check, then MDBX init fails under this Colima/QEMU host with `Operation not supported (95)`; this does not prove pool startup. Native CI must supply that evidence.
+
+**Local suite result.** Updated suite: 198 tests, 192 passed, five failures and one error, matching the clean baseline (196 tests, 190 passed). The five are `SnapshotRethStateTests.test_allow_pin_mismatch_records_false`, `test_appledouble_sibling_is_not_packed`, `test_matching_stub_records_verbatim_pin`, `test_packs_db_and_static_files_excludes_secrets`, and `test_stale_pidfile_does_not_block`; the error is `GatewayDockerTests.test_search_qualified_short_name_resolves`. The initial baseline invocation overlapped file editing and was superseded by the clean immutable baseline run. CI is authoritative for these host-dependent cases.
+
+**CI evidence.** Pending PR-head native linux/amd64 build and boot-smoke; evidence will be recorded before hand-back. Boot smoke proves initialization/startup only, not derivation.
+
+Deploy: operator decision pending
+
+**Rollback.** Revert this PR and Manual Deploy. An in-place downgrade after v2.8.2 has opened the live datadir is unverified; do not promise disk compatibility. Use the existing snapshot recovery path if needed. No datadir wipe or live service change is performed by this work.
+
+Next free R-id is **R-0034**.

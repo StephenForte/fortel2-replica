@@ -24,7 +24,7 @@
 # because the live /data disk is owned by 10001.
 
 FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.1@sha256:b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0 AS node
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.1@sha256:de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3 AS reth
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.2@sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466 AS reth
 
 # Runtime. Same digest as `AS reth` (the only copy of the pin).
 FROM reth
