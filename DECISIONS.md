@@ -1096,7 +1096,20 @@ The admission changes have no transaction ingress here: `rpc-method-filter.py:11
 
 The final full Linux run on code head `343a66c`, with refreshed `origin/main` still `6d77faa5d5327f73eb4c9875fb97c723916ae4f6`, passed `Ran 198 tests in 80.867s`, `OK`, no skips. Curl re-resolution returned HTTP/2 200 and byte-identical release index JSON. Automated reviews posted no findings; the current-head security review passed. The subsequent commit records evidence only.
 
-Deploy: operator decision pending
+**Deploy and canary decision — no canary.** On 2026-11-11 the operator chose a direct Manual Deploy of `fortel2-replica-reth` and waived the D-0152 / R-0023 canary. The waiver covers this bump only and does not change D-0152. The reason: v2.8.2 has no execution or derivation change for this replica (Change review above), and the Mac sequencer had already been building blocks on the same binary since 11:45 PT.
+
+**CI note.** The PR-triggered runs from 12:17 to 12:51 PT were stranded by the GitHub Actions outage of 2026-11-11. The board hazard `a1038a60` has the details. Once Actions recovered, the operator dispatched Tests run [43111289057](https://github.com/StephenForte/fortel2-replica/actions/runs/43111289057) on head `1e14736`. All three jobs passed: Python `Ran 198 tests … OK`, boot-smoke `op-reth pin ok: op-reth Version: 2.8.2 / Commit SHA: 969931cd…`, then `Transaction pool initialized (interop filter enabled = false)`, then `op-node pin ok: v1.20.1 commit f73158e5`. The operator then closed and reopened the PR to re-trigger the required checks, and merged it.
+
+**Deploy — 2026-11-11, passed.** The planner recorded this from the Render API and logs and from public RPC samples. PR #95 merged as main `4bed18c` at 14:34 PT. The operator triggered deploy `dep-dbqf0kui0phs73cfupv0` on `fortel2-replica-reth` (`srv-dagquc7qj5pc73fdnjsg`, same `/data` disk) at 14:46:43 PT, and it was `live` at 14:47:47 PT. Boot log, verbatim: `op-reth pin ok: op-reth Version: 2.8.2 / Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f`, `genesis/rollup hash-check ok chain=852 hash=0xe242b1a3…2386d`, `snapshot: datadir already has db/; skipping restore`, `pruning_mode="archive"`, `storage_v2: true`, `Transaction pool initialized (interop filter enabled = false)`, `op-node pin ok: v1.20.1 commit f73158e5`, `Starting op-node (… mode=metered … rpckind=standard …)`. No env change.
+
+- Derivation: `Advancing bq origin … originBehind=false` stepped through L1 12114674 → 12114703 between 14:48:59 and 14:49:16 PT while catching up.
+- Public replica `latest`: 14:49:47 PT block 3501845 (age 409 s, catching up). 14:50:38 PT block 3501995 (age 160 s). It then held at 3501995 until 14:52:19 PT while waiting for the next batch, which is normal batch cadence (R-0032 recorded ages up to 330 s). `web3_clientVersion` returns `op-reth/v2.8.2-969931cd/x86_64-linux`.
+- Parity: block hash and state root match `fortel2-sequencer-rpc` at blocks 3501846, 3501880, 3501920, 3501950, 3501975, 3501994 and 3501995, all derived after the restart. 0 mismatches. These are 7 samples, not a full-range comparison.
+- Memory: 175 MB to 197 MB in the first two minutes, against a 2 GiB limit. The previous instance read 1.09 GB at its end. This is not yet a steady-state figure.
+- `/status` returned 200.
+- Error search from 14:47 to 14:49:16 PT found only derivation progress lines and no error-level lines. This was a text search, not a full log read.
+
+**Rollback.** Unchanged from the entry above: revert plus Manual Deploy. An in-place downgrade from v2.8.2 on the live `/data` is unverified.
 
 **Rollback.** Revert this PR and Manual Deploy. An in-place downgrade after v2.8.2 has opened the live datadir is unverified; do not promise disk compatibility. Use the existing snapshot recovery path if needed. No datadir wipe or live service change is performed by this work.
 
