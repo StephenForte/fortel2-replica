@@ -24,14 +24,16 @@ import tarfile
 import tempfile
 from pathlib import Path
 
-# Whole lines from `op-reth --version` executed inside the v2.8.2 Wolfi image
-# (R-0033). The v2.3.3 lines ("Reth Version: 2.3.0-dev" / 9384bc53…), the
-# Mac v2.5.0 lines ("op-reth Version: 2.5.0"), the pre-CVE v2.6.0 lines
+# Whole lines from `op-reth --version` stdout inside the v2.9.0 Wolfi image
+# (R-0034). The v2.8.2 lines ("op-reth Version: 2.8.2" / 969931cd…), the
+# v2.9.0-rc.1 lines (same commit, version "2.9.0-rc.1"), the v2.3.3 lines
+# ("Reth Version: 2.3.0-dev" / 9384bc53…), the Mac v2.5.0 lines
+# ("op-reth Version: 2.5.0"), the pre-CVE v2.6.0 lines
 # ("op-reth Version: 2.6.0" / da6d3252…), and the v2.6.1 lines
 # ("op-reth Version: 2.6.1" / e16bffa1…) do not match. A trailing
 # character or a bare tag does not match either.
-VERSION_LINE = "op-reth Version: 2.8.2"
-COMMIT_LINE = "Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f"
+VERSION_LINE = "op-reth Version: 2.9.0"
+COMMIT_LINE = "Commit SHA: 72fcf9479ea7ee1105b823d23da8bf58ba58136d"
 
 # Flags entrypoint-reth.sh passes to op-reth. init and node help are combined.
 ENTRYPOINT_FLAGS = (
@@ -44,6 +46,7 @@ ENTRYPOINT_FLAGS = (
     "--http.port",
     "--http.api",
     "--http.corsdomain",
+    "--rpc.gascap",
     "--authrpc.addr",
     "--authrpc.port",
     "--authrpc.jwtsecret",

@@ -70,10 +70,11 @@ RETH_SNAPSHOT_FORCE="${RETH_SNAPSHOT_FORCE:-}"
 # op-reth pin lines live in scripts/op-reth-pin-check.py. The image copies
 # that file to /op-reth-pin-check.py. A repo checkout uses the sibling
 # scripts/ file (the unit tests). There is no heredoc fallback.
-# R-0032 (supersedes R-0031). Measured `op-node --version` of the pinned image:
-#   op-node version v1.20.1-f73158e5-1793585300
-PIN_OP_NODE_VERSION='v1.20.1'
-PIN_OP_NODE_COMMIT='f73158e5'
+# R-0034 (supersedes the op-node half of R-0032). Measured `op-node --version`
+# of the pinned image:
+#   op-node version v1.20.2-72fcf947-1794432498
+PIN_OP_NODE_VERSION='v1.20.2'
+PIN_OP_NODE_COMMIT='72fcf947'
 EXPECTED_L2_CHAIN_ID='852'
 EXPECTED_GENESIS_HASH='0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d'
 
@@ -264,10 +265,10 @@ if ! printf '%s\n' "$RETH_VER" | python3 "$OP_RETH_PIN_CHECK" check; then
   exit 1
 fi
 
-# Fail closed unless op-node is the R-0032 pin. One match on the whole
-# prefix, so v1.20.1-rc.1-f73158e5-…, v1.20.10-…, and a wrong commit all
-# fail. The pin-ok line is printed later, next to the op-node start, so a
-# boot that never launches op-node does not claim the pin.
+# Fail closed unless op-node is the R-0034 pin. One match on the whole
+# prefix, so v1.20.2-rc.1-72fcf947-…, v1.20.20-…, v1.20.1-f73158e5-…, and a
+# wrong commit all fail. The pin-ok line is printed later, next to the
+# op-node start, so a boot that never launches op-node does not claim the pin.
 if ! command -v op-node >/dev/null 2>&1; then
   echo "ERROR: op-node binary not found on PATH" >&2
   exit 1
@@ -526,6 +527,8 @@ if [ "$RETH_ARCHIVE" = "1" ]; then
 else
   echo "Starting op-reth (verifier EL, --full) loopback :$L2_GETH_HTTP_PORT (cross-block-cache=${RETH_CROSS_BLOCK_CACHE_MB}MB rpc-cache-blocks=${RETH_RPC_CACHE_MAX_BLOCKS}; public filter :$L2_HTTP_PORT)"
 fi
+# v2.9.0 applies --rpc.gascap to eth_estimateGas. Binary default is 50000000.
+# config/rollup.json gasLimit is 60000000; match the sequencer (R-0034).
 op-reth node \
   --chain="$GENESIS" \
   --datadir="$DATA_DIR" \
@@ -534,6 +537,7 @@ op-reth node \
   --http.port="$L2_GETH_HTTP_PORT" \
   --http.api=eth,net,web3 \
   --http.corsdomain=* \
+  --rpc.gascap=60000000 \
   --authrpc.addr=127.0.0.1 \
   --authrpc.port="$L2_ENGINE_PORT" \
   --authrpc.jwtsecret="$JWT_FILE" \

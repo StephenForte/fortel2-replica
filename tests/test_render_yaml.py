@@ -155,6 +155,10 @@ class RenderYamlTests(unittest.TestCase):
     def test_reth_dockerfile_pins_by_digest(self):
         docker = (ROOT / "Dockerfile.reth").read_text(encoding="utf-8")
         self.assertIn(
+            "op-reth:v2.9.0@sha256:8a3a7dba2beb6a4446b570b0c55cae83c7406bcd7e5c6492b0de9559f94e96de",
+            docker,
+        )
+        self.assertNotIn(
             "op-reth:v2.8.2@sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466",
             docker,
         )
@@ -175,6 +179,10 @@ class RenderYamlTests(unittest.TestCase):
             docker,
         )
         self.assertIn(
+            "op-node:v1.20.2@sha256:5403cf20728c7d92ce2dadd50eea9629ea01deaa55415f24dfe4d0ed56f0fbaa",
+            docker,
+        )
+        self.assertNotIn(
             "op-node:v1.20.1@sha256:b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0",
             docker,
         )
@@ -208,6 +216,11 @@ class RenderYamlTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("dockerfile: Dockerfile.reth", compose)
         self.assertIn(
+            "op-reth:v2.9.0@sha256:8a3a7dba2beb6a4446b570b0c55cae83c7406bcd7e5c6492b0de9559f94e96de",
+            compose,
+        )
+        self.assertIn("--rpc.gascap=60000000", compose)
+        self.assertNotIn(
             "op-reth:v2.8.2@sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466",
             compose,
         )
@@ -222,8 +235,12 @@ class RenderYamlTests(unittest.TestCase):
         self.assertNotIn("6a19f905d87a363eae26a7a79f7e08f95036f20589d239a2aeccd104530e7692", compose)
         self.assertNotIn("0bf70098c274127ecdf8bfb95851d646deb12622ab8319379b630434dcc61d6c", compose)
         for text in (docker, compose):
+            self.assertNotIn("op-reth:v2.8.2", text)
+            self.assertNotIn("c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466", text)
             self.assertNotIn("op-reth:v2.8.1", text)
             self.assertNotIn("de259416ff0cdb922bb89803534e9a9a24d5b3377a071ecbccd1d39cf0218dc3", text)
+            self.assertNotIn("op-node:v1.20.1", text)
+            self.assertNotIn("b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0", text)
             self.assertNotIn("op-reth:v2.8.0", text)
             self.assertNotIn("c843f5a906ebb931ac5215415608f411f09a5cdb8761443be76378e10af9776c", text)
             self.assertNotIn("op-node:v1.20.0", text)
@@ -238,9 +255,9 @@ class RenderYamlTests(unittest.TestCase):
         )
         self.assertEqual("us-docker.pkg.dev", registry)
         self.assertEqual("oplabs-tools-artifacts/images/op-reth", repository)
-        self.assertEqual("v2.8.2", tag)
+        self.assertEqual("v2.9.0", tag)
         self.assertEqual(
-            "c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466",
+            "8a3a7dba2beb6a4446b570b0c55cae83c7406bcd7e5c6492b0de9559f94e96de",
             digest,
         )
         ci = (ROOT / ".github/workflows/tests.yml").read_text(encoding="utf-8")
@@ -326,6 +343,10 @@ class RenderYamlTests(unittest.TestCase):
         old_tag = "op-node:v1.19.2"
         old_digest = "3652c0faa7582e49c31a71f86bc5170167499aed7e382e92722f34beb233ef1a"
         new_pin = (
+            "op-node:v1.20.2@sha256:"
+            "5403cf20728c7d92ce2dadd50eea9629ea01deaa55415f24dfe4d0ed56f0fbaa"
+        )
+        previous_v1201 = (
             "op-node:v1.20.1@sha256:"
             "b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0"
         )
@@ -344,6 +365,7 @@ class RenderYamlTests(unittest.TestCase):
                 path.name,
             )
             self.assertNotIn(previous_pin, text, path.name)
+            self.assertNotIn(previous_v1201, text, path.name)
             self.assertIn(new_pin, text, path.name)
 
     def test_reth_runtime_base_is_not_bookworm(self):
