@@ -1175,6 +1175,8 @@ op-node v1.20.2's operator-facing change is the static-peer reconnect fix (#2394
 
 **Rollback.** Rolling back means reverting to the R-0033 pins (`op-reth:v2.8.2@sha256:c5ac919e…`, `op-node:v1.20.1@sha256:b78cf089…`) and redeploying. ForteL2's Mini evidence, cited by the operator, is that T8 G1 proved v2.8.2 reopens a datadir v2.9.0 has opened. That was the Mini's datadir, not the Render disk `dsk-dagqucfqj5pc73fdnkbg`. The Render-disk reopen is unproven until someone needs it. No datadir wipe or live service change is performed by this work.
 
+**CI.** On head `4fd29c0`, Tests run [44547682575](https://github.com/StephenForte/fortel2-replica/actions/runs/44547682575) passed: Python `Ran 200 tests in 118.283s` then `OK`, and boot-smoke printed `op-reth pin ok: op-reth Version: 2.9.0 / Commit SHA: 72fcf9479ea7ee1105b823d23da8bf58ba58136d`, then `Transaction pool initialized (interop filter enabled = false)`, then `op-node pin ok: v1.20.2 commit 72fcf947`. Boot smoke proves startup only, not derivation. Security scans run [44547683248](https://github.com/StephenForte/fortel2-replica/actions/runs/44547683248) passed (Semgrep and Trivy). Codex review of `4fd29c0` completed with no findings. Cursor Bugbot, the Cursor Security Agent, and patchhog also reported none.
+
 Deploy: direct to the live pserv fortel2-replica-reth after merge, no canary (operator decision 2026-11-19, same as R-0032/R-0033). Deploy evidence is recorded in a follow-up PR.
 
 Next free R-id is **R-0035**.
