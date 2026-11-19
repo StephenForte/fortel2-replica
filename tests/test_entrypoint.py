@@ -34,10 +34,10 @@ def _pin_constant(name):
 
 PIN_RETH_VERSION_LINE = _pin_constant("VERSION_LINE")
 PIN_RETH_COMMIT_LINE = _pin_constant("COMMIT_LINE")
-# Measured from the linux/amd64 op-node v1.20.1 binary: `op-node --version`.
-PIN_OP_NODE_VERSION = "v1.20.1"
-PIN_OP_NODE_COMMIT = "f73158e5"
-PIN_OP_NODE_VERSION_TEXT = "op-node version v1.20.1-f73158e5-1793585300\n"
+# Measured from the linux/amd64 op-node v1.20.2 binary: `op-node --version`.
+PIN_OP_NODE_VERSION = "v1.20.2"
+PIN_OP_NODE_COMMIT = "72fcf947"
+PIN_OP_NODE_VERSION_TEXT = "op-node version v1.20.2-72fcf947-1794432498\n"
 EXPECTED_GENESIS_HASH = (
     "0xe242b1a3312b509e7df1496847f0bd0b115cb66676b1e973a355296c99e2386d"
 )
@@ -505,19 +505,33 @@ printf '%064d\n' 0
             "Commit SHA: 722072949ce583f361424a160082186ee14cac71\n"
         )
 
+    def test_refuses_v282_executed_lines(self):
+        # Before: these two whole lines were the pin (R-0033), so this text passed.
+        # After: they are the previous image's output and must fail closed.
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.8.2\n"
+            "Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f\n"
+        )
+
     def test_refuses_reth_release_candidate_with_release_commit(self):
+        # Measured linux/amd64 op-reth v2.9.0-rc.1 --version uses this version
+        # line and the same commit as the release. The whole-line check must
+        # reject it. The previous rc banner stays refused too.
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.9.0-rc.1\n" f"{PIN_RETH_COMMIT_LINE}\n"
+        )
         self._assert_reth_pin_refused(
             "op-reth Version: 2.8.2-rc.1\n" f"{PIN_RETH_COMMIT_LINE}\n"
         )
 
-    def test_accepts_exact_v282_version_block(self):
-        # Stdout of linux/amd64 op-reth v2.8.2 --version (R-0033). Extra
+    def test_accepts_exact_v290_version_block(self):
+        # Stdout of linux/amd64 op-reth v2.9.0 --version (R-0034). Extra
         # lines after the two pin lines must not be required, and these
         # exact lines must pass.
         text = (
-            "op-reth Version: 2.8.2\n"
-            "Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f\n"
-            "Build Timestamp: 1794221480\n"
+            "op-reth Version: 2.9.0\n"
+            "Commit SHA: 72fcf9479ea7ee1105b823d23da8bf58ba58136d\n"
+            "Build Timestamp: 1794432498\n"
             "Build Features: unknown\n"
             "Build Profile: maxperf\n"
         )
@@ -530,8 +544,8 @@ printf '%064d\n' 0
         )
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn(
-            "op-reth pin ok: op-reth Version: 2.8.2 / "
-            "Commit SHA: 969931cdf14fc219598f0aa44d869e718236df7f",
+            "op-reth pin ok: op-reth Version: 2.9.0 / "
+            "Commit SHA: 72fcf9479ea7ee1105b823d23da8bf58ba58136d",
             result.stdout,
         )
 
@@ -542,10 +556,13 @@ printf '%064d\n' 0
 
     def test_refuses_reth_version_near_miss(self):
         # Before: a trailing character on "Reth Version: 2.3.0-dev" failed.
-        # After: the same whole-line rule applies to "op-reth Version: 2.8.2"
-        # and to its commit. "op-reth Version: 2.8.20" fails, a trailing
-        # character on the commit fails, and so does the old v2.3.3 version
-        # line with a suffix.
+        # After: the same whole-line rule applies to "op-reth Version: 2.9.0"
+        # and to its commit. "op-reth Version: 2.9.00" and "2.8.20" fail, a
+        # trailing character on the commit fails, and so does the old v2.3.3
+        # version line with a suffix.
+        self._assert_reth_pin_refused(
+            "op-reth Version: 2.9.00\n" f"{PIN_RETH_COMMIT_LINE}\n"
+        )
         self._assert_reth_pin_refused(
             "op-reth Version: 2.8.20\n" f"{PIN_RETH_COMMIT_LINE}\n"
         )
@@ -645,13 +662,21 @@ printf '%064d\n' 0
         )
 
     def test_refuses_op_node_release_candidate(self):
-        # Separate version and commit checks would accept this.
+        # Measured v1.20.2-rc.1 banner. Separate version and commit checks
+        # would accept it because the commit matches the release. The previous
+        # rc banner stays refused too.
+        self._assert_op_node_pin_refused(
+            "op-node version v1.20.2-rc.1-72fcf947-1794432498\n"
+        )
         self._assert_op_node_pin_refused(
             "op-node version v1.20.1-rc.1-f73158e5-1793585300\n"
         )
 
     def test_refuses_op_node_version_with_trailing_digit(self):
-        # v1.20.1 must not accept v1.20.10.
+        # v1.20.2 must not accept v1.20.20. v1.20.10 stays refused too.
+        self._assert_op_node_pin_refused(
+            "op-node version v1.20.20-72fcf947-1794432498\n"
+        )
         self._assert_op_node_pin_refused(
             "op-node version v1.20.10-f73158e5-1793585300\n"
         )
@@ -659,7 +684,16 @@ printf '%064d\n' 0
     def test_refuses_op_node_wrong_commit(self):
         # Right version, previous pin's commit.
         self._assert_op_node_pin_refused(
+            "op-node version v1.20.2-f73158e5-1793585300\n"
+        )
+        self._assert_op_node_pin_refused(
             "op-node version v1.20.1-d6620202-1792673968\n"
+        )
+
+    def test_refuses_previous_v1201_op_node_pin(self):
+        # Measured v1.20.1 line (R-0032 / R-0033). Must fail on the v1.20.2 pin.
+        self._assert_op_node_pin_refused(
+            "op-node version v1.20.1-f73158e5-1793585300\n"
         )
 
     def test_refuses_previous_op_node_v1_19_11(self):
@@ -707,6 +741,7 @@ printf '%064d\n' 0
         self.assertIn("--rpc-cache.max-blocks=256", log)
         self.assertIn("--http.addr=127.0.0.1", log)
         self.assertIn("--http.api=eth,net,web3", log)
+        self.assertIn("--rpc.gascap=60000000", log)
         self.assertNotIn("--proofs-history", log)
         self.assertNotIn("geth ", log)
         self.assertIn(

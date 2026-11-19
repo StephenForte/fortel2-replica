@@ -1112,3 +1112,71 @@ The final full Linux run on code head `343a66c`, with refreshed `origin/main` st
 **Rollback.** Revert this PR and Manual Deploy. An in-place downgrade after v2.8.2 has opened the live datadir is unverified; do not promise disk compatibility. Use the existing snapshot recovery path if needed. No datadir wipe or live service change is performed by this work.
 
 Next free R-id is **R-0034**.
+
+## R-0034 — replica op-reth v2.9.0 + op-node v1.20.2
+
+*2026-11-19 · supersedes the R-0033 op-reth pin and the op-node half of R-0032. Same uid 10001, loopback RPC, genesis, memory and L1 knobs, and nine apk pins. Adds `--rpc.gascap=60000000` on both op-reth starts.*
+
+**Why.** Sequencer parity with ForteL2 D-0173: the Mac mini sequencer moved to op-reth v2.9.0 and op-node v1.20.2 at 2026-11-17 08:45 PT. Both release tags and both image revision annotations are commit `72fcf9479ea7ee1105b823d23da8bf58ba58136d`. Official [op-reth v2.9.0](https://github.com/ethereum-optimism/optimism/releases/tag/op-reth/v2.9.0) (published 2026-11-16T17:47:37Z, not a prerelease) and [op-node v1.20.2](https://github.com/ethereum-optimism/optimism/releases/tag/op-node/v1.20.2) (published 2026-11-16T17:49:33Z, not a prerelease).
+
+**Digests, independently re-measured 2026-11-19.** Used the R-0032 credential-free token method: GET `https://us-docker.pkg.dev/v2/token?service=us-docker.pkg.dev&scope=repository:oplabs-tools-artifacts/images/<name>:pull`, then GET the tag manifest with Bearer token and Accept `application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json`.
+
+For `op-reth` tag `v2.9.0`, HTTP 200, `docker-content-digest` and body SHA-256 both `sha256:8a3a7dba2beb6a4446b570b0c55cae83c7406bcd7e5c6492b0de9559f94e96de`. Media type `application/vnd.oci.image.index.v1+json`. Revision annotation `org.opencontainers.image.revision` = `72fcf9479ea7ee1105b823d23da8bf58ba58136d`. linux/amd64 `sha256:994838a5815b180fec9bbaaadb1ee453c6274bff3238bd221eac117ae56366ad` (manifest header and body agree; config blob `sha256:8627f63a63ca18a05163ddd369fb98b9c9a938140f8e1a3bdbbb1fbe1bcb06f9`; User `0`, Entrypoint `/usr/local/bin/op-reth`, Cmd null). linux/arm64 `sha256:dfae0c7e410555b0b001635da5e6d5d851eb5f38913dbdbf4ad280445489f4dd`.
+
+For `op-node` tag `v1.20.2`, HTTP 200, header and body both `sha256:5403cf20728c7d92ce2dadd50eea9629ea01deaa55415f24dfe4d0ed56f0fbaa`. Same revision annotation `72fcf9479ea7ee1105b823d23da8bf58ba58136d`. linux/amd64 `sha256:a0912d7ffe3066487db4941a446519a3d647d4f51291fa8ffb24b3f1df1150b2` (header and body agree). linux/arm64 `sha256:57f6306af8e3effe734ab74392f78aaca56a4139e6c9dcfe5522e082acc6b937`.
+
+The rc tags are different indexes with the same revision, so a commit match cannot tell them apart. `op-reth:v2.9.0-rc.1` index is `sha256:9c45165b3309e25173ddbdc2455ec487700f659921b868f325d73e56da5e265c`. `op-node:v1.20.2-rc.1` index is `sha256:aa0dc383edc03c6d5cb2f8e65db9659782bb95f38f2f9e58d72b4073303d3b19`. Both image files pin the release indexes, not an rc image, a child digest, or a floating tag.
+
+**Tag peel chain.** GitHub git-ref/tag API, fetched independently of the images:
+
+`op-reth/v2.9.0` ref → annotated tag `2d6eae5ae5c1571581938ae1c2e9979bb77df4c0` (tag `op-reth/v2.9.0`) → annotated tag `5eb85ebe5d0bbdb70b2abd6b95d2c3580c0a9e2c` (tag `op-reth/v2.9.0-rc.1`) → commit `72fcf9479ea7ee1105b823d23da8bf58ba58136d`.
+
+`op-node/v1.20.2` ref → annotated tag `df1a290bca5b201c6ef9c9e574a4eaaad15307e7` (tag `op-node/v1.20.2`) → annotated tag `a99b4868c99b294a899d39bb7f87f74ba5b7a860` (tag `op-node/v1.20.2-rc.1`) → the same commit `72fcf9479ea7ee1105b823d23da8bf58ba58136d`.
+
+The rc tag objects are annotated, not lightweight. Image revision annotations match that commit. GitHub compare `op-reth/v2.8.2...op-reth/v2.9.0` reports 50 ahead, 0 behind. Compare `op-node/v1.20.1...op-node/v1.20.2` reports 108 ahead, 0 behind. Those counts are monorepo commits between the tags, not a count of replica-facing changes. The compare file list is capped at 300 and was not treated as complete.
+
+**Measured binaries, before setting guards.** Colima on the arm64 authoring Mac, QEMU `linux/amd64` (Rosetta is not installed; binfmt `qemu-x86_64` is). Both exits 0.
+
+```sh
+docker --context colima run --rm --platform linux/amd64 --entrypoint op-reth us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.9.0@sha256:8a3a7dba2beb6a4446b570b0c55cae83c7406bcd7e5c6492b0de9559f94e96de --version
+```
+
+Verbatim stdout:
+
+```
+op-reth Version: 2.9.0
+Commit SHA: 72fcf9479ea7ee1105b823d23da8bf58ba58136d
+Build Timestamp: 1794432498
+Build Features: unknown
+Build Profile: maxperf
+```
+
+Stderr was only the QEMU jemalloc notice (`MADV_DONTNEED does not work`). The checker requires the two version lines as whole lines. It does not require the jemalloc lines, which are absent on native amd64.
+
+```sh
+docker --context colima run --rm --platform linux/amd64 --entrypoint op-node us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.2@sha256:5403cf20728c7d92ce2dadd50eea9629ea01deaa55415f24dfe4d0ed56f0fbaa --version
+```
+
+Verbatim stdout (stderr empty):
+
+```
+op-node version v1.20.2-72fcf947-1794432498
+```
+
+The same measurement on the rc indexes prints different banners with the same commit: `op-reth Version: 2.9.0-rc.1` and `op-node version v1.20.2-rc.1-72fcf947-1794432498`. Both fail the guards.
+
+**eth_estimateGas cap.** Official op-reth v2.9.0 release notes: "`--rpc.gascap` now also caps `eth_estimateGas` (#24024). The default stays at 50,000,000 gas. Estimates that need more gas than the cap now fail. Operators of chains whose block gas limit is above the cap, or whose users estimate large transactions, should raise `--rpc.gascap` to match." Measured `op-reth node --help` on the pinned amd64 image: `--rpc.gascap <GAS_CAP>` "Maximum gas limit for `eth_call`, `eth_estimateGas`, and call tracing RPC methods" `[default: 50000000]`. `config/rollup.json` `gasLimit` is `60000000`. `rpc-method-filter.py` still allows `eth_estimateGas`. Both `entrypoint-reth.sh` and `docker-compose.yml` pass `--rpc.gascap=60000000`. The flag name and default match the release notes; nothing here was guessed.
+
+**Change review.** op-reth v2.9.0 updates reth to v2.7.0 (`cf59c4e9`, #24024), pinned in-tree to fork tag `op-v2.7.0-0`. Release notes say no flags are removed. Measured `node --help` still has every flag `entrypoint-reth.sh` passes, including the new `--rpc.gascap`. Three other RPC limit flags reject `0` (`--rpc.max-tracing-requests` default 2, `--rpc.max-blocking-io-requests` default 256, `--rpc.proof-permits` default 25). This replica does not set them. A pruned-history state query now fails with code `4444` and `pruned history unavailable` instead of `-32603`. The replica still runs `--full`, so that error text can change for historical state reads; the method allowlist is unchanged. Upstream `--rpc-cache.max-blocks` default drops from 5000 to 1000 and `--rpc-cache.max-receipts` from 2000 to 500. This replica still sets `--rpc-cache.max-blocks` from `RETH_RPC_CACHE_MAX_BLOCKS` (default 256) and does not set `--rpc-cache.max-receipts`, so the receipts-cache default becomes 500. `--engine.sender-recovery-cache` is now on by default; this replica does not pass it. New cache byte-cap flags are left at upstream defaults. The interop `endpoint.up` metric fix (#23964) does not apply: no interop is configured. The hidden release note on executor-routing / Lagoon SDM replay says Lagoon is not active on any registry chain.
+
+op-node v1.20.2's operator-facing change is the static-peer reconnect fix (#23946). This replica passes `--p2p.disable=true`, so it does not use static peers. Measured `op-node --help` still contains every flag the entrypoint and compose pass (`--l1`, `--l1.rpckind`, `--l1.trustrpc`, `--l1.http-poll-interval`, `--l1.rpc-rate-limit`, `--l1.cache-size`, `--l1.max-concurrency`, `--l1.rpc-max-batch-size`, `--l1.beacon.ignore`, `--l1.beacon.slot-duration-override`, `--l2`, `--l2.jwt-secret`, `--l2.enginekind`, `--rollup.config`, `--sequencer.enabled`, `--verifier.l1-confs`, `--p2p.disable`, `--rpc.addr`, `--rpc.port`, `--log.level`). `--sequencer.max-safe-lag` is still absent and is not reintroduced. Release notes also add sepolia-devnet-4/5/6 chain configs and say no other chain's config or activation times change. Monorepo commits in the tag range also parse `settlement_chain_id` and carry optional genesis system-config keys; the release notes say op-node does nothing with the settlement id and that no registry chain at this pin sets the new keys. This replica keeps its own `rollup.json`.
+
+**Local verification.** Unsandboxed macOS: `Ran 200 tests in 95.421s`, `FAILED (failures=5, errors=1)`, no skips. The five failures are the snapshot tests that refuse while a live `op-reth node` process is on the host (`test_allow_pin_mismatch_records_false`, `test_appledouble_sibling_is_not_packed`, `test_matching_stub_records_verbatim_pin`, `test_packs_db_and_static_files_excludes_secrets`, `test_stale_pidfile_does_not_block`). The error is `GatewayDockerTests.test_search_qualified_short_name_resolves`. Those are the six platform-only cases R-0033 recorded. Colima Linux (Python 3.12.3, in the VM): `Ran 200 tests in 83.452s`, `OK`, no skips. The count moves from R-0033's 198 by two added methods, `test_refuses_v282_executed_lines` and `test_refuses_previous_v1201_op_node_pin`. No existing method was removed. The host Docker CLI has no compose plugin, so official Compose v5.7.1 (`docker-compose-darwin-aarch64`, SHA-256 `5a9aa8b5fb5b1e3cd83f39c80e570ae30aafd74cd9b47264fbe4ff7e6e6251ca`, matched the published checksum) ran `DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose --profile render build replica-reth` against the Colima socket. Interpolation used placeholder `L1_RPC_URL=https://example.invalid`; no secret file was written. The build exited 0 and produced `fortel2-replica-replica-reth`. apk resolved the same nine pins, including the purge of the image's local op-reth package. Boot smoke is CI's job: this Colima/QEMU host is not treated as proof of pool startup or derivation.
+
+**Rollback.** Rolling back means reverting to the R-0033 pins (`op-reth:v2.8.2@sha256:c5ac919e…`, `op-node:v1.20.1@sha256:b78cf089…`) and redeploying. ForteL2's Mini evidence, cited by the operator, is that T8 G1 proved v2.8.2 reopens a datadir v2.9.0 has opened. That was the Mini's datadir, not the Render disk `dsk-dagqucfqj5pc73fdnkbg`. The Render-disk reopen is unproven until someone needs it. No datadir wipe or live service change is performed by this work.
+
+**CI.** On head `4fd29c0`, Tests run [44547682575](https://github.com/StephenForte/fortel2-replica/actions/runs/44547682575) passed: Python `Ran 200 tests in 118.283s` then `OK`, and boot-smoke printed `op-reth pin ok: op-reth Version: 2.9.0 / Commit SHA: 72fcf9479ea7ee1105b823d23da8bf58ba58136d`, then `Transaction pool initialized (interop filter enabled = false)`, then `op-node pin ok: v1.20.2 commit 72fcf947`. Boot smoke proves startup only, not derivation. Security scans run [44547683248](https://github.com/StephenForte/fortel2-replica/actions/runs/44547683248) passed (Semgrep and Trivy). Codex review of `4fd29c0` completed with no findings. Cursor Bugbot, the Cursor Security Agent, and patchhog also reported none.
+
+Deploy: direct to the live pserv fortel2-replica-reth after merge, no canary (operator decision 2026-11-19, same as R-0032/R-0033). Deploy evidence is recorded in a follow-up PR.
+
+Next free R-id is **R-0035**.

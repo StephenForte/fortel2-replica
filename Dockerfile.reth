@@ -6,16 +6,16 @@
 # are comments only — do not float off the digest. The runtime base is the
 # pinned op-reth image itself (Wolfi, glibc 2.44). The entrypoint asserts
 # the whole-line pin in scripts/op-reth-pin-check.py and fails closed
-# otherwise. op-node must report `op-node version v1.20.1-f73158e5-…`
-# (R-0032; supersedes R-0031). The entrypoint matches that whole prefix
-# and fails closed otherwise.
+# otherwise. op-node must report `op-node version v1.20.2-72fcf947-…`
+# (R-0034; supersedes the op-node half of R-0032). The entrypoint matches
+# that whole prefix and fails closed otherwise.
 #
 # OP Labs op-node images are distroless (no /bin/sh). Do not RUN shell
 # commands on that image — copy the binary into this runtime. op-geth is
 # not in this image.
 #
-# Base image config, re-fetched 2026-11-06 (linux/amd64 config blob
-# sha256:d933c94c35ed30bba94de88128bbdad8c2d2507a1bfe03a92b428cbf0f26f18e):
+# Base image config, re-fetched 2026-11-19 (linux/amd64 config blob
+# sha256:8627f63a63ca18a05163ddd369fb98b9c9a938140f8e1a3bdbbb1fbe1bcb06f9):
 #   User: "0"
 #   Entrypoint: ["/usr/local/bin/op-reth"]
 #   Cmd: null
@@ -23,8 +23,8 @@
 # Those are overridden explicitly below. USER fortel2 is uid/gid 10001
 # because the live /data disk is owned by 10001.
 
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.1@sha256:b78cf0897b391e19a93df56dc522f7083375c2d9eb411841871cea188c5080e0 AS node
-FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.8.2@sha256:c5ac919eef39f7ddabda6d7175623ccbfc94547b6bbf30efd937290d676a5466 AS reth
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-node:v1.20.2@sha256:5403cf20728c7d92ce2dadd50eea9629ea01deaa55415f24dfe4d0ed56f0fbaa AS node
+FROM us-docker.pkg.dev/oplabs-tools-artifacts/images/op-reth:v2.9.0@sha256:8a3a7dba2beb6a4446b570b0c55cae83c7406bcd7e5c6492b0de9559f94e96de AS reth
 
 # Runtime. Same digest as `AS reth` (the only copy of the pin).
 FROM reth
