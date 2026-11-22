@@ -197,6 +197,8 @@ Gateway env (R-0005). This table is the authoritative operator copy — paste in
 
 After deploy, verify that rate limiting keys on the real client IP — see [`gateway/README.md`](./gateway/README.md). Do not skip that check; a wrong key puts every client in one bucket.
 
+The gateway caches the reth private address for 30 seconds (`resolver … valid=30s`, R-0035). A brief Render DNS timeout reuses that address. A reth redeploy's new IP is used on the next request after the window. Details and the 502-in-5005ms signature are in [`gateway/README.md`](./gateway/README.md) under "DNS timeouts".
+
 ### Rate limit / DDoS
 
 | Layer | Role |

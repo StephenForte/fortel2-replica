@@ -96,9 +96,15 @@ someone restarts `fortel2-replica-rpc`. That happened on 2026-08-16
 (incident 1).
 
 This image uses a variable `proxy_pass` plus `resolver` so nginx
-re-queries the container's own nameserver, respecting whatever TTL
-Render's private DNS returns. There is no `valid=` override — do not
-invent one without live evidence the TTL is too long.
+re-queries the container's own nameserver. `valid=30s` overrides the
+answer TTL (R-0035). For 30 seconds after a successful lookup, that
+nginx worker serves the cached address and does not query DNS. A brief
+Render resolver timeout in that window cannot 502 the request. When the
+window ends, the next request queries again, so a reth redeploy's new
+private IP is picked up then. The refresh clears the previous address
+before the query; a timeout on that query does not fall back to it.
+Each worker keeps its own cache. `resolver_timeout` stays `5s`, so a
+miss still fails in about 5 seconds.
 
 nginx's `resolver` does **not** apply `/etc/resolv.conf` `search`
 domains (unlike `getaddrinfo`, which a literal `proxy_pass` uses).
@@ -237,7 +243,8 @@ nginx -T 2>&1 | grep -E 'resolver |proxy_pass |set \$replica_upstream'
 
 | What you see | Meaning |
 |---|---|
-| `resolver` lists the `nameserver` address(es) from `resolv.conf` | correct; not `8.8.8.8` |
+| `resolver` lists the `nameserver` address(es) from `resolv.conf` and `valid=30s` | correct; not `8.8.8.8`; the 30s cache override is on (R-0035) |
+| `resolver` with no `valid=` | TTL-only cache; a brief DNS timeout 502s again |
 | `set $replica_upstream http://fortel2-replica.<search>:10000;` where `<search>` is the first `search` token | search applied; this is the G-3 success shape |
 | `set $replica_upstream http://fortel2-replica:10000;` (bare, no dot in host) | search line missing or unused — the G-2 failure shape if Render needs search |
 | `set $replica_upstream http://fortel2-replica.<search>.<search>:10000;` | double-qualified; a dotted host was suffixed again |
@@ -249,7 +256,8 @@ Then curl the public URL. `result: "0x354"` is success.
 | Live failure | Likely cause |
 |---|---|
 | `502` + `Host not found` in the error log | nginx queried a name the resolver does not know — search missing, wrong, or double-suffixed (incident 2) |
-| `504` + `upstream timed out ... while connecting to upstream, upstream: "http://<old-ip>:10000/"` | resolver is not re-querying; literal `proxy_pass` or no `resolver` (incident 1) |
+| `502` in ~5005 ms + `could not be resolved (110: Operation timed out)` | Render DNS timed out on a cache miss (`resolver_timeout 5s`). A lookup still inside `valid=30s` does not query and cannot hit this. A request more than 30s after the last success on that worker still can (R-0035) |
+| `504` + `upstream timed out ... while connecting to upstream, upstream: "http://<old-ip>:10000/"` | resolver is not re-querying; literal `proxy_pass` or no `resolver` (incident 1). For up to 30s after a reth IP change, a still-valid cache dials the previous address the same way |
 | `200` / `429` through a replica-only redeploy, gateway not restarted | both incidents actually fixed |
 
 Then, **without restarting the gateway**, redeploy only `fortel2-replica`
@@ -258,8 +266,35 @@ not `504`, and no `upstream timed out` in the gateway error log. A
 manual gateway restart "fixing" it is the old bug, not a success.
 
 A request already in flight to the old IP can still fail at the moment
-of switchover. After that, the residual window is Render's DNS TTL
-(unknown; this image does not override it).
+of switchover. After that, the residual window is `valid=30s`: nginx
+keeps dialing the cached address until that window ends, then the next
+request resolves again. A reth private-IP change is therefore visible
+within 30 seconds. During those 30 seconds a connect to the old IP can
+504 (`proxy_connect_timeout` is 10s). That is the cost of surviving a
+DNS timeout; 30s is the short end of the 30–60s range so the stale-IP
+window stays small.
+
+## DNS timeouts (R-0035)
+
+From 2026-11-19 22:30Z through 2026-11-22 22:30Z the live gateway
+(instance `fps8k`, started by the PR #98 auto-deploy; the nginx template
+in that deploy was unchanged) logged
+`fortel2-replica-reth.<search> could not be resolved (110:
+Operation timed out)`. The matching access line is HTTP 502 in ~5005 ms
+with a 298-byte (no `Referer`) or 343-byte HTML body. `/healthz` stays
+200 because it never resolves the upstream. reth did not restart.
+`resolver_timeout 5s` is the 5 seconds. `valid=30s` makes a worker reuse
+its last good address for 30 seconds so a timeout inside that window
+does not 502.
+
+How to tell the deploy worked: `nginx -T` shows `valid=30s` on the
+`resolver` line and `resolver_timeout 5s`. While `/status` is open it
+polls the replica every 4 seconds, which keeps that worker's cache warm,
+and those polls should stop producing the 5005 ms 502 during a blip that
+falls inside the window. A request on a worker whose last success is
+older than 30 seconds still queries DNS and can still 502 once. The
+hourly `Python-urllib/3.15` watcher is not in this repo, so this image
+does not retry that client.
 
 ## Local run (dummy upstream)
 

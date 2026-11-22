@@ -397,20 +397,26 @@ class GatewayConfigTests(unittest.TestCase):
         self.assertIn("set_real_ip_from 172.64.0.0/13;", conf)
 
     def test_resolver_comes_from_placeholder_not_public_dns(self):
-        """resolver must be injected at start, not baked in as a public DNS IP."""
+        """resolver must be injected at start, not baked in as a public DNS IP.
+
+        valid=30s (R-0035) overrides the answer TTL on that same directive.
+        resolver_timeout stays 5s: a cache miss still fails fast.
+        """
         raw = TEMPLATE.read_text(encoding="utf-8")
         resolver_lines = [
             ln.strip()
             for ln in raw.splitlines()
             if re.match(r"resolver\s", ln.strip())
         ]
-        self.assertEqual(["resolver ${NGINX_LOCAL_RESOLVERS};"], resolver_lines)
+        self.assertEqual(
+            ["resolver ${NGINX_LOCAL_RESOLVERS} valid=30s;"],
+            resolver_lines,
+        )
         self.assertIn("resolver_timeout 5s;", raw)
         self.assertNotRegex(raw, r"(?m)^resolver\s+\d+\.\d+\.\d+\.\d+")
         script = RESOLVER_SCRIPT.read_text(encoding="utf-8")
         for ip in PUBLIC_RESOLVERS:
             self.assertNotIn(ip, script, ip)
-        self.assertIsNone(re.search(r"(?m)^resolver\s+\S+.*valid=", raw))
         self.assertIn("/etc/resolv.conf", script)
 
         conf = render_gateway_conf({"NGINX_LOCAL_RESOLVERS": "10.99.0.53 10.99.0.54"})
@@ -419,7 +425,10 @@ class GatewayConfigTests(unittest.TestCase):
             for ln in conf.splitlines()
             if re.match(r"resolver\s", ln.strip())
         ]
-        self.assertEqual(["resolver 10.99.0.53 10.99.0.54;"], rendered_resolver)
+        self.assertEqual(
+            ["resolver 10.99.0.53 10.99.0.54 valid=30s;"],
+            rendered_resolver,
+        )
         for ip in PUBLIC_RESOLVERS:
             self.assertNotIn(ip, rendered_resolver[0], ip)
 
@@ -1002,6 +1011,8 @@ class GatewayDockerTests(unittest.TestCase):
                     resolver_line = stripped
                     break
             self.assertIsNotNone(resolver_line, combined[-2000:])
+            self.assertIn("valid=30s", resolver_line)
+            self.assertIn("resolver_timeout 5s;", combined)
             for ns in nameservers:
                 self.assertIn(ns, resolver_line, resolver_line)
             for public in PUBLIC_RESOLVERS:
