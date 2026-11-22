@@ -227,11 +227,15 @@ with the same client.
 
 *2026-08-17 · corrects R-0004's implicit assumption, supersedes the reverted G-2 (PR #32)*
 
+**Amended 2026-11-22 by R-0035:** the resolver line is `resolver <nameservers from
+/etc/resolv.conf> valid=30s`. The 30s window overrides the answer TTL. Search qualification
+and re-resolution after that window are unchanged.
+
 `fortel2-replica-rpc`'s nginx uses a variable `proxy_pass` + `resolver <nameservers from
-/etc/resolv.conf>` so it *can* re-query after the cached DNS TTL expires, instead of the
+/etc/resolv.conf> valid=30s` so it re-queries after the cache window, instead of the
 original literal `proxy_pass` (resolved once at config load, cached for the process lifetime).
-That is not an immediate lookup on every request — nginx still caches the answer for the
-response TTL (no `valid=` override). A bare host with no dot is qualified with the first token
+nginx caches the answer for 30s (R-0035), overriding the response TTL, then the next request
+looks up again. A bare host with no dot is qualified with the first token
 of `/etc/resolv.conf`'s `search` line before nginx resolves it; a host that already contains a
 dot is left unchanged. Both the nameserver list and the search domain are read from the
 container's own `/etc/resolv.conf` at startup — never hardcoded.
@@ -271,8 +275,8 @@ stops at configuration plus initial search-qualified resolution. Do not treat fa
 tested — confirm on the next natural replica redeploy rather than forcing one, or add a real
 DNS-address-change test. Until then this is open.
 
-**Consequences.** No `valid=` TTL override — resolution respects whatever TTL Render's cluster
-DNS returns. Do not hardcode `169.254.20.10` / `10.12.0.10` / the `.svc.cluster.local` suffix
+**Consequences.** Cache the upstream address for 30s (`valid=30s`, R-0035), then re-query.
+Do not hardcode `169.254.20.10` / `10.12.0.10` / the `.svc.cluster.local` suffix
 anywhere — they are read fresh from `/etc/resolv.conf` on every container start and are not
 guaranteed stable across regions, plans, or Render infrastructure changes.
 
@@ -1190,3 +1194,29 @@ op-node v1.20.2's operator-facing change is the static-peer reconnect fix (#2394
 - Error-level search from 07:09:30 to 08:12 PT found one line: `ERROR Invalid JWT: Authorization header is missing or invalid` at 07:10:46 PT, before op-node started. Warning-level lines are startup notices (`Unknown env var … OP_NODE_GOMEMLIMIT`, the `syncmode.offset-el-safe` and blob-endpoint notices, one `Deriver system is resetting`), one `Dropping past span batch` during catch-up, and recurring `L1 head signal indicates a possible L1 re-org` every 24 s poll. The same `Invalid JWT` line and the same re-org warning cadence appear in the v2.8.2 boot of 2026-11-11 (instance `-kk9qd`), so neither is new in v2.9.0. This was a level and text search, not a full log read.
 
 Next free R-id is **R-0035**.
+
+## R-0035 — Gateway DNS cache is 30s so a Render resolver timeout can reuse the last good reth address
+
+*2026-11-22 · amends R-0011's "no `valid=`" rule. Does not change reth, `render.yaml`, or `RETH_CROSS_BLOCK_CACHE_MB`.*
+
+**Symptoms.** Public gateway `fortel2-replica-rpc` (`srv-da107mflk1mc738u5p10`, `https://fortel2-replica-rpc.onrender.com`, Docker build `./gateway`, health check `/healthz`) proxies JSON-RPC to private `fortel2-replica-reth`. From 2026-11-19T22:30:10Z through 2026-11-22T22:30:09Z its app log has 43 lines of `fortel2-replica-reth.own-d98533l7vvec738vva9g.svc.cluster.local could not be resolved (110: Operation timed out)`. The same window's request log has a 502 for each, `responseTimeMS` 5001–5010, body 298 bytes when there is no Referer and 343 bytes when there is. 29 of those fall in 2026-11-20T23:30Z–2026-11-22T22:30Z (Nov 20 3:30 PM PT through Nov 22 2:30 PM PT). The same query for `could not be resolved` from 2026-11-16T00:00Z to 2026-11-19T16:44Z returned none. All 43 lines are instance `srv-da107mflk1mc738u5p10-fps8k`.
+
+`/healthz` does not resolve the upstream, so the platform health check stays green. reth instance `srv-dagquc7qj5pc73fdnjsg-2db4t` logged `Starting op-reth` once, at 2026-11-19T15:10:33Z (the v2.9.0 deploy), and not again through 2026-11-22T23:00Z.
+
+The hourly client is `User-Agent: Python-urllib/3.15`, `POST /`, no Referer, at minute :30. It 502'd at 07:30Z and 08:30Z on Nov 20 (11:30 PM and 12:30 AM PT, Nov 19/20) and at 21:30Z and 22:30Z on Nov 22 (1:30 PM and 2:30 PM PT). Those are the two pairs that page. Other :30 hits in the same span were isolated and did not page.
+
+**What did not change in git.** `gateway/nginx.conf.template` and `gateway/Dockerfile` are identical from `6d77faa` (2026-11-06) through `d62dbbb` (PR #98). PR #98 is the R-0034 deploy write-up. Merging it auto-deployed the gateway anyway (`autoDeploy: yes` on commit): `dep-dbvieqrbc2fs738gmc5g`, live 2026-11-19T16:44:43Z, which is instance `fps8k`. The nginx template on that instance is the R-0011 resolver with no `valid=` and `resolver_timeout 5s`. The step-up in timeouts is not a diff in this repo.
+
+**Root cause.** Render's internal DNS did not answer the search-qualified reth name before nginx's resolver gave up. Errno 110 and the ~5005 ms latency are `resolver_timeout 5s` (nginx's own default is 30s). The error text is `could not be resolved`, which is name lookup, not a connect to reth and not an upstream HTTP failure. nginx 1.30.4 (`nginxinc/nginx-unprivileged:1.30.4-alpine`) caches a successful answer for the DNS TTL when `valid` is unset (`ngx_resolver.c`: `rn->valid = ngx_time() + (r->valid ? r->valid : rn->ttl)`). A later request inside that window does not query. When the window has elapsed, the next request frees the cached address and sets `valid` to 0 before it queries. A timeout then returns `NGX_RESOLVE_TIMEDOUT` and does not restore the address it just freed. With no `valid=` override, a short Render TTL (or a quiet gap longer than the TTL) makes every such request a live query, and a query that hits a timeout becomes this 502.
+
+**Change.** `resolver ${NGINX_LOCAL_RESOLVERS} valid=30s;` with `resolver_timeout 5s` left as it is. `valid=30s` replaces the answer TTL. For 30 seconds after a success, that worker does not query, so a timeout inside the window cannot 502. Variable `proxy_pass` is unchanged, so the next request after 30 seconds queries again and a reth private-IP change is picked up then. 30s is the short end of the approved 30–60s range, and it is the example in the nginx `resolver` docs. A longer window would only extend how long a dead reth IP can still be dialed.
+
+**Tradeoff.** After reth gets a new private IP, a worker that resolved the old IP keeps dialing it until its 30s window ends. Connects to that address fail at `proxy_connect_timeout 10s` (the incident 1 signature, bounded to 30s rather than until someone restarts the gateway). A lookup that is itself the refresh still waits 5s and 502s if DNS times out; the following request queries again. The cache is per worker. `/status` polls the replica every 4s while the tab is visible (`gateway/status.html` `poll.l2Ms`), which keeps the worker that receives those polls warm. An hourly request on a worker with no success in the last 30s is still a live query.
+
+**Watcher.** Not in this repo. Searched `scripts/`, `.github/workflows/`, `.cursor/skills/`, `healthcheck-reth.sh`, `sequencer-read/`, and GitHub code search for the alert text and for `Python-urllib`. The hourly client shows up only as those request logs. This change does not add a retry. Two consecutive cold misses will still page until that client retries once, a few seconds later, before it counts the run failed.
+
+**How to tell it worked.** After the gateway deploy, `nginx -T` shows `valid=30s` on the `resolver` line and `resolver_timeout 5s`. The 5005 ms `could not be resolved (110: Operation timed out)` lines should stop for requests that follow a success on the same worker by less than 30s, including `/status` polls while that tab is open. A cold miss during a timeout can still 502 once. `/healthz` remains a local 200 and is not evidence either way.
+
+**Not done here.** No `proxy_next_upstream` (one upstream; a retry would block on the same resolver timeout). `resolver_timeout` stays 5s so a miss stays a 5s 502. No reth env change.
+
+Next free R-id is **R-0036**.

@@ -3,7 +3,7 @@
 # variables ($remote_addr and friends) are left alone — see
 # NGINX_ENVSUBST_FILTER.
 
-# Re-resolve the replica hostname on each request (respecting DNS TTL).
+# Re-resolve the replica hostname when the cache window ends.
 # A literal proxy_pass is resolved once at config load and cached for
 # the process lifetime — after a replica redeploy that is a dead IP
 # and every request 504s until this container is restarted (incident 1).
@@ -12,11 +12,23 @@
 # container's /etc/resolv.conf at start (14-resolvers-from-resolv.conf.envsh).
 # Do not hardcode 8.8.8.8 / 1.1.1.1 — Render private names do not exist there.
 #
+# valid=30s overrides the answer TTL (R-0035). For those 30 seconds this
+# worker serves the cached address and does not query DNS, so a brief
+# Render resolver timeout cannot 502 that request. When the window ends,
+# variable proxy_pass queries again, and a reth redeploy's new private IP
+# is used on the next request. The refresh clears the cached address
+# before the query; if that query hits resolver_timeout, the request 502s
+# and the following request queries again. Each worker has its own cache.
+# resolver_timeout stays 5s so a miss fails in 5s (nginx's default is 30s).
+# 30s is the short end of the approved 30–60s range: long enough to cover
+# the observed ~5s timeout after a successful lookup, short enough that a
+# dead reth IP (incident 1) is dialed for at most 30s.
+#
 # nginx's resolver does not apply resolv.conf `search` (incident 2 / G-2).
 # The startup script qualifies a bare host with the first search domain
 # and exports NGINX_REPLICA_UPSTREAM. A host that already has a dot is
 # left alone so an operator FQDN is not double-suffixed.
-resolver ${NGINX_LOCAL_RESOLVERS};
+resolver ${NGINX_LOCAL_RESOLVERS} valid=30s;
 resolver_timeout 5s;
 
 # Real-IP / rate-limit key
